@@ -144,12 +144,27 @@ export const commodities = [
 ];
 
 // ----------- CORRIDORS -----------
+const buildScoreHistory = (target, vol, seed) => {
+  const rnd = seeded(seed);
+  const arr = [];
+  let s = Math.max(0, target - vol * 4);
+  for (let i = 29; i >= 0; i--) {
+    s = s + (rnd() - 0.45) * vol;
+    s = Math.max(0, Math.min(100, s));
+    arr.push({ day: `D-${i}`, score: Math.round(s) });
+  }
+  // Force latest reading to match target
+  arr[arr.length - 1].score = target;
+  return arr;
+};
+
 export const corridors = [
   {
     id: 'suez',
     name: 'Suez Canal / Red Sea',
     risk: 'CRITICAL',
     score: 88,
+    scoreHistory: buildScoreHistory(88, 6, 101),
     vessels: 170,
     description: 'Houthi attacks on commercial vessels have triggered mass diversions around the Cape of Good Hope, adding 10–14 days of transit and inflating insurance premiums.',
     tags: ['Houthi attacks', 'Insurance surcharges', 'Carrier diversions'],
@@ -159,6 +174,7 @@ export const corridors = [
     name: 'Strait of Hormuz',
     risk: 'HIGH',
     score: 72,
+    scoreHistory: buildScoreHistory(72, 5, 113),
     vessels: 85,
     description: 'Iran–US tensions escalating; tanker seizures and GPS spoofing reported. ~20% of global oil flows through this 21-nm-wide chokepoint.',
     tags: ['Iran-US tensions', 'Oil tanker seizure risks'],
@@ -168,6 +184,7 @@ export const corridors = [
     name: 'Cape of Good Hope',
     risk: 'MODERATE',
     score: 35,
+    scoreHistory: buildScoreHistory(35, 4, 127),
     vessels: 220,
     description: 'Surge in re-routed traffic from Suez has overloaded South African bunkering. Weather windows tightening as winter swell builds.',
     tags: ['Port congestion', 'Weather delays'],
@@ -177,6 +194,7 @@ export const corridors = [
     name: 'Panama Canal',
     risk: 'LOW',
     score: 18,
+    scoreHistory: buildScoreHistory(18, 4, 139),
     vessels: 30,
     description: 'Gatun Lake levels recovering after multi-year drought. ACP has lifted some draft restrictions; daily transits returning to normal.',
     tags: ['Water level monitoring', 'Draft restrictions'],
@@ -185,22 +203,34 @@ export const corridors = [
 
 // ----------- PORTS & CHOKEPOINTS (lat/lon) -----------
 export const ports = {
-  Shanghai:    { lat: 31.2,  lon: 121.5 },
-  Busan:       { lat: 35.1,  lon: 129.0 },
-  Singapore:   { lat: 1.3,   lon: 103.8 },
-  Tokyo:       { lat: 35.6,  lon: 139.7 },
-  Mumbai:      { lat: 19.0,  lon: 72.8 },
-  Jeddah:      { lat: 21.5,  lon: 39.2 },
-  RasTanura:   { lat: 26.6,  lon: 50.2 },
-  Rotterdam:   { lat: 51.9,  lon: 4.5 },
-  Genoa:       { lat: 44.4,  lon: 8.9 },
-  LosAngeles:  { lat: 33.7,  lon: -118.3 },
-  Vancouver:   { lat: 49.3,  lon: -123.1 },
-  NewYork:     { lat: 40.7,  lon: -74.0 },
-  Houston:     { lat: 29.7,  lon: -95.4 },
-  Santos:      { lat: -23.9, lon: -46.3 },
-  Colon:       { lat: 9.4,   lon: -79.9 },
+  Shanghai:    { lat: 31.2,  lon: 121.5,  congestion: 'high',   waitDays: 3.4 },
+  Busan:       { lat: 35.1,  lon: 129.0,  congestion: 'medium', waitDays: 1.8 },
+  Singapore:   { lat: 1.3,   lon: 103.8,  congestion: 'high',   waitDays: 2.9 },
+  Tokyo:       { lat: 35.6,  lon: 139.7,  congestion: 'low',    waitDays: 0.6 },
+  Mumbai:      { lat: 19.0,  lon: 72.8,   congestion: 'medium', waitDays: 2.2 },
+  Jeddah:      { lat: 21.5,  lon: 39.2,   congestion: 'high',   waitDays: 4.1 },
+  RasTanura:   { lat: 26.6,  lon: 50.2,   congestion: 'low',    waitDays: 0.4 },
+  Rotterdam:   { lat: 51.9,  lon: 4.5,    congestion: 'medium', waitDays: 1.5 },
+  Genoa:       { lat: 44.4,  lon: 8.9,    congestion: 'medium', waitDays: 1.9 },
+  LosAngeles:  { lat: 33.7,  lon: -118.3, congestion: 'low',    waitDays: 0.7 },
+  Vancouver:   { lat: 49.3,  lon: -123.1, congestion: 'low',    waitDays: 0.5 },
+  NewYork:     { lat: 40.7,  lon: -74.0,  congestion: 'low',    waitDays: 0.8 },
+  Houston:     { lat: 29.7,  lon: -95.4,  congestion: 'medium', waitDays: 1.6 },
+  Santos:      { lat: -23.9, lon: -46.3,  congestion: 'high',   waitDays: 3.7 },
+  Colon:       { lat: 9.4,   lon: -79.9,  congestion: 'medium', waitDays: 1.2 },
 };
+
+export const congestionColor = (c) => ({
+  low:    '#22c55e',
+  medium: '#eab308',
+  high:   '#ef4444',
+}[c] || '#6b7280');
+
+export const congestionTextClass = (c) => ({
+  low:    'text-green-400',
+  medium: 'text-yellow-400',
+  high:   'text-red-400',
+}[c] || 'text-gray-400');
 
 export const chokepoints = [
   { id: 'suez',    name: 'Suez',      lat: 30.0,  lon: 32.5 },
@@ -603,6 +633,59 @@ export const riskStrokeHex = (risk) => ({
   MODERATE: '#eab308',
   LOW:      '#22c55e',
 }[risk] || '#6b7280');
+
+// ----------- NOTIFICATIONS / ALERTS -----------
+export const notifications = [
+  {
+    id: 'n1',
+    severity: 'CRITICAL',
+    title: 'Missile attack reported in Bab-el-Mandeb',
+    body: 'Two commercial vessels reported near-misses 30nm SW of Mokha. CENTCOM responding.',
+    time: '4 min ago',
+  },
+  {
+    id: 'n2',
+    severity: 'HIGH',
+    title: 'Hormuz GPS spoofing event',
+    body: 'AIS positions for 12 tankers showing inland fixes. Ports advising visual navigation.',
+    time: '18 min ago',
+  },
+  {
+    id: 'n3',
+    severity: 'MODERATE',
+    title: 'Cape Town bunker queue exceeds 38 hrs',
+    body: 'Diverted traffic overwhelming local supply. Recommend topping off in Singapore.',
+    time: '1 hr ago',
+  },
+  {
+    id: 'n4',
+    severity: 'HIGH',
+    title: 'Brent breaks $87 — risk premium expanding',
+    body: 'Front-month Brent +1.8% in two hours on Iran-Israel rhetoric.',
+    time: '2 hr ago',
+  },
+  {
+    id: 'n5',
+    severity: 'LOW',
+    title: 'Panama Canal lifts draft restriction by 1ft',
+    body: 'Gatun reservoir +0.6m WoW; ACP raises max draft to 45ft effective Monday.',
+    time: '5 hr ago',
+  },
+  {
+    id: 'n6',
+    severity: 'MODERATE',
+    title: 'War-risk premium quote: Red Sea hull cover',
+    body: 'Lloyd\'s syndicate 2147 raises rate to 1.35% of hull value (was 1.2%).',
+    time: '8 hr ago',
+  },
+];
+
+export const severityBg = (s) => ({
+  CRITICAL: 'bg-red-500',
+  HIGH:     'bg-orange-500',
+  MODERATE: 'bg-yellow-500',
+  LOW:      'bg-green-500',
+}[s] || 'bg-gray-500');
 
 export const categoryColor = (c) => ({
   Shipping:     'bg-blue-500/20 text-blue-300 border-blue-500/40',
