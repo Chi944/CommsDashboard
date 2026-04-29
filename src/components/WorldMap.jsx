@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  ports, chokepoints, routes, riskStrokeHex,
+  ports, chokepoints, routes, riskStrokeHex, congestionColor,
 } from '../data/mockData.js';
 
 // Equirectangular projection. viewBox is 1000 x 500.
@@ -131,13 +131,15 @@ export default function WorldMap({ visibleRoutes, selectedId, onSelect }) {
         );
       })}
 
-      {/* Ports */}
+      {/* Ports with congestion rings */}
       {Object.entries(ports).map(([name, p]) => {
         const { x, y } = proj(p.lat, p.lon);
+        const ring = congestionColor(p.congestion);
         return (
           <g key={name}>
+            <circle cx={x} cy={y} r="5" fill="none" stroke={ring} strokeWidth="1" strokeOpacity="0.6" />
             <circle cx={x} cy={y} r="2.5" fill="#22d3ee" />
-            <text x={x + 5} y={y - 3} fontSize="8" fill="#67e8f9" fontFamily="ui-monospace, monospace">
+            <text x={x + 6} y={y - 3} fontSize="8" fill="#67e8f9" fontFamily="ui-monospace, monospace">
               {name}
             </text>
           </g>

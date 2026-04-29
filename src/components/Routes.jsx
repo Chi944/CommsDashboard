@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import {
-  routes, chokepoints, riskBgClass, riskTextClass, riskBorderClass,
+  routes, chokepoints, ports, riskBgClass, riskTextClass, riskBorderClass, congestionTextClass,
 } from '../data/mockData.js';
 import WorldMap from './WorldMap.jsx';
+import { downloadCSV } from '../utils/csv.js';
 
 const REGIONS = ['All', 'Asia↔Europe', 'Trans-Pacific', 'Trans-Atlantic', 'Middle East', 'Intra-Asia', 'Americas'];
 
@@ -23,9 +24,21 @@ export default function Routes() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-3xl font-bold text-gray-50">Shipping Routes</h2>
-        <p className="text-sm text-gray-400 mt-1">15 active maritime lanes. Risk-graded by chokepoint exposure.</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-3xl font-bold text-gray-50">Shipping Routes</h2>
+          <p className="text-sm text-gray-400 mt-1">15 active maritime lanes. Risk-graded by chokepoint exposure.</p>
+        </div>
+        <button
+          onClick={() => downloadCSV('routes.csv', visible.map((r) => ({
+            id: r.id, name: r.name, region: r.region, risk: r.risk,
+            origin: r.origin, dest: r.dest, distance_nm: r.distance,
+            transit_days: r.transitDays, total_cost_usd: r.cost, canal_fee_usd: r.canalFee,
+          })))}
+          className="px-3 py-1.5 text-xs uppercase tracking-wider rounded border bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600"
+        >
+          Export CSV
+        </button>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -125,6 +138,26 @@ export default function Routes() {
                   </div>
                 </div>
               )}
+
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-2">Port Congestion</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[selected.origin, selected.dest].map((portName) => {
+                    const p = ports[portName];
+                    return (
+                      <div key={portName} className="bg-gray-950/40 border border-gray-800 rounded p-2">
+                        <div className="text-[10px] text-gray-500">{portName}</div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className={`text-xs uppercase tracking-wider font-semibold ${congestionTextClass(p.congestion)}`}>
+                            {p.congestion}
+                          </span>
+                          <span className="font-mono text-[11px] text-gray-300">{p.waitDays}d wait</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div>
                 <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-2">Chokepoints on Route</div>
