@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import Ticker from './components/Ticker.jsx';
 import Nav from './components/Nav.jsx';
 import BottomNav from './components/BottomNav.jsx';
@@ -28,6 +29,7 @@ export default function App() {
 
         <NotificationsDrawer open={alertsOpen} onClose={() => setAlertsOpen(false)} />
         <BottomNav active={tab} setActive={setTab} />
+        <Analytics />
 
         <footer className="hidden md:flex px-6 py-4 border-t border-gray-800 text-[11px] text-gray-500 items-center justify-between">
           <span>Live data: Yahoo Finance (prices), Google News RSS (news).</span>

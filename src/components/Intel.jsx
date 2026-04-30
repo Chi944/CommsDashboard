@@ -2,7 +2,19 @@ import React, { useState, useMemo } from 'react';
 import { categoryColor } from '../data/mockData.js';
 import { useLiveData } from '../state/LiveData.jsx';
 
-const FILTERS = ['All', 'Shipping', 'Energy', 'Metals', 'Agri', 'Geopolitical', 'Tech', 'Data', 'Crypto'];
+const FILTERS = ['All', 'Breaking', 'Shipping', 'Energy', 'Metals', 'Agri', 'Geopolitical', 'Tech', 'Data', 'Crypto'];
+
+const severityDot = (s) => ({
+  CRITICAL: 'bg-red-500',
+  HIGH:     'bg-orange-500',
+  MODERATE: 'bg-yellow-500',
+}[s] || null);
+
+const severityLabel = (s) => ({
+  CRITICAL: 'CRITICAL',
+  HIGH:     'IMPORTANT',
+  MODERATE: 'NOTABLE',
+}[s] || null);
 
 export default function Intel() {
   const { intel, newsLive, newsUpdatedAt, newsLoading, refresh } = useLiveData();
@@ -10,7 +22,11 @@ export default function Intel() {
   const [query, setQuery] = useState('');
 
   const list = useMemo(() => {
-    let arr = filter === 'All' ? intel : intel.filter((i) => i.category === filter);
+    let arr;
+    if (filter === 'All') arr = intel;
+    else if (filter === 'Breaking') arr = intel.filter((i) => i.severity === 'CRITICAL' || i.severity === 'HIGH');
+    else arr = intel.filter((i) => i.category === filter);
+
     if (query.trim()) {
       const q = query.toLowerCase();
       arr = arr.filter((i) =>
@@ -21,6 +37,11 @@ export default function Intel() {
     }
     return arr;
   }, [filter, query, intel]);
+
+  const breakingCount = useMemo(
+    () => intel.filter((i) => i.severity === 'CRITICAL' || i.severity === 'HIGH').length,
+    [intel]
+  );
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -52,18 +73,33 @@ export default function Intel() {
 
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 sm:mx-0 px-4 sm:px-0 pb-1 sm:flex-wrap">
-          {FILTERS.map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`shrink-0 px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-all
-                ${filter === f
-                  ? 'bg-gradient-to-b from-gray-50 to-gray-200 text-gray-950 border-gray-100'
-                  : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:bg-gray-900'}`}
-            >
-              {f}
-            </button>
-          ))}
+          {FILTERS.map((f) => {
+            const isBreaking = f === 'Breaking';
+            return (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`shrink-0 px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-all flex items-center gap-1.5
+                  ${filter === f
+                    ? (isBreaking
+                        ? 'bg-red-500/90 border-red-400 text-gray-950 shadow'
+                        : 'bg-gradient-to-b from-gray-50 to-gray-200 text-gray-950 border-gray-100')
+                    : (isBreaking
+                        ? 'bg-red-500/10 border-red-500/40 text-red-300 hover:bg-red-500/20'
+                        : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:bg-gray-900')}`}
+              >
+                {isBreaking && (
+                  <span className={`w-1.5 h-1.5 rounded-full ${filter === f ? 'bg-gray-950' : 'bg-red-400 animate-pulse-soft'}`} />
+                )}
+                {f}
+                {isBreaking && breakingCount > 0 && (
+                  <span className={`ml-0.5 text-[10px] font-mono ${filter === f ? 'text-red-900' : 'text-red-200'}`}>
+                    {breakingCount}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
         <div className="sm:ml-auto relative">
           <input
@@ -100,6 +136,16 @@ export default function Intel() {
               className="group block rounded-xl border border-gray-800 bg-gray-900/70 hover:border-cyan-700/60 hover:bg-gray-900 p-4 transition-all"
             >
               <div className="flex items-center gap-2 sm:gap-3 text-[10px] uppercase tracking-widest flex-wrap">
+                {severityDot(it.severity) && (
+                  <span className="flex items-center gap-1" title={severityLabel(it.severity) || ''}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${severityDot(it.severity)} ${it.severity === 'CRITICAL' ? 'animate-pulse-soft' : ''}`} />
+                    <span className={
+                      it.severity === 'CRITICAL' ? 'text-red-400'
+                      : it.severity === 'HIGH'   ? 'text-orange-400'
+                      : 'text-yellow-400'
+                    }>{severityLabel(it.severity)}</span>
+                  </span>
+                )}
                 <span className={`px-2 py-0.5 rounded border ${categoryColor(it.category)}`}>{it.category}</span>
                 <span className="text-gray-400 truncate max-w-[180px]">{it.source}</span>
                 {it.time && <><span className="text-gray-600">•</span><span className="text-gray-500">{it.time}</span></>}

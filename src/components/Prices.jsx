@@ -244,6 +244,17 @@ export default function Prices() {
     [commodities, selected]
   );
 
+  // Keep the chart anchored to whatever the user is filtering: if the
+  // currently selected ticker isn't in the filtered set (e.g. they
+  // switched ALL → METALS while WTI was selected), pick the first
+  // visible item so the chart and detail panel reflect the new filter.
+  useEffect(() => {
+    if (filtered.length === 0) return;
+    if (!filtered.some((c) => c.ticker === selected)) {
+      setSelected(filtered[0].ticker);
+    }
+  }, [filtered, selected]);
+
   // Fetch missing histories for whichever tickers the chart needs.
   const neededTickers = useMemo(
     () => (compare ? [...compareSet] : sel ? [sel.ticker] : []),
