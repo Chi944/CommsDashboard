@@ -45,13 +45,13 @@ async function fetchOne(s) {
     price: p.price,
   }));
 
-  const last = points[points.length - 1].price;
-  const prev = meta.chartPreviousClose ?? points[points.length - 2]?.price ?? last;
+  const last = meta.regularMarketPrice ?? points[points.length - 1].price;
+  const prev = meta.chartPreviousClose ?? meta.previousClose ?? points[points.length - 2]?.price ?? last;
   const changeAbs = last - prev;
   const changePct = prev ? (changeAbs / prev) * 100 : 0;
-  const todayHigh = highs[highs.length - 1] ?? last;
-  const todayLow  = lows[lows.length - 1]  ?? last;
-  const r2 = (n) => last < 1 ? round4(n) : round2(n);
+  const todayHigh = meta.regularMarketDayHigh ?? highs[highs.length - 1] ?? last;
+  const todayLow  = meta.regularMarketDayLow  ?? lows[lows.length - 1]  ?? last;
+  const r2 = (n) => (n != null && last < 1) ? round4(n) : round2(n);
 
   return {
     ticker: s.ticker,
@@ -62,8 +62,15 @@ async function fetchOne(s) {
     price: r2(last),
     high: r2(todayHigh),
     low: r2(todayLow),
+    open: meta.regularMarketOpen != null ? r2(meta.regularMarketOpen) : null,
+    prevClose: prev != null ? r2(prev) : null,
     changeAbs: round4(changeAbs),
     changePct: round2(changePct),
+    volume: meta.regularMarketVolume ?? null,
+    fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh != null ? r2(meta.fiftyTwoWeekHigh) : null,
+    fiftyTwoWeekLow:  meta.fiftyTwoWeekLow  != null ? r2(meta.fiftyTwoWeekLow)  : null,
+    currency: meta.currency || null,
+    exchange: meta.exchangeName || meta.fullExchangeName || null,
     history,
   };
 }
