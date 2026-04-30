@@ -75,9 +75,26 @@ async function fetchOne(s) {
   };
 }
 
+// Worker-pool: keep N requests in flight at once.
+async function pooledSettle(arr, fn, concurrency = 10) {
+  const out = new Array(arr.length);
+  let i = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, arr.length) }, async () => {
+      while (true) {
+        const idx = i++;
+        if (idx >= arr.length) return;
+        try { out[idx] = { status: 'fulfilled', value: await fn(arr[idx]) }; }
+        catch (e) { out[idx] = { status: 'rejected', reason: e }; }
+      }
+    })
+  );
+  return out;
+}
+
 export default async function handler(req, res) {
   try {
-    const settled = await Promise.allSettled(SYMBOLS.map(fetchOne));
+    const settled = await pooledSettle(SYMBOLS, fetchOne, 10);
     const commodities = settled
       .filter((r) => r.status === 'fulfilled')
       .map((r) => r.value);

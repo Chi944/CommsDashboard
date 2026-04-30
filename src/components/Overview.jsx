@@ -4,10 +4,11 @@ import { categoryColor, assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
 
 const StatCard = ({ label, value, sub, accent }) => (
-  <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
-    <div className="text-[11px] uppercase tracking-widest text-gray-500">{label}</div>
-    <div className={`mt-2 font-mono text-3xl ${accent || 'text-gray-100'}`}>{value}</div>
-    {sub && <div className="mt-1 text-xs text-gray-400">{sub}</div>}
+  <div className="relative overflow-hidden rounded-xl border border-gray-800 bg-gradient-to-br from-gray-900/90 to-gray-900/40 p-4 sm:p-5 transition-colors hover:border-gray-700">
+    <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-cyan-500/40 to-transparent" />
+    <div className="text-[10px] sm:text-[11px] uppercase tracking-[0.18em] text-gray-500">{label}</div>
+    <div className={`mt-2 font-mono text-2xl sm:text-3xl tracking-tight ${accent || 'text-gray-100'}`}>{value}</div>
+    {sub && <div className="mt-1 text-[11px] sm:text-xs text-gray-400">{sub}</div>}
   </div>
 );
 
@@ -21,9 +22,9 @@ const fmtPrice = (c) => {
 const Movers = ({ commodities, title, sortFn, accent }) => {
   const sorted = useMemo(() => [...commodities].sort(sortFn), [commodities, sortFn]);
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
+    <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">
       <div className="flex items-center justify-between mb-3">
-        <h3 className={`text-sm font-semibold uppercase tracking-wider ${accent}`}>{title}</h3>
+        <h3 className={`text-xs sm:text-sm font-semibold uppercase tracking-wider ${accent}`}>{title}</h3>
       </div>
       <ul className="divide-y divide-gray-800">
         {sorted.slice(0, 5).map((c) => {
@@ -54,11 +55,11 @@ const Movers = ({ commodities, title, sortFn, accent }) => {
 const HeadlinesPreview = ({ intel, newsLive }) => {
   const items = intel.slice(0, 6);
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
+    <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-100">Latest Headlines</h3>
-        <span className={`text-[10px] flex items-center gap-1 ${newsLive ? 'text-green-400' : 'text-yellow-400'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${newsLive ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
+        <h3 className="text-xs sm:text-sm font-semibold uppercase tracking-wider text-gray-100">Latest Headlines</h3>
+        <span className={`text-[10px] flex items-center gap-1 ${newsLive ? 'text-emerald-400' : 'text-amber-400'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${newsLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
           {newsLive ? 'live' : 'fetching'}
         </span>
       </div>
@@ -108,35 +109,31 @@ export default function Overview() {
   ];
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+    <div className="space-y-6 sm:space-y-8">
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
-          <div className="flex items-center gap-3 text-xs uppercase tracking-[0.3em] text-gray-500">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] sm:text-xs uppercase tracking-[0.22em] text-gray-500">
             <span>Live Markets</span>
-            <span className={`flex items-center gap-1.5 normal-case tracking-normal text-[11px] ${pricesLive ? 'text-green-400' : 'text-yellow-400'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
+            <span className={`flex items-center gap-1.5 normal-case tracking-normal text-[11px] ${pricesLive ? 'text-emerald-400' : 'text-amber-400'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
               {pricesLive ? 'live prices' : 'fetching'}
             </span>
             {pricesUpdatedAt && (
               <span className="normal-case tracking-normal text-[10px] text-gray-500 font-mono">
-                prices {new Date(pricesUpdatedAt).toUTCString().slice(17, 25)}Z
-              </span>
-            )}
-            {newsUpdatedAt && (
-              <span className="normal-case tracking-normal text-[10px] text-gray-500 font-mono">
-                news {new Date(newsUpdatedAt).toUTCString().slice(17, 25)}Z
+                {new Date(pricesUpdatedAt).toUTCString().slice(17, 25)}Z
               </span>
             )}
           </div>
-          <h2 className="mt-1 text-4xl font-bold text-gray-50">Markets &amp; Headlines</h2>
-          <p className="mt-2 text-sm text-gray-400 max-w-3xl">
-            Live prices across commodities, equities, and crypto, plus headline news. All numbers are
-            sourced from Yahoo Finance and Google News in real time.
+          <h2 className="mt-1.5 text-3xl sm:text-4xl font-bold tracking-tight bg-gradient-to-br from-gray-50 to-gray-300 bg-clip-text text-transparent">
+            Markets &amp; Headlines
+          </h2>
+          <p className="mt-2 text-xs sm:text-sm text-gray-400 max-w-3xl">
+            Live prices across commodities, equities, crypto, and macro indicators, with real-time news from Google News.
           </p>
         </div>
         <button
           onClick={refresh}
-          className="px-3 py-1.5 text-xs uppercase tracking-wider rounded border bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600"
+          className="self-start px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white transition-colors"
         >
           Refresh
         </button>
