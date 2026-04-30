@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { categoryColor } from '../data/mockData.js';
 import { useLiveData } from '../state/LiveData.jsx';
 
-const FILTERS = ['All', 'Shipping', 'Energy', 'Metals', 'Agri', 'Geopolitical'];
+const FILTERS = ['All', 'Shipping', 'Energy', 'Metals', 'Agri', 'Geopolitical', 'Tech', 'Data', 'Crypto'];
 
 export default function Intel() {
   const { intel, newsLive, newsUpdatedAt, newsLoading, refresh } = useLiveData();
