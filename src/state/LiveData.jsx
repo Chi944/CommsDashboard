@@ -68,7 +68,13 @@ export function LiveDataProvider({ children }) {
       if (!r.ok) throw new Error(`status ${r.status}`);
       const j = await r.json();
       if (j?.ok && Array.isArray(j.items) && j.items.length) {
-        setIntel(j.items);
+        // Pre-classify severity once so every consumer (Intel filter,
+        // notifications drawer, severity dot) reads from the same field.
+        const items = j.items.map((it) => ({
+          ...it,
+          severity: classifySeverity(`${it.headline} ${it.desc}`),
+        }));
+        setIntel(items);
         setNewsUpdatedAt(j.fetchedAt);
         setNewsLive(true);
       }
@@ -92,23 +98,25 @@ export function LiveDataProvider({ children }) {
     fetchNews();
   }, [fetchPrices, fetchNews]);
 
-  // Notifications: derived entirely from live news. Empty if no live feed.
+  // Notifications: latest non-LOW headlines, freshest first, capped to
+  // the past 7 days so we never surface stale ("60d ago") items as
+  // active alerts.
   const notifications = useMemo(() => {
     if (!newsLive || intel.length === 0) return [];
-    const tierRank = { CRITICAL: 0, HIGH: 1, MODERATE: 2, LOW: 3 };
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     return intel
+      .filter((it) => it.severity !== 'LOW' && (it.ts || 0) >= cutoff)
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+      .slice(0, 12)
       .map((it) => ({
         id: `live-${it.id}`,
-        severity: classifySeverity(`${it.headline} ${it.desc}`),
+        severity: it.severity,
         title: it.headline,
         body: it.desc || it.source || '',
         time: it.time,
         url: it.url,
         category: it.category,
-      }))
-      .filter((n) => n.severity !== 'LOW')
-      .sort((a, b) => tierRank[a.severity] - tierRank[b.severity])
-      .slice(0, 12);
+      }));
   }, [intel, newsLive]);
 
   const value = {

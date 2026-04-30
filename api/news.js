@@ -24,7 +24,19 @@ const get = (block, tag) => {
   const m = block.match(re);
   return m ? stripCdata(m[1]) : '';
 };
-const stripHtml = (s) => (s || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+// Google News RSS encodes the description body as escaped HTML inside
+// the <description> CDATA. Decode named + numeric entities before we
+// strip tags, otherwise we render literal "&lt;a href=..." text.
+const decodeEntities = (s) => (s || '')
+  .replace(/&lt;/gi, '<')
+  .replace(/&gt;/gi, '>')
+  .replace(/&quot;/gi, '"')
+  .replace(/&apos;/gi, "'")
+  .replace(/&#39;/gi, "'")
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+  .replace(/&amp;/gi, '&');
+const stripHtml = (s) => decodeEntities(s || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 
 function parseRSS(xml) {
   const items = [];
