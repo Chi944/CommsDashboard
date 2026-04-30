@@ -52,6 +52,12 @@ export const commodities = [
   { ticker: 'ETH',   symbol: 'ETH',    name: 'Ethereum',     category: 'CRYPTO',      unit: '$',       price: 3200,  high: 3250,  low: 3150,  changePct: 0, changeAbs: 0, history: buildHistory(3100, 60, 173) },
   { ticker: 'SOL',   symbol: 'SOL',    name: 'Solana',       category: 'CRYPTO',      unit: '$',       price: 145,   high: 150,   low: 140,   changePct: 0, changeAbs: 0, history: buildHistory(140, 4, 179) },
   { ticker: 'DOGE',  symbol: 'DOGE',   name: 'Dogecoin',     category: 'CRYPTO',      unit: '$',       price: 0.16,  high: 0.17,  low: 0.155, changePct: 0, changeAbs: 0, history: buildHistory(0.16, 0.005, 181) },
+  { ticker: 'SPX',   symbol: 'SPX',    name: 'S&P 500',      category: 'MACRO',       unit: 'index',   price: 5200,  high: 5230,  low: 5180,  changePct: 0, changeAbs: 0, history: buildHistory(5150, 25, 191) },
+  { ticker: 'NDX',   symbol: 'NDX',    name: 'Nasdaq',       category: 'MACRO',       unit: 'index',   price: 16500, high: 16600, low: 16400, changePct: 0, changeAbs: 0, history: buildHistory(16400, 90, 193) },
+  { ticker: 'DJI',   symbol: 'DJI',    name: 'Dow Jones',    category: 'MACRO',       unit: 'index',   price: 39000, high: 39200, low: 38800, changePct: 0, changeAbs: 0, history: buildHistory(38900, 150, 197) },
+  { ticker: 'VIX',   symbol: 'VIX',    name: 'VIX',          category: 'MACRO',       unit: 'index',   price: 14,    high: 14.5,  low: 13.5,  changePct: 0, changeAbs: 0, history: buildHistory(14, 0.6, 199) },
+  { ticker: 'US10Y', symbol: 'US10Y',  name: 'US 10Y Yield', category: 'MACRO',       unit: '%',       price: 4.45,  high: 4.5,   low: 4.4,   changePct: 0, changeAbs: 0, history: buildHistory(4.45, 0.05, 211) },
+  { ticker: 'DXY',   symbol: 'DXY',    name: 'Dollar Index', category: 'MACRO',       unit: 'index',   price: 104,   high: 105,   low: 103,   changePct: 0, changeAbs: 0, history: buildHistory(104, 0.4, 223) },
 ];
 
 // Empty by default — populated by /api/news.
@@ -90,4 +96,5 @@ export const assetCategoryColor = (c) => ({
   TECH:        'text-violet-300',
   DATA:        'text-cyan-300',
   CRYPTO:      'text-amber-300',
+  MACRO:       'text-rose-300',
 }[c] || 'text-gray-300');
