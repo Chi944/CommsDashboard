@@ -3,8 +3,6 @@ import Ticker from './components/Ticker.jsx';
 import Nav from './components/Nav.jsx';
 import Overview from './components/Overview.jsx';
 import Prices from './components/Prices.jsx';
-import Routes from './components/Routes.jsx';
-import Calculator from './components/Calculator.jsx';
 import Intel from './components/Intel.jsx';
 import NotificationsDrawer from './components/NotificationsDrawer.jsx';
 import { LiveDataProvider } from './state/LiveData.jsx';
@@ -24,16 +22,14 @@ export default function App() {
         <main className="px-6 py-6 max-w-[1600px] mx-auto">
           {tab === 'Overview' && <Overview />}
           {tab === 'Prices' && <Prices />}
-          {tab === 'Routes' && <Routes />}
-          {tab === 'Calculator' && <Calculator />}
           {tab === 'Intel' && <Intel />}
         </main>
 
         <NotificationsDrawer open={alertsOpen} onClose={() => setAlertsOpen(false)} />
 
         <footer className="px-6 py-4 border-t border-gray-800 text-[11px] text-gray-500 flex items-center justify-between">
-          <span>Live: Yahoo Finance (commodities), Google News RSS (intel). Corridors and routes are mocked.</span>
-          <span className="font-mono">v0.3.0</span>
+          <span>Live data: Yahoo Finance (prices), Google News RSS (news). All numbers update from real APIs.</span>
+          <span className="font-mono">v0.4.0</span>
         </footer>
       </div>
     </LiveDataProvider>

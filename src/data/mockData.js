@@ -1,5 +1,6 @@
-// ----------- COMMODITIES -----------
-// Each commodity has 30 days of price history (oldest -> newest)
+// Fallback data used when the live API is unavailable.
+// All on-screen "live" indicators reflect whether the API succeeded.
+
 const seeded = (seed) => {
   let s = seed;
   return () => {
@@ -23,663 +24,40 @@ const buildHistory = (start, vol, seed) => {
   return arr;
 };
 
+// Minimal fallback rows. Real numbers come from /api/prices.
+// Categories: ENERGY, METALS, AGRICULTURE, TECH, DATA, CRYPTO.
 export const commodities = [
-  {
-    ticker: 'CL',
-    symbol: 'WTI',
-    name: 'WTI Crude',
-    category: 'ENERGY',
-    unit: '$/bbl',
-    price: 82.47,
-    high: 83.12,
-    low: 81.05,
-    changePct: 1.42,
-    changeAbs: 1.16,
-    history: buildHistory(80, 1.4, 11),
-  },
-  {
-    ticker: 'BZ',
-    symbol: 'BRENT',
-    name: 'Brent Crude',
-    category: 'ENERGY',
-    unit: '$/bbl',
-    price: 86.91,
-    high: 87.55,
-    low: 85.40,
-    changePct: 1.18,
-    changeAbs: 1.02,
-    history: buildHistory(85, 1.5, 23),
-  },
-  {
-    ticker: 'NG',
-    symbol: 'NATGAS',
-    name: 'Natural Gas',
-    category: 'ENERGY',
-    unit: '$/MMBtu',
-    price: 2.34,
-    high: 2.41,
-    low: 2.28,
-    changePct: -0.85,
-    changeAbs: -0.02,
-    history: buildHistory(2.4, 0.08, 31),
-  },
-  {
-    ticker: 'GC',
-    symbol: 'GOLD',
-    name: 'Gold',
-    category: 'METALS',
-    unit: '$/oz',
-    price: 2342.10,
-    high: 2358.40,
-    low: 2330.55,
-    changePct: 0.62,
-    changeAbs: 14.45,
-    history: buildHistory(2300, 18, 41),
-  },
-  {
-    ticker: 'SI',
-    symbol: 'SILVER',
-    name: 'Silver',
-    category: 'METALS',
-    unit: '$/oz',
-    price: 28.94,
-    high: 29.31,
-    low: 28.50,
-    changePct: 1.05,
-    changeAbs: 0.30,
-    history: buildHistory(28, 0.4, 53),
-  },
-  {
-    ticker: 'HG',
-    symbol: 'COPPER',
-    name: 'Copper',
-    category: 'METALS',
-    unit: '$/lb',
-    price: 4.51,
-    high: 4.58,
-    low: 4.45,
-    changePct: 0.78,
-    changeAbs: 0.035,
-    history: buildHistory(4.4, 0.06, 67),
-  },
-  {
-    ticker: 'ZW',
-    symbol: 'WHEAT',
-    name: 'Wheat',
-    category: 'AGRICULTURE',
-    unit: '¢/bu',
-    price: 612.50,
-    high: 619.25,
-    low: 605.00,
-    changePct: -0.42,
-    changeAbs: -2.60,
-    history: buildHistory(620, 8, 71),
-  },
-  {
-    ticker: 'ZC',
-    symbol: 'CORN',
-    name: 'Corn',
-    category: 'AGRICULTURE',
-    unit: '¢/bu',
-    price: 445.75,
-    high: 449.50,
-    low: 442.00,
-    changePct: 0.34,
-    changeAbs: 1.50,
-    history: buildHistory(440, 6, 79),
-  },
-  {
-    ticker: 'ZS',
-    symbol: 'SOY',
-    name: 'Soybeans',
-    category: 'AGRICULTURE',
-    unit: '¢/bu',
-    price: 1187.25,
-    high: 1198.00,
-    low: 1180.50,
-    changePct: 0.55,
-    changeAbs: 6.50,
-    history: buildHistory(1175, 12, 89),
-  },
+  { ticker: 'CL',    symbol: 'WTI',    name: 'WTI Crude',    category: 'ENERGY',      unit: '$/bbl',   price: 80,    high: 81,    low: 79,    changePct: 0, changeAbs: 0, history: buildHistory(80, 1.4, 11) },
+  { ticker: 'BZ',    symbol: 'BRENT',  name: 'Brent Crude',  category: 'ENERGY',      unit: '$/bbl',   price: 85,    high: 86,    low: 84,    changePct: 0, changeAbs: 0, history: buildHistory(85, 1.5, 23) },
+  { ticker: 'NG',    symbol: 'NATGAS', name: 'Natural Gas',  category: 'ENERGY',      unit: '$/MMBtu', price: 2.4,   high: 2.45,  low: 2.35,  changePct: 0, changeAbs: 0, history: buildHistory(2.4, 0.08, 31) },
+  { ticker: 'GC',    symbol: 'GOLD',   name: 'Gold',         category: 'METALS',      unit: '$/oz',    price: 2300,  high: 2320,  low: 2280,  changePct: 0, changeAbs: 0, history: buildHistory(2300, 18, 41) },
+  { ticker: 'SI',    symbol: 'SILVER', name: 'Silver',       category: 'METALS',      unit: '$/oz',    price: 28,    high: 28.5,  low: 27.5,  changePct: 0, changeAbs: 0, history: buildHistory(28, 0.4, 53) },
+  { ticker: 'HG',    symbol: 'COPPER', name: 'Copper',       category: 'METALS',      unit: '$/lb',    price: 4.4,   high: 4.5,   low: 4.3,   changePct: 0, changeAbs: 0, history: buildHistory(4.4, 0.06, 67) },
+  { ticker: 'ZW',    symbol: 'WHEAT',  name: 'Wheat',        category: 'AGRICULTURE', unit: '¢/bu',    price: 620,   high: 625,   low: 615,   changePct: 0, changeAbs: 0, history: buildHistory(620, 8, 71) },
+  { ticker: 'ZC',    symbol: 'CORN',   name: 'Corn',         category: 'AGRICULTURE', unit: '¢/bu',    price: 440,   high: 445,   low: 435,   changePct: 0, changeAbs: 0, history: buildHistory(440, 6, 79) },
+  { ticker: 'ZS',    symbol: 'SOY',    name: 'Soybeans',     category: 'AGRICULTURE', unit: '¢/bu',    price: 1175,  high: 1185,  low: 1165,  changePct: 0, changeAbs: 0, history: buildHistory(1175, 12, 89) },
+  { ticker: 'AAPL',  symbol: 'AAPL',   name: 'Apple',        category: 'TECH',        unit: '$',       price: 220,   high: 222,   low: 218,   changePct: 0, changeAbs: 0, history: buildHistory(215, 2.5, 97) },
+  { ticker: 'MSFT',  symbol: 'MSFT',   name: 'Microsoft',    category: 'TECH',        unit: '$',       price: 420,   high: 425,   low: 415,   changePct: 0, changeAbs: 0, history: buildHistory(420, 4, 103) },
+  { ticker: 'NVDA',  symbol: 'NVDA',   name: 'Nvidia',       category: 'TECH',        unit: '$',       price: 880,   high: 895,   low: 870,   changePct: 0, changeAbs: 0, history: buildHistory(870, 25, 109) },
+  { ticker: 'GOOGL', symbol: 'GOOGL',  name: 'Alphabet',     category: 'TECH',        unit: '$',       price: 175,   high: 177,   low: 173,   changePct: 0, changeAbs: 0, history: buildHistory(170, 2.2, 113) },
+  { ticker: 'META',  symbol: 'META',   name: 'Meta',         category: 'TECH',        unit: '$',       price: 500,   high: 510,   low: 495,   changePct: 0, changeAbs: 0, history: buildHistory(490, 6, 127) },
+  { ticker: 'TSLA',  symbol: 'TSLA',   name: 'Tesla',        category: 'TECH',        unit: '$',       price: 200,   high: 205,   low: 195,   changePct: 0, changeAbs: 0, history: buildHistory(195, 5, 131) },
+  { ticker: 'PLTR',  symbol: 'PLTR',   name: 'Palantir',     category: 'DATA',        unit: '$',       price: 25,    high: 26,    low: 24,    changePct: 0, changeAbs: 0, history: buildHistory(23, 0.6, 137) },
+  { ticker: 'SNOW',  symbol: 'SNOW',   name: 'Snowflake',    category: 'DATA',        unit: '$',       price: 160,   high: 165,   low: 155,   changePct: 0, changeAbs: 0, history: buildHistory(155, 3.2, 139) },
+  { ticker: 'NET',   symbol: 'NET',    name: 'Cloudflare',   category: 'DATA',        unit: '$',       price: 95,    high: 97,    low: 93,    changePct: 0, changeAbs: 0, history: buildHistory(92, 1.8, 149) },
+  { ticker: 'DDOG',  symbol: 'DDOG',   name: 'Datadog',      category: 'DATA',        unit: '$',       price: 130,   high: 134,   low: 128,   changePct: 0, changeAbs: 0, history: buildHistory(128, 2.0, 151) },
+  { ticker: 'MDB',   symbol: 'MDB',    name: 'MongoDB',      category: 'DATA',        unit: '$',       price: 360,   high: 370,   low: 350,   changePct: 0, changeAbs: 0, history: buildHistory(355, 6, 157) },
+  { ticker: 'CRWD',  symbol: 'CRWD',   name: 'CrowdStrike',  category: 'DATA',        unit: '$',       price: 320,   high: 325,   low: 315,   changePct: 0, changeAbs: 0, history: buildHistory(315, 5, 163) },
+  { ticker: 'BTC',   symbol: 'BTC',    name: 'Bitcoin',      category: 'CRYPTO',      unit: '$',       price: 65000, high: 66000, low: 64000, changePct: 0, changeAbs: 0, history: buildHistory(63000, 800, 167) },
+  { ticker: 'ETH',   symbol: 'ETH',    name: 'Ethereum',     category: 'CRYPTO',      unit: '$',       price: 3200,  high: 3250,  low: 3150,  changePct: 0, changeAbs: 0, history: buildHistory(3100, 60, 173) },
+  { ticker: 'SOL',   symbol: 'SOL',    name: 'Solana',       category: 'CRYPTO',      unit: '$',       price: 145,   high: 150,   low: 140,   changePct: 0, changeAbs: 0, history: buildHistory(140, 4, 179) },
+  { ticker: 'DOGE',  symbol: 'DOGE',   name: 'Dogecoin',     category: 'CRYPTO',      unit: '$',       price: 0.16,  high: 0.17,  low: 0.155, changePct: 0, changeAbs: 0, history: buildHistory(0.16, 0.005, 181) },
 ];
 
-// ----------- CORRIDORS -----------
-const buildScoreHistory = (target, vol, seed) => {
-  const rnd = seeded(seed);
-  const arr = [];
-  let s = Math.max(0, target - vol * 4);
-  for (let i = 29; i >= 0; i--) {
-    s = s + (rnd() - 0.45) * vol;
-    s = Math.max(0, Math.min(100, s));
-    arr.push({ day: `D-${i}`, score: Math.round(s) });
-  }
-  // Force latest reading to match target
-  arr[arr.length - 1].score = target;
-  return arr;
-};
-
-export const corridors = [
-  {
-    id: 'suez',
-    name: 'Suez Canal / Red Sea',
-    risk: 'CRITICAL',
-    score: 88,
-    scoreHistory: buildScoreHistory(88, 6, 101),
-    vessels: 170,
-    description: 'Houthi attacks on commercial vessels have triggered mass diversions around the Cape of Good Hope, adding 10–14 days of transit and inflating insurance premiums.',
-    tags: ['Houthi attacks', 'Insurance surcharges', 'Carrier diversions'],
-  },
-  {
-    id: 'hormuz',
-    name: 'Strait of Hormuz',
-    risk: 'HIGH',
-    score: 72,
-    scoreHistory: buildScoreHistory(72, 5, 113),
-    vessels: 85,
-    description: 'Iran–US tensions escalating; tanker seizures and GPS spoofing reported. ~20% of global oil flows through this 21-nm-wide chokepoint.',
-    tags: ['Iran-US tensions', 'Oil tanker seizure risks'],
-  },
-  {
-    id: 'cape',
-    name: 'Cape of Good Hope',
-    risk: 'MODERATE',
-    score: 35,
-    scoreHistory: buildScoreHistory(35, 4, 127),
-    vessels: 220,
-    description: 'Surge in re-routed traffic from Suez has overloaded South African bunkering. Weather windows tightening as winter swell builds.',
-    tags: ['Port congestion', 'Weather delays'],
-  },
-  {
-    id: 'panama',
-    name: 'Panama Canal',
-    risk: 'LOW',
-    score: 18,
-    scoreHistory: buildScoreHistory(18, 4, 139),
-    vessels: 30,
-    description: 'Gatun Lake levels recovering after multi-year drought. ACP has lifted some draft restrictions; daily transits returning to normal.',
-    tags: ['Water level monitoring', 'Draft restrictions'],
-  },
-];
-
-// ----------- PORTS & CHOKEPOINTS (lat/lon) -----------
-export const ports = {
-  Shanghai:    { lat: 31.2,  lon: 121.5,  congestion: 'high',   waitDays: 3.4 },
-  Busan:       { lat: 35.1,  lon: 129.0,  congestion: 'medium', waitDays: 1.8 },
-  Singapore:   { lat: 1.3,   lon: 103.8,  congestion: 'high',   waitDays: 2.9 },
-  Tokyo:       { lat: 35.6,  lon: 139.7,  congestion: 'low',    waitDays: 0.6 },
-  Mumbai:      { lat: 19.0,  lon: 72.8,   congestion: 'medium', waitDays: 2.2 },
-  Jeddah:      { lat: 21.5,  lon: 39.2,   congestion: 'high',   waitDays: 4.1 },
-  RasTanura:   { lat: 26.6,  lon: 50.2,   congestion: 'low',    waitDays: 0.4 },
-  Rotterdam:   { lat: 51.9,  lon: 4.5,    congestion: 'medium', waitDays: 1.5 },
-  Genoa:       { lat: 44.4,  lon: 8.9,    congestion: 'medium', waitDays: 1.9 },
-  LosAngeles:  { lat: 33.7,  lon: -118.3, congestion: 'low',    waitDays: 0.7 },
-  Vancouver:   { lat: 49.3,  lon: -123.1, congestion: 'low',    waitDays: 0.5 },
-  NewYork:     { lat: 40.7,  lon: -74.0,  congestion: 'low',    waitDays: 0.8 },
-  Houston:     { lat: 29.7,  lon: -95.4,  congestion: 'medium', waitDays: 1.6 },
-  Santos:      { lat: -23.9, lon: -46.3,  congestion: 'high',   waitDays: 3.7 },
-  Colon:       { lat: 9.4,   lon: -79.9,  congestion: 'medium', waitDays: 1.2 },
-};
-
-export const congestionColor = (c) => ({
-  low:    '#22c55e',
-  medium: '#eab308',
-  high:   '#ef4444',
-}[c] || '#6b7280');
-
-export const congestionTextClass = (c) => ({
-  low:    'text-green-400',
-  medium: 'text-yellow-400',
-  high:   'text-red-400',
-}[c] || 'text-gray-400');
-
-export const chokepoints = [
-  { id: 'suez',    name: 'Suez',      lat: 30.0,  lon: 32.5 },
-  { id: 'hormuz',  name: 'Hormuz',    lat: 26.6,  lon: 56.3 },
-  { id: 'malacca', name: 'Malacca',   lat: 2.5,   lon: 101.5 },
-  { id: 'panama',  name: 'Panama',    lat: 9.1,   lon: -79.7 },
-  { id: 'cape',    name: 'Cape Town', lat: -33.9, lon: 18.4 },
-  { id: 'gibraltar', name: 'Gibraltar', lat: 36.1, lon: -5.4 },
-];
-
-// ----------- 15 SHIPPING ROUTES -----------
-export const routes = [
-  {
-    id: 'r1',
-    name: 'Shanghai → Rotterdam (via Suez)',
-    region: 'Asia↔Europe',
-    origin: 'Shanghai',
-    dest: 'Rotterdam',
-    via: ['malacca', 'suez', 'gibraltar'],
-    risk: 'CRITICAL',
-    distance: 11200,
-    transitDays: 28,
-    cost: 2_450_000,
-    canalFee: 720_000,
-    description: 'Primary Asia-Europe lane. Currently under severe stress from Red Sea attacks.',
-    altId: 'r2',
-  },
-  {
-    id: 'r2',
-    name: 'Shanghai → Rotterdam (via Cape)',
-    region: 'Asia↔Europe',
-    origin: 'Shanghai',
-    dest: 'Rotterdam',
-    via: ['malacca', 'cape', 'gibraltar'],
-    risk: 'MODERATE',
-    distance: 14300,
-    transitDays: 38,
-    cost: 2_780_000,
-    canalFee: 0,
-    description: 'Diversion around Africa. +10 days but no Red Sea exposure.',
-    altId: 'r1',
-  },
-  {
-    id: 'r3',
-    name: 'Busan → Genoa (via Suez)',
-    region: 'Asia↔Europe',
-    origin: 'Busan',
-    dest: 'Genoa',
-    via: ['malacca', 'suez'],
-    risk: 'CRITICAL',
-    distance: 10800,
-    transitDays: 27,
-    cost: 2_310_000,
-    canalFee: 700_000,
-    description: 'Korea–Mediterranean lane, exposed to Bab-el-Mandeb risk.',
-    altId: 'r4',
-  },
-  {
-    id: 'r4',
-    name: 'Busan → Genoa (via Cape)',
-    region: 'Asia↔Europe',
-    origin: 'Busan',
-    dest: 'Genoa',
-    via: ['malacca', 'cape', 'gibraltar'],
-    risk: 'MODERATE',
-    distance: 14600,
-    transitDays: 39,
-    cost: 2_690_000,
-    canalFee: 0,
-    description: 'Cape diversion equivalent for Med-bound traffic.',
-    altId: 'r3',
-  },
-  {
-    id: 'r5',
-    name: 'Shanghai → Los Angeles',
-    region: 'Trans-Pacific',
-    origin: 'Shanghai',
-    dest: 'LosAngeles',
-    via: [],
-    risk: 'LOW',
-    distance: 6500,
-    transitDays: 15,
-    cost: 1_420_000,
-    canalFee: 0,
-    description: 'Trans-Pacific main lane. Currently calm.',
-  },
-  {
-    id: 'r6',
-    name: 'Tokyo → Vancouver',
-    region: 'Trans-Pacific',
-    origin: 'Tokyo',
-    dest: 'Vancouver',
-    via: [],
-    risk: 'LOW',
-    distance: 4400,
-    transitDays: 11,
-    cost: 980_000,
-    canalFee: 0,
-    description: 'Great-circle North Pacific routing.',
-  },
-  {
-    id: 'r7',
-    name: 'Singapore → Los Angeles',
-    region: 'Trans-Pacific',
-    origin: 'Singapore',
-    dest: 'LosAngeles',
-    via: [],
-    risk: 'LOW',
-    distance: 8400,
-    transitDays: 19,
-    cost: 1_710_000,
-    canalFee: 0,
-    description: 'Southeast Asia–US West Coast.',
-  },
-  {
-    id: 'r8',
-    name: 'New York → Rotterdam',
-    region: 'Trans-Atlantic',
-    origin: 'NewYork',
-    dest: 'Rotterdam',
-    via: [],
-    risk: 'LOW',
-    distance: 3300,
-    transitDays: 8,
-    cost: 720_000,
-    canalFee: 0,
-    description: 'Standard North Atlantic crossing.',
-  },
-  {
-    id: 'r9',
-    name: 'Houston → Rotterdam',
-    region: 'Trans-Atlantic',
-    origin: 'Houston',
-    dest: 'Rotterdam',
-    via: [],
-    risk: 'LOW',
-    distance: 5100,
-    transitDays: 12,
-    cost: 1_080_000,
-    canalFee: 0,
-    description: 'US Gulf–Northwest Europe energy lane.',
-  },
-  {
-    id: 'r10',
-    name: 'Ras Tanura → Rotterdam (via Suez)',
-    region: 'Middle East',
-    origin: 'RasTanura',
-    dest: 'Rotterdam',
-    via: ['hormuz', 'suez', 'gibraltar'],
-    risk: 'CRITICAL',
-    distance: 6500,
-    transitDays: 17,
-    cost: 1_640_000,
-    canalFee: 480_000,
-    description: 'VLCC crude flow. Hormuz + Bab-el-Mandeb double exposure.',
-    altId: 'r11',
-  },
-  {
-    id: 'r11',
-    name: 'Ras Tanura → Rotterdam (via Cape)',
-    region: 'Middle East',
-    origin: 'RasTanura',
-    dest: 'Rotterdam',
-    via: ['hormuz', 'cape', 'gibraltar'],
-    risk: 'HIGH',
-    distance: 11200,
-    transitDays: 30,
-    cost: 2_010_000,
-    canalFee: 0,
-    description: 'Cape routing avoids Red Sea but Hormuz risk remains.',
-    altId: 'r10',
-  },
-  {
-    id: 'r12',
-    name: 'Jeddah → Mumbai',
-    region: 'Middle East',
-    origin: 'Jeddah',
-    dest: 'Mumbai',
-    via: [],
-    risk: 'HIGH',
-    distance: 2600,
-    transitDays: 7,
-    cost: 540_000,
-    canalFee: 0,
-    description: 'Arabian Sea crossing, periodic piracy bulletins.',
-  },
-  {
-    id: 'r13',
-    name: 'Singapore → Mumbai',
-    region: 'Intra-Asia',
-    origin: 'Singapore',
-    dest: 'Mumbai',
-    via: [],
-    risk: 'LOW',
-    distance: 2400,
-    transitDays: 6,
-    cost: 480_000,
-    canalFee: 0,
-    description: 'Indian Ocean intra-regional.',
-  },
-  {
-    id: 'r14',
-    name: 'Shanghai → Singapore',
-    region: 'Intra-Asia',
-    origin: 'Shanghai',
-    dest: 'Singapore',
-    via: [],
-    risk: 'LOW',
-    distance: 2200,
-    transitDays: 5,
-    cost: 410_000,
-    canalFee: 0,
-    description: 'Coastal intra-Asia hop.',
-  },
-  {
-    id: 'r15',
-    name: 'Santos → Colón (Panama)',
-    region: 'Americas',
-    origin: 'Santos',
-    dest: 'Colon',
-    via: ['panama'],
-    risk: 'LOW',
-    distance: 4100,
-    transitDays: 10,
-    cost: 920_000,
-    canalFee: 180_000,
-    description: 'Brazil east coast to Panama hub.',
-  },
-];
-
-// ----------- VESSEL TYPES -----------
-export const vesselTypes = [
-  { id: 'vlcc',     name: 'VLCC',            fuelTonsPerDay: 75, crewPerDay: 8500,  capex: 1.4 },
-  { id: 'suezmax',  name: 'Suezmax',         fuelTonsPerDay: 55, crewPerDay: 7200,  capex: 1.1 },
-  { id: 'lgcontainer', name: 'Large Container', fuelTonsPerDay: 220, crewPerDay: 12000, capex: 1.6 },
-  { id: 'mdcontainer', name: 'Mid Container',   fuelTonsPerDay: 110, crewPerDay: 9000,  capex: 1.2 },
-  { id: 'capesize', name: 'Capesize Bulk',   fuelTonsPerDay: 45, crewPerDay: 6500,  capex: 1.0 },
-  { id: 'lng',      name: 'LNG Carrier',     fuelTonsPerDay: 95, crewPerDay: 11000, capex: 1.5 },
-];
-
-// ----------- INTEL FEED -----------
-export const intel = [
-  {
-    id: 1,
-    category: 'Shipping',
-    source: 'Lloyd\'s List',
-    time: '12 min ago',
-    headline: 'Maersk extends Cape of Good Hope diversion through Q3',
-    desc: 'Carrier signals continued Red Sea avoidance amid renewed Houthi missile launches.',
-  },
-  {
-    id: 2,
-    category: 'Geopolitical',
-    source: 'Reuters',
-    time: '34 min ago',
-    headline: 'Iran seizes container ship near Strait of Hormuz',
-    desc: 'IRGC fast boats boarded a Portuguese-flagged vessel; crew of 17 detained.',
-  },
-  {
-    id: 3,
-    category: 'Energy',
-    source: 'Bloomberg',
-    time: '1 hr ago',
-    headline: 'Brent surges past $87 on Middle East risk premium',
-    desc: 'Traders price in 4–6% war-risk premium ahead of weekly inventory data.',
-  },
-  {
-    id: 4,
-    category: 'Shipping',
-    source: 'TradeWinds',
-    time: '2 hr ago',
-    headline: 'War-risk insurance for Red Sea transits hits 1.2% of hull value',
-    desc: 'Premiums up 7x year-over-year; some underwriters withdrawing coverage entirely.',
-  },
-  {
-    id: 5,
-    category: 'Metals',
-    source: 'LME Bulletin',
-    time: '3 hr ago',
-    headline: 'Copper inventories at LME warehouses fall 18% week-over-week',
-    desc: 'Tightening stocks support Cu prices despite weak China PMI.',
-  },
-  {
-    id: 6,
-    category: 'Agri',
-    source: 'USDA WASDE',
-    time: '4 hr ago',
-    headline: 'Black Sea wheat exports stall amid drone strikes on Odesa terminals',
-    desc: 'Ukrainian corridor shipments down 22% MoM; CBOT wheat futures rally.',
-  },
-  {
-    id: 7,
-    category: 'Geopolitical',
-    source: 'AP',
-    time: '5 hr ago',
-    headline: 'US Navy CENTCOM intercepts seven UAVs over southern Red Sea',
-    desc: 'Operation Prosperity Guardian intercepts continue at elevated tempo.',
-  },
-  {
-    id: 8,
-    category: 'Shipping',
-    source: 'Splash 247',
-    time: '7 hr ago',
-    headline: 'Panama Canal raises daily booking slots to 32 transits',
-    desc: 'Reservoir levels normalizing; ACP eyes pre-drought capacity by Q4.',
-  },
-  {
-    id: 9,
-    category: 'Energy',
-    source: 'Argus',
-    time: '9 hr ago',
-    headline: 'Asian LNG spot prices firm on Australian supply outage',
-    desc: 'JKM tracker climbs 4% as Gorgon Train 2 enters unplanned maintenance.',
-  },
-  {
-    id: 10,
-    category: 'Metals',
-    source: 'Reuters',
-    time: '11 hr ago',
-    headline: 'Gold breaches $2,340 as safe-haven flows accelerate',
-    desc: 'ETF inflows recover after three months of outflows.',
-  },
-  {
-    id: 11,
-    category: 'Shipping',
-    source: 'gCaptain',
-    time: '14 hr ago',
-    headline: 'Singapore bunker sales hit record on Cape diversion demand',
-    desc: 'VLSFO uptake up 11% YoY as longer routes drive fuel offtake.',
-  },
-  {
-    id: 12,
-    category: 'Agri',
-    source: 'Reuters',
-    time: '17 hr ago',
-    headline: 'Brazil soybean harvest 78% complete, ahead of 5-yr average',
-    desc: 'Santos export queues thinning; freight rates ease into May.',
-  },
-  {
-    id: 13,
-    category: 'Geopolitical',
-    source: 'BBC',
-    time: '20 hr ago',
-    headline: 'EU agrees on 14th Russia sanctions package targeting LNG transshipment',
-    desc: 'Phased ban on third-country re-export of Russian LNG via EU ports.',
-  },
-  {
-    id: 14,
-    category: 'Energy',
-    source: 'EIA',
-    time: '22 hr ago',
-    headline: 'US crude stocks build 3.4M bbl, beating 1.1M consensus',
-    desc: 'Refinery utilization slips to 87.5%; gasoline draws sharper than expected.',
-  },
-  {
-    id: 15,
-    category: 'Metals',
-    source: 'SHFE',
-    time: '1 day ago',
-    headline: 'Shanghai copper premium widens to $58/t over LME',
-    desc: 'Domestic Chinese demand from grid spending outpaces import flow.',
-  },
-];
+// Empty by default — populated by /api/news.
+export const intel = [];
 
 // ----------- HELPERS -----------
-export const riskColor = (risk) => {
-  switch (risk) {
-    case 'CRITICAL': return 'red';
-    case 'HIGH':     return 'orange';
-    case 'MODERATE': return 'yellow';
-    case 'LOW':      return 'green';
-    default:         return 'gray';
-  }
-};
-
-export const riskBgClass = (risk) => ({
-  CRITICAL: 'bg-red-500',
-  HIGH:     'bg-orange-500',
-  MODERATE: 'bg-yellow-500',
-  LOW:      'bg-green-500',
-}[risk] || 'bg-gray-500');
-
-export const riskTextClass = (risk) => ({
-  CRITICAL: 'text-red-400',
-  HIGH:     'text-orange-400',
-  MODERATE: 'text-yellow-400',
-  LOW:      'text-green-400',
-}[risk] || 'text-gray-400');
-
-export const riskBorderClass = (risk) => ({
-  CRITICAL: 'border-red-500/60',
-  HIGH:     'border-orange-500/60',
-  MODERATE: 'border-yellow-500/60',
-  LOW:      'border-green-500/60',
-}[risk] || 'border-gray-700');
-
-export const riskStrokeHex = (risk) => ({
-  CRITICAL: '#ef4444',
-  HIGH:     '#f97316',
-  MODERATE: '#eab308',
-  LOW:      '#22c55e',
-}[risk] || '#6b7280');
-
-// ----------- NOTIFICATIONS / ALERTS -----------
-export const notifications = [
-  {
-    id: 'n1',
-    severity: 'CRITICAL',
-    title: 'Missile attack reported in Bab-el-Mandeb',
-    body: 'Two commercial vessels reported near-misses 30nm SW of Mokha. CENTCOM responding.',
-    time: '4 min ago',
-  },
-  {
-    id: 'n2',
-    severity: 'HIGH',
-    title: 'Hormuz GPS spoofing event',
-    body: 'AIS positions for 12 tankers showing inland fixes. Ports advising visual navigation.',
-    time: '18 min ago',
-  },
-  {
-    id: 'n3',
-    severity: 'MODERATE',
-    title: 'Cape Town bunker queue exceeds 38 hrs',
-    body: 'Diverted traffic overwhelming local supply. Recommend topping off in Singapore.',
-    time: '1 hr ago',
-  },
-  {
-    id: 'n4',
-    severity: 'HIGH',
-    title: 'Brent breaks $87 — risk premium expanding',
-    body: 'Front-month Brent +1.8% in two hours on Iran-Israel rhetoric.',
-    time: '2 hr ago',
-  },
-  {
-    id: 'n5',
-    severity: 'LOW',
-    title: 'Panama Canal lifts draft restriction by 1ft',
-    body: 'Gatun reservoir +0.6m WoW; ACP raises max draft to 45ft effective Monday.',
-    time: '5 hr ago',
-  },
-  {
-    id: 'n6',
-    severity: 'MODERATE',
-    title: 'War-risk premium quote: Red Sea hull cover',
-    body: 'Lloyd\'s syndicate 2147 raises rate to 1.35% of hull value (was 1.2%).',
-    time: '8 hr ago',
-  },
-];
-
 export const severityBg = (s) => ({
   CRITICAL: 'bg-red-500',
   HIGH:     'bg-orange-500',
@@ -687,10 +65,29 @@ export const severityBg = (s) => ({
   LOW:      'bg-green-500',
 }[s] || 'bg-gray-500');
 
+export const severityText = (s) => ({
+  CRITICAL: 'text-red-400',
+  HIGH:     'text-orange-400',
+  MODERATE: 'text-yellow-400',
+  LOW:      'text-green-400',
+}[s] || 'text-gray-400');
+
 export const categoryColor = (c) => ({
   Shipping:     'bg-blue-500/20 text-blue-300 border-blue-500/40',
   Energy:       'bg-orange-500/20 text-orange-300 border-orange-500/40',
   Metals:       'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
   Agri:         'bg-green-500/20 text-green-300 border-green-500/40',
   Geopolitical: 'bg-red-500/20 text-red-300 border-red-500/40',
+  Tech:         'bg-violet-500/20 text-violet-300 border-violet-500/40',
+  Data:         'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+  Crypto:       'bg-amber-500/20 text-amber-300 border-amber-500/40',
 }[c] || 'bg-gray-500/20 text-gray-300 border-gray-500/40');
+
+export const assetCategoryColor = (c) => ({
+  ENERGY:      'text-orange-300',
+  METALS:      'text-yellow-300',
+  AGRICULTURE: 'text-green-300',
+  TECH:        'text-violet-300',
+  DATA:        'text-cyan-300',
+  CRYPTO:      'text-amber-300',
+}[c] || 'text-gray-300');

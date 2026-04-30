@@ -1,7 +1,8 @@
-// Vercel serverless function: live shipping/commodities/geopolitical news.
+// Vercel serverless function: live news from Google News RSS.
+// Each item carries the real article URL (via Google's redirector to
+// the original publisher). No API key required.
+//
 // GET /api/news -> { ok, fetchedAt, items: [...] }
-// Source: Google News RSS (no API key required). Each item carries the
-// real article URL via Google's redirector, opening the original publisher.
 
 const QUERIES = [
   { category: 'Shipping',     q: 'shipping disruption red sea suez container' },
@@ -9,10 +10,13 @@ const QUERIES = [
   { category: 'Metals',       q: 'gold silver copper futures price' },
   { category: 'Agri',         q: 'wheat corn soybean futures price' },
   { category: 'Geopolitical', q: 'iran israel hormuz strait tanker' },
+  { category: 'Tech',         q: 'tech stocks earnings Apple Microsoft Nvidia' },
+  { category: 'Data',         q: 'AI infrastructure cloud computing Palantir Snowflake' },
+  { category: 'Crypto',       q: 'bitcoin ethereum cryptocurrency price' },
 ];
 
 const PER_QUERY = 4;
-const TOTAL_LIMIT = 24;
+const TOTAL_LIMIT = 36;
 
 const stripCdata = (s) => (s || '').replace(/^\s*<!\[CDATA\[/, '').replace(/\]\]>\s*$/, '').trim();
 const get = (block, tag) => {
@@ -90,7 +94,6 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Dedupe by URL
     const seen = new Set();
     const items = [];
     for (const it of all.sort((a, b) => b.ts - a.ts)) {

@@ -1,19 +1,13 @@
-// Vercel serverless function: live commodity futures from Yahoo Finance.
-// GET /api/prices  -> { ok, fetchedAt, commodities: [...] }
+// Vercel serverless function: live prices for all tracked assets.
+// Pulls 1-month daily history from Yahoo Finance for sparklines and
+// derives current quote, today's high/low and intraday change.
+//
+// GET /api/prices -> { ok, fetchedAt, partial, commodities: [...] }
 
-const SYMBOLS = [
-  { ticker: 'CL', symbol: 'WTI',    name: 'WTI Crude',   category: 'ENERGY',      unit: '$/bbl',   yahoo: 'CL=F' },
-  { ticker: 'BZ', symbol: 'BRENT',  name: 'Brent Crude', category: 'ENERGY',      unit: '$/bbl',   yahoo: 'BZ=F' },
-  { ticker: 'NG', symbol: 'NATGAS', name: 'Natural Gas', category: 'ENERGY',      unit: '$/MMBtu', yahoo: 'NG=F' },
-  { ticker: 'GC', symbol: 'GOLD',   name: 'Gold',        category: 'METALS',      unit: '$/oz',    yahoo: 'GC=F' },
-  { ticker: 'SI', symbol: 'SILVER', name: 'Silver',      category: 'METALS',      unit: '$/oz',    yahoo: 'SI=F' },
-  { ticker: 'HG', symbol: 'COPPER', name: 'Copper',      category: 'METALS',      unit: '$/lb',    yahoo: 'HG=F' },
-  { ticker: 'ZW', symbol: 'WHEAT',  name: 'Wheat',       category: 'AGRICULTURE', unit: '¢/bu',    yahoo: 'ZW=F' },
-  { ticker: 'ZC', symbol: 'CORN',   name: 'Corn',        category: 'AGRICULTURE', unit: '¢/bu',    yahoo: 'ZC=F' },
-  { ticker: 'ZS', symbol: 'SOY',    name: 'Soybeans',    category: 'AGRICULTURE', unit: '¢/bu',    yahoo: 'ZS=F' },
-];
+import { SYMBOLS } from '../lib/symbols.js';
 
 const round2 = (n) => Math.round(n * 100) / 100;
+const round4 = (n) => Math.round(n * 10000) / 10000;
 
 async function fetchOne(s) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s.yahoo)}?interval=1d&range=1mo`;
@@ -39,7 +33,8 @@ async function fetchOne(s) {
   for (let i = 0; i < ts.length; i++) {
     if (closes[i] != null) {
       const d = new Date(ts[i] * 1000);
-      points.push({ t: ts[i], date: d.toISOString().slice(5, 10), price: round2(closes[i]) });
+      const r2 = closes[i] < 1 ? round4(closes[i]) : round2(closes[i]);
+      points.push({ t: ts[i], date: d.toISOString().slice(5, 10), price: r2 });
     }
   }
   if (points.length === 0) throw new Error(`${s.yahoo} no closes`);
@@ -56,6 +51,7 @@ async function fetchOne(s) {
   const changePct = prev ? (changeAbs / prev) * 100 : 0;
   const todayHigh = highs[highs.length - 1] ?? last;
   const todayLow  = lows[lows.length - 1]  ?? last;
+  const r2 = (n) => last < 1 ? round4(n) : round2(n);
 
   return {
     ticker: s.ticker,
@@ -63,10 +59,10 @@ async function fetchOne(s) {
     name: s.name,
     category: s.category,
     unit: s.unit,
-    price: round2(last),
-    high: round2(todayHigh),
-    low: round2(todayLow),
-    changeAbs: round2(changeAbs),
+    price: r2(last),
+    high: r2(todayHigh),
+    low: r2(todayLow),
+    changeAbs: round4(changeAbs),
     changePct: round2(changePct),
     history,
   };

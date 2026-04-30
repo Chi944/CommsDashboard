@@ -1,11 +1,6 @@
 import React, { useMemo } from 'react';
-import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend,
-} from 'recharts';
-import {
-  corridors, riskBgClass, riskTextClass, riskBorderClass, riskStrokeHex,
-} from '../data/mockData.js';
 import { useLiveData } from '../state/LiveData.jsx';
+import { categoryColor, assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
 
 const StatCard = ({ label, value, sub, accent }) => (
@@ -16,71 +11,28 @@ const StatCard = ({ label, value, sub, accent }) => (
   </div>
 );
 
-const CorridorCard = ({ c }) => (
-  <div className={`bg-gray-900 border ${riskBorderClass(c.risk)} rounded-lg p-5 flex flex-col gap-4`}>
-    <div className="flex items-start justify-between">
-      <div>
-        <div className="text-base font-semibold text-gray-100">{c.name}</div>
-        <div className="text-xs text-gray-500 mt-0.5">Vessels affected: <span className="font-mono text-gray-300">{c.vessels}</span></div>
-      </div>
-      <span className={`text-[10px] uppercase tracking-widest font-bold px-2 py-1 rounded ${riskBgClass(c.risk)} text-gray-950`}>
-        {c.risk}
-      </span>
-    </div>
+const fmtPrice = (c) => {
+  if (!c) return '—';
+  if (c.price < 1) return `$${c.price.toFixed(4)}`;
+  if (c.price >= 1000) return `$${c.price.toLocaleString()}`;
+  return `$${c.price.toFixed(2)}`;
+};
 
-    <div>
-      <div className="flex justify-between text-xs mb-1">
-        <span className="text-gray-500 uppercase tracking-wider">Disruption Score</span>
-        <span className={`font-mono ${riskTextClass(c.risk)}`}>{c.score}/100</span>
-      </div>
-      <div className="h-2 bg-gray-800 rounded">
-        <div className={`h-2 rounded ${riskBgClass(c.risk)}`} style={{ width: `${c.score}%` }} />
-      </div>
-    </div>
-
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-[10px] uppercase tracking-widest text-gray-500">30-day trend</span>
-      <Sparkline
-        data={c.scoreHistory.map((p) => p.score)}
-        color={riskStrokeHex(c.risk)}
-        width={140}
-        height={28}
-        fill
-      />
-    </div>
-
-    <p className="text-xs text-gray-400 leading-relaxed">{c.description}</p>
-
-    <div className="flex flex-wrap gap-1.5">
-      {c.tags.map((t) => (
-        <span key={t} className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-gray-800 text-gray-300 border border-gray-700">
-          {t}
-        </span>
-      ))}
-    </div>
-  </div>
-);
-
-const TopMovers = () => {
-  const { commodities } = useLiveData();
-  const sorted = useMemo(
-    () => [...commodities].sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct)),
-    [commodities]
-  );
+const Movers = ({ commodities, title, sortFn, accent }) => {
+  const sorted = useMemo(() => [...commodities].sort(sortFn), [commodities, sortFn]);
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-gray-100 uppercase tracking-wider">Top Movers</h3>
-        <span className="text-[10px] text-gray-500">|Δ| ranked</span>
+        <h3 className={`text-sm font-semibold uppercase tracking-wider ${accent}`}>{title}</h3>
       </div>
       <ul className="divide-y divide-gray-800">
         {sorted.slice(0, 5).map((c) => {
           const up = c.changePct >= 0;
           return (
             <li key={c.ticker} className="py-2 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-xs text-gray-100">{c.name}</div>
-                <div className="text-[10px] text-gray-500 font-mono">{c.ticker}</div>
+              <div className="min-w-0">
+                <div className="text-xs text-gray-100 truncate">{c.name}</div>
+                <div className={`text-[10px] font-mono ${assetCategoryColor(c.category)}`}>{c.ticker} · {c.category}</div>
               </div>
               <Sparkline
                 data={c.history.map((h) => h.price)}
@@ -99,128 +51,127 @@ const TopMovers = () => {
   );
 };
 
-const DisruptionTrend = () => {
-  // Combine all four corridors' history into a single series indexed by day.
-  const data = useMemo(() => {
-    const ref = corridors[0].scoreHistory;
-    return ref.map((_, i) => {
-      const row = { day: i === ref.length - 1 ? 'today' : `D-${ref.length - 1 - i}` };
-      corridors.forEach((c) => { row[c.name] = c.scoreHistory[i].score; });
-      return row;
-    });
-  }, []);
-
+const HeadlinesPreview = ({ intel, newsLive }) => {
+  const items = intel.slice(0, 6);
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-gray-100 uppercase tracking-wider">Corridor Risk — 30-day</h3>
-        <span className="text-[10px] text-gray-500">Score 0–100</span>
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-100">Latest Headlines</h3>
+        <span className={`text-[10px] flex items-center gap-1 ${newsLive ? 'text-green-400' : 'text-yellow-400'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${newsLive ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
+          {newsLive ? 'live' : 'fetching'}
+        </span>
       </div>
-      <div className="h-56">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 5, right: 16, left: 0, bottom: 0 }}>
-            <defs>
-              {corridors.map((c) => (
-                <linearGradient key={c.id} id={`g-${c.id}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%"   stopColor={riskStrokeHex(c.risk)} stopOpacity={0.4} />
-                  <stop offset="100%" stopColor={riskStrokeHex(c.risk)} stopOpacity={0} />
-                </linearGradient>
-              ))}
-            </defs>
-            <CartesianGrid stroke="#1f2937" strokeDasharray="3 3" />
-            <XAxis dataKey="day" stroke="#6b7280" tick={{ fontSize: 10 }} interval={4} />
-            <YAxis stroke="#6b7280" tick={{ fontSize: 10 }} domain={[0, 100]} />
-            <Tooltip
-              contentStyle={{ background: '#0b0f19', border: '1px solid #1f2937', borderRadius: 6, fontSize: 12 }}
-              labelStyle={{ color: '#9ca3af' }}
-            />
-            <Legend wrapperStyle={{ fontSize: 10, color: '#9ca3af' }} />
-            {corridors.map((c) => (
-              <Area
-                key={c.id}
-                type="monotone"
-                dataKey={c.name}
-                stroke={riskStrokeHex(c.risk)}
-                fill={`url(#g-${c.id})`}
-                strokeWidth={1.5}
-              />
-            ))}
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+      <ul className="space-y-2">
+        {items.length === 0 && (
+          <li className="text-xs text-gray-500">No items yet — feed loading.</li>
+        )}
+        {items.map((it) => (
+          <li key={it.id}>
+            <a
+              href={it.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block hover:bg-gray-800/40 rounded px-2 py-1.5 -mx-2 transition-colors"
+            >
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest">
+                <span className={`px-1.5 py-0.5 rounded border ${categoryColor(it.category)}`}>{it.category}</span>
+                <span className="text-gray-500 truncate">{it.source}</span>
+                <span className="text-gray-600 ml-auto">{it.time}</span>
+              </div>
+              <div className="text-xs text-gray-100 mt-1 leading-snug line-clamp-2">{it.headline}</div>
+            </a>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 };
 
 export default function Overview() {
-  const { commodities, pricesLive, pricesUpdatedAt } = useLiveData();
-  const wti = commodities.find((c) => c.symbol === 'WTI') || commodities[0];
-  const gold = commodities.find((c) => c.symbol === 'GOLD') || commodities[3];
-  const totalVessels = corridors.reduce((s, c) => s + c.vessels, 0);
-  const activeAlerts = corridors.filter((c) => c.risk === 'CRITICAL' || c.risk === 'HIGH').length + 9;
+  const {
+    commodities, intel, pricesLive, newsLive, pricesUpdatedAt, newsUpdatedAt, refresh,
+  } = useLiveData();
+
+  // Pick representative names from each major asset class for the stat cards.
+  const find = (sym) => commodities.find((c) => c.symbol === sym);
+  const wti  = find('WTI');
+  const gold = find('GOLD');
+  const nvda = find('NVDA');
+  const btc  = find('BTC');
+
+  const stats = [
+    { label: 'WTI Crude',  c: wti  },
+    { label: 'Gold',       c: gold },
+    { label: 'Nvidia',     c: nvda },
+    { label: 'Bitcoin',    c: btc  },
+  ];
 
   return (
     <div className="space-y-8">
-      <div>
-        <div className="flex items-center gap-3 text-xs uppercase tracking-[0.3em] text-gray-500">
-          <span>Live Operations</span>
-          <span className={`flex items-center gap-1.5 normal-case tracking-normal text-[11px] ${pricesLive ? 'text-green-400' : 'text-yellow-400'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
-            {pricesLive ? 'live prices' : 'fallback prices'}
-          </span>
-          {pricesUpdatedAt && (
-            <span className="normal-case tracking-normal text-[10px] text-gray-500 font-mono">
-              fetched {new Date(pricesUpdatedAt).toUTCString().slice(17, 25)}Z
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-3 text-xs uppercase tracking-[0.3em] text-gray-500">
+            <span>Live Markets</span>
+            <span className={`flex items-center gap-1.5 normal-case tracking-normal text-[11px] ${pricesLive ? 'text-green-400' : 'text-yellow-400'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
+              {pricesLive ? 'live prices' : 'fetching'}
             </span>
-          )}
+            {pricesUpdatedAt && (
+              <span className="normal-case tracking-normal text-[10px] text-gray-500 font-mono">
+                prices {new Date(pricesUpdatedAt).toUTCString().slice(17, 25)}Z
+              </span>
+            )}
+            {newsUpdatedAt && (
+              <span className="normal-case tracking-normal text-[10px] text-gray-500 font-mono">
+                news {new Date(newsUpdatedAt).toUTCString().slice(17, 25)}Z
+              </span>
+            )}
+          </div>
+          <h2 className="mt-1 text-4xl font-bold text-gray-50">Markets &amp; Headlines</h2>
+          <p className="mt-2 text-sm text-gray-400 max-w-3xl">
+            Live prices across commodities, equities, and crypto, plus headline news. All numbers are
+            sourced from Yahoo Finance and Google News in real time.
+          </p>
         </div>
-        <h2 className="mt-1 text-4xl font-bold text-gray-50">Global Disruption Overview</h2>
-        <p className="mt-2 text-sm text-gray-400 max-w-3xl">
-          Real-time monitoring of commodity flows and shipping chokepoints. Risk-weighted view across the four
-          most active maritime corridors driving global trade volatility.
-        </p>
+        <button
+          onClick={refresh}
+          className="px-3 py-1.5 text-xs uppercase tracking-wider rounded border bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600"
+        >
+          Refresh
+        </button>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label="WTI Crude"
-          value={`$${wti.price.toFixed(2)}`}
-          sub={`${wti.changePct >= 0 ? '+' : ''}${wti.changePct.toFixed(2)}% today`}
-          accent={wti.changePct >= 0 ? 'text-green-400' : 'text-red-400'}
-        />
-        <StatCard
-          label="Gold"
-          value={`$${gold.price.toLocaleString()}`}
-          sub={`${gold.changePct >= 0 ? '+' : ''}${gold.changePct.toFixed(2)}% today`}
-          accent={gold.changePct >= 0 ? 'text-green-400' : 'text-red-400'}
-        />
-        <StatCard
-          label="Active Alerts"
-          value={activeAlerts}
-          sub="Across 4 corridors"
-          accent="text-orange-400"
-        />
-        <StatCard
-          label="Vessels Affected"
-          value={totalVessels.toLocaleString()}
-          sub="Currently rerouting / delayed"
-          accent="text-red-400"
-        />
+        {stats.map((s) => (
+          <StatCard
+            key={s.label}
+            label={s.label}
+            value={fmtPrice(s.c)}
+            sub={s.c
+              ? `${s.c.changePct >= 0 ? '+' : ''}${s.c.changePct.toFixed(2)}% today`
+              : '—'}
+            accent={s.c
+              ? (s.c.changePct >= 0 ? 'text-green-400' : 'text-red-400')
+              : 'text-gray-300'}
+          />
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2"><DisruptionTrend /></div>
-        <TopMovers />
-      </div>
-
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-100">Corridor Disruption Index</h3>
-          <span className="text-xs text-gray-500 uppercase tracking-wider">4 corridors monitored</span>
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {corridors.map((c) => <CorridorCard key={c.id} c={c} />)}
-        </div>
+        <Movers
+          commodities={commodities}
+          title="Top Gainers"
+          accent="text-green-400"
+          sortFn={(a, b) => b.changePct - a.changePct}
+        />
+        <Movers
+          commodities={commodities}
+          title="Top Losers"
+          accent="text-red-400"
+          sortFn={(a, b) => a.changePct - b.changePct}
+        />
+        <HeadlinesPreview intel={intel} newsLive={newsLive} />
       </div>
     </div>
   );
