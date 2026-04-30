@@ -12,8 +12,8 @@ export default function NotificationsDrawer({ open, onClose }) {
         onClick={onClose}
       />
       <aside
-        className={`fixed top-0 right-0 h-full w-full sm:w-96 bg-gray-950 border-l border-gray-800 z-50
-          transform transition-transform duration-200
+        className={`fixed top-0 right-0 h-full w-full sm:w-[28rem] max-w-full bg-gray-950/95 backdrop-blur border-l border-gray-800 z-50 shadow-2xl
+          transform transition-transform duration-300 ease-out
           ${open ? 'translate-x-0' : 'translate-x-full'}`}
       >
         <header className="px-5 py-4 border-b border-gray-800">

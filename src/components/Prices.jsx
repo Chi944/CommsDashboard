@@ -321,13 +321,13 @@ export default function Prices() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
-          <h2 className="text-3xl font-bold text-gray-50">Prices</h2>
-          <p className="text-sm text-gray-400 mt-1 flex flex-wrap items-center gap-3">
-            <span>Commodities, equities, crypto, and macro indicators via Yahoo Finance.</span>
-            <span className={`text-[11px] flex items-center gap-1.5 ${pricesLive ? 'text-green-400' : 'text-yellow-400'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
+          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-50">Prices</h2>
+          <div className="text-xs sm:text-sm text-gray-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="hidden sm:inline">Commodities, equities, crypto and macro via Yahoo Finance.</span>
+            <span className={`text-[11px] flex items-center gap-1.5 ${pricesLive ? 'text-emerald-400' : 'text-amber-400'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
               {pricesLive ? 'live' : 'fetching'}
             </span>
             {pricesUpdatedAt && (
@@ -335,46 +335,46 @@ export default function Prices() {
                 {new Date(pricesUpdatedAt).toUTCString().slice(17, 25)}Z
               </span>
             )}
-          </p>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex gap-1 bg-gray-900 border border-gray-800 rounded p-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-1 bg-gray-900/70 border border-gray-800 rounded-md p-1">
             {['table', 'heatmap'].map((v) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
-                className={`px-2 py-1 text-[11px] uppercase tracking-wider rounded
+                className={`px-2.5 py-1 text-[11px] uppercase tracking-wider rounded transition-colors
                   ${view === v ? 'bg-gray-100 text-gray-950' : 'text-gray-300 hover:text-white'}`}
-              >
-                {v}
-              </button>
+              >{v}</button>
             ))}
           </div>
           <button
             onClick={refresh}
-            className="px-3 py-1.5 text-xs uppercase tracking-wider rounded border bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600"
-          >Refresh</button>
+            className="px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white"
+            title="Refresh"
+          ><span className="hidden sm:inline">Refresh</span><span className="sm:hidden">↻</span></button>
           <button
             onClick={() => setCompare((v) => !v)}
-            className={`px-3 py-1.5 text-xs uppercase tracking-wider rounded border
-              ${compare ? 'bg-cyan-500 border-cyan-400 text-gray-950' : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600'}`}
+            className={`px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-colors
+              ${compare ? 'bg-cyan-500 border-cyan-400 text-gray-950' : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white'}`}
           >{compare ? 'Comparing' : 'Compare'}</button>
           <button
             onClick={exportCsv}
-            className="px-3 py-1.5 text-xs uppercase tracking-wider rounded border bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600"
-          >Export CSV</button>
+            className="px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white"
+            title="Export CSV"
+          ><span className="hidden sm:inline">Export CSV</span><span className="sm:hidden">CSV</span></button>
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 sm:mx-0 px-4 sm:px-0 pb-1 sm:flex-wrap">
         {CATS.map((c) => (
           <button
             key={c}
             onClick={() => setCat(c)}
-            className={`px-3 py-1.5 text-xs uppercase tracking-wider rounded border
+            className={`shrink-0 px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-all
               ${cat === c
-                ? 'bg-gray-100 text-gray-950 border-gray-100'
-                : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600'}`}
+                ? 'bg-gradient-to-b from-gray-50 to-gray-200 text-gray-950 border-gray-100 shadow'
+                : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:bg-gray-900'}`}
           >
             {c === 'WATCHLIST' ? `★ Watchlist (${watchlist.size})` : c === 'TRENDING' ? '🔥 Trending' : c}
           </button>
@@ -382,7 +382,60 @@ export default function Prices() {
       </div>
 
       {view === 'table' ? (
-        <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
+        <>
+        {/* Mobile card view */}
+        <div className="md:hidden space-y-2">
+          {filtered.length === 0 && (
+            <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-sm text-gray-500">
+              {cat === 'WATCHLIST' ? 'Watchlist is empty — tap ★ to add.' : 'No items.'}
+            </div>
+          )}
+          {filtered.map((c) => {
+            const up = c.changePct >= 0;
+            const isSel = c.ticker === selected;
+            const watched = watchlist.has(c.ticker);
+            return (
+              <div
+                key={c.ticker}
+                onClick={() => setSelected(c.ticker)}
+                className={`relative rounded-lg border p-3 transition-all
+                  ${isSel ? 'border-cyan-500/60 bg-gray-900' : 'border-gray-800 bg-gray-900/70 active:bg-gray-900'}`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleWatch(c.ticker); }}
+                      className={`text-base leading-none ${watched ? 'text-yellow-400' : 'text-gray-600'}`}
+                      aria-label="watchlist toggle"
+                    >★</button>
+                    <div className="min-w-0">
+                      <div className="font-mono text-sm text-gray-100">{c.ticker}</div>
+                      <div className="text-[11px] text-gray-400 truncate">{c.name}</div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-mono text-sm text-gray-100">{fmtPrice(c.price)}</div>
+                    <div className={`font-mono text-[11px] ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {up ? '+' : ''}{c.changePct.toFixed(2)}%
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span className={`text-[10px] uppercase tracking-wider ${assetCategoryColor(c.category)}`}>{c.category}</span>
+                  <Sparkline
+                    data={c.history.map((h) => h.price)}
+                    color={up ? '#22c55e' : '#ef4444'}
+                    width={120} height={20}
+                    fill
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Desktop table view */}
+        <div className="hidden md:block bg-gray-900/70 border border-gray-800 rounded-xl overflow-x-auto">
           <table className="w-full text-sm min-w-[920px]">
             <thead className="bg-gray-950/50">
               <tr className="text-left text-[11px] uppercase tracking-widest text-gray-500">
@@ -458,6 +511,7 @@ export default function Prices() {
             </tbody>
           </table>
         </div>
+        </>
       ) : (
         <Heatmap items={filtered} selectedTicker={selected} onSelect={setSelected} />
       )}
