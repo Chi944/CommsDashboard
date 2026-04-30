@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend,
 } from 'recharts';
-import { commodities } from '../data/mockData.js';
+import { useLiveData } from '../state/LiveData.jsx';
 import Sparkline from './Sparkline.jsx';
 import { downloadCSV } from '../utils/csv.js';
 
@@ -11,11 +11,12 @@ const COMPARE_COLORS = ['#22d3ee', '#a78bfa', '#f472b6', '#fbbf24', '#34d399'];
 const STORAGE_KEY = 'comms.watchlist';
 
 export default function Prices() {
+  const { commodities, pricesLive, pricesUpdatedAt, refresh } = useLiveData();
   const [cat, setCat] = useState('ALL');
-  const [selected, setSelected] = useState(commodities[0].ticker);
+  const [selected, setSelected] = useState(commodities[0]?.ticker);
   const [range, setRange] = useState('1M');
   const [compare, setCompare] = useState(false);
-  const [compareSet, setCompareSet] = useState(new Set([commodities[0].ticker, commodities[3].ticker]));
+  const [compareSet, setCompareSet] = useState(() => new Set([commodities[0]?.ticker, commodities[3]?.ticker].filter(Boolean)));
   const [watchlist, setWatchlist] = useState(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -96,9 +97,26 @@ export default function Prices() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-3xl font-bold text-gray-50">Commodity Prices</h2>
-          <p className="text-sm text-gray-400 mt-1">Spot and futures across energy, metals, and agriculture.</p>
+          <p className="text-sm text-gray-400 mt-1 flex items-center gap-3">
+            <span>Spot and futures across energy, metals, and agriculture.</span>
+            <span className={`text-[11px] flex items-center gap-1.5 ${pricesLive ? 'text-green-400' : 'text-yellow-400'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
+              {pricesLive ? 'live · Yahoo Finance' : 'fallback (mock)'}
+            </span>
+            {pricesUpdatedAt && (
+              <span className="text-[10px] text-gray-500 font-mono">
+                {new Date(pricesUpdatedAt).toUTCString().slice(17, 25)}Z
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={refresh}
+            className="px-3 py-1.5 text-xs uppercase tracking-wider rounded border bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600"
+          >
+            Refresh
+          </button>
           <button
             onClick={() => setCompare((v) => !v)}
             className={`px-3 py-1.5 text-xs uppercase tracking-wider rounded border

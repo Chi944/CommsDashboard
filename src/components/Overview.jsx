@@ -3,8 +3,9 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend,
 } from 'recharts';
 import {
-  commodities, corridors, riskBgClass, riskTextClass, riskBorderClass, riskStrokeHex,
+  corridors, riskBgClass, riskTextClass, riskBorderClass, riskStrokeHex,
 } from '../data/mockData.js';
+import { useLiveData } from '../state/LiveData.jsx';
 import Sparkline from './Sparkline.jsx';
 
 const StatCard = ({ label, value, sub, accent }) => (
@@ -61,9 +62,10 @@ const CorridorCard = ({ c }) => (
 );
 
 const TopMovers = () => {
+  const { commodities } = useLiveData();
   const sorted = useMemo(
     () => [...commodities].sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct)),
-    []
+    [commodities]
   );
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
@@ -151,15 +153,27 @@ const DisruptionTrend = () => {
 };
 
 export default function Overview() {
-  const wti = commodities.find((c) => c.symbol === 'WTI');
-  const gold = commodities.find((c) => c.symbol === 'GOLD');
+  const { commodities, pricesLive, pricesUpdatedAt } = useLiveData();
+  const wti = commodities.find((c) => c.symbol === 'WTI') || commodities[0];
+  const gold = commodities.find((c) => c.symbol === 'GOLD') || commodities[3];
   const totalVessels = corridors.reduce((s, c) => s + c.vessels, 0);
   const activeAlerts = corridors.filter((c) => c.risk === 'CRITICAL' || c.risk === 'HIGH').length + 9;
 
   return (
     <div className="space-y-8">
       <div>
-        <div className="text-xs uppercase tracking-[0.3em] text-gray-500">Live Operations</div>
+        <div className="flex items-center gap-3 text-xs uppercase tracking-[0.3em] text-gray-500">
+          <span>Live Operations</span>
+          <span className={`flex items-center gap-1.5 normal-case tracking-normal text-[11px] ${pricesLive ? 'text-green-400' : 'text-yellow-400'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
+            {pricesLive ? 'live prices' : 'fallback prices'}
+          </span>
+          {pricesUpdatedAt && (
+            <span className="normal-case tracking-normal text-[10px] text-gray-500 font-mono">
+              fetched {new Date(pricesUpdatedAt).toUTCString().slice(17, 25)}Z
+            </span>
+          )}
+        </div>
         <h2 className="mt-1 text-4xl font-bold text-gray-50">Global Disruption Overview</h2>
         <p className="mt-2 text-sm text-gray-400 max-w-3xl">
           Real-time monitoring of commodity flows and shipping chokepoints. Risk-weighted view across the four

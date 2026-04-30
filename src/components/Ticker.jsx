@@ -1,5 +1,5 @@
 import React from 'react';
-import { commodities } from '../data/mockData.js';
+import { useLiveData } from '../state/LiveData.jsx';
 
 const TickerItem = ({ c }) => {
   const up = c.changePct >= 0;
@@ -15,6 +15,7 @@ const TickerItem = ({ c }) => {
 };
 
 export default function Ticker() {
+  const { commodities } = useLiveData();
   const items = [...commodities, ...commodities];
   return (
     <div className="bg-gray-900 border-b border-gray-800 overflow-hidden">

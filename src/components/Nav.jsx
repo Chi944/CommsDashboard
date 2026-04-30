@@ -1,10 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { notifications } from '../data/mockData.js';
+import { useLiveData } from '../state/LiveData.jsx';
 
 const TABS = ['Overview', 'Prices', 'Routes', 'Calculator', 'Intel'];
 
 export default function Nav({ active, setActive, onOpenAlerts }) {
   const [now, setNow] = useState(new Date());
+  const { pricesLive, newsLive } = useLiveData();
+  const liveStatus = pricesLive && newsLive ? 'LIVE' : pricesLive || newsLive ? 'PARTIAL' : 'MOCK';
+  const liveColor = liveStatus === 'LIVE' ? 'text-green-400' : liveStatus === 'PARTIAL' ? 'text-yellow-400' : 'text-gray-500';
+  const liveDot = liveStatus === 'LIVE' ? 'bg-green-400 animate-pulse' : liveStatus === 'PARTIAL' ? 'bg-yellow-400' : 'bg-gray-500';
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -38,9 +43,12 @@ export default function Nav({ active, setActive, onOpenAlerts }) {
         </div>
       </div>
       <div className="flex items-center gap-4 text-xs text-gray-400">
-        <div className="hidden md:flex items-center gap-2">
-          <span className="text-gray-500">STATUS</span>
-          <span className="text-green-400">● LIVE</span>
+        <div className="hidden md:flex items-center gap-2" title="Data source status">
+          <span className="text-gray-500">DATA</span>
+          <span className={`flex items-center gap-1.5 ${liveColor}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${liveDot}`} />
+            {liveStatus}
+          </span>
         </div>
         <button
           onClick={onOpenAlerts}
