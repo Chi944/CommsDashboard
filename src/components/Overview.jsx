@@ -12,48 +12,96 @@ const StatCard = ({ label, value, sub, accent }) => (
   </div>
 );
 
-const fmtPrice = (c) => {
-  if (!c) return '—';
-  if (c.price < 1) return `$${c.price.toFixed(4)}`;
-  if (c.price >= 1000) return `$${c.price.toLocaleString()}`;
-  return `$${c.price.toFixed(2)}`;
+const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+
+const fmtVolume = (n) => {
+  if (n == null) return '—';
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(0)}K`;
+  return String(n);
 };
 
-const Movers = ({ commodities, title, sortFn, accent }) => {
-  const sorted = useMemo(() => [...commodities].sort(sortFn), [commodities, sortFn]);
+const MoversCard = ({ items, title, accent, fmt, count = 8 }) => {
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">
       <div className="flex items-center justify-between mb-3">
         <h3 className={`text-xs sm:text-sm font-semibold uppercase tracking-wider ${accent}`}>{title}</h3>
+        <span className="text-[10px] text-gray-500 font-mono">{items.length}</span>
       </div>
       <ul className="divide-y divide-gray-800">
-        {sorted.slice(0, 5).map((c) => {
+        {items.slice(0, count).map((c, i) => {
           const up = c.changePct >= 0;
           return (
-            <li key={c.ticker} className="py-2 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-xs text-gray-100 truncate">{c.name}</div>
-                <div className={`text-[10px] font-mono ${assetCategoryColor(c.category)}`}>{c.ticker} · {c.category}</div>
+            <li key={c.ticker} className="py-2 flex items-center gap-3">
+              <span className="font-mono text-[10px] text-gray-600 w-4 shrink-0">{i + 1}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-xs text-gray-100">{c.ticker}</span>
+                  <span className={`text-[9px] uppercase tracking-wider ${assetCategoryColor(c.category)}`}>{c.category}</span>
+                </div>
+                <div className="text-[10px] text-gray-500 truncate">{c.name}</div>
               </div>
               <Sparkline
                 data={c.history.map((h) => h.price)}
                 color={up ? '#22c55e' : '#ef4444'}
-                width={70}
-                height={22}
+                width={64} height={20}
               />
-              <div className={`font-mono text-xs ${up ? 'text-green-400' : 'text-red-400'} w-16 text-right`}>
-                {up ? '+' : ''}{c.changePct.toFixed(2)}%
+              <div className="text-right w-20">
+                <div className="font-mono text-[11px] text-gray-100">{fmt(c)}</div>
+                <div className={`font-mono text-[10px] ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {fmtPctChange(c.changePct)}
+                </div>
               </div>
             </li>
           );
         })}
+        {items.length === 0 && (
+          <li className="text-xs text-gray-500 py-4 text-center">No data yet.</li>
+        )}
       </ul>
     </div>
   );
 };
 
+const MostActiveCard = ({ items, fmt }) => (
+  <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">
+    <div className="flex items-center justify-between mb-3">
+      <h3 className="text-xs sm:text-sm font-semibold uppercase tracking-wider text-cyan-300">Most Active</h3>
+      <span className="text-[10px] text-gray-500 font-mono">by volume</span>
+    </div>
+    <ul className="divide-y divide-gray-800">
+      {items.slice(0, 8).map((c, i) => {
+        const up = c.changePct >= 0;
+        return (
+          <li key={c.ticker} className="py-2 flex items-center gap-3">
+            <span className="font-mono text-[10px] text-gray-600 w-4 shrink-0">{i + 1}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-xs text-gray-100">{c.ticker}</span>
+                <span className={`text-[9px] uppercase tracking-wider ${assetCategoryColor(c.category)}`}>{c.category}</span>
+              </div>
+              <div className="text-[10px] text-gray-500 truncate">{c.name}</div>
+            </div>
+            <div className="text-right w-20">
+              <div className="font-mono text-[11px] text-gray-100">{fmt(c)}</div>
+              <div className="font-mono text-[10px] text-gray-400">{fmtVolume(c.volume)}</div>
+            </div>
+            <div className={`font-mono text-[10px] w-12 text-right ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+              {fmtPctChange(c.changePct)}
+            </div>
+          </li>
+        );
+      })}
+      {items.length === 0 && (
+        <li className="text-xs text-gray-500 py-4 text-center">No data yet.</li>
+      )}
+    </ul>
+  </div>
+);
+
 const HeadlinesPreview = ({ intel, newsLive }) => {
-  const items = intel.slice(0, 6);
+  const items = intel.slice(0, 8);
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">
       <div className="flex items-center justify-between mb-3">
@@ -91,10 +139,19 @@ const HeadlinesPreview = ({ intel, newsLive }) => {
 
 export default function Overview() {
   const {
-    commodities, intel, pricesLive, newsLive, pricesUpdatedAt, newsUpdatedAt, refresh,
+    commodities, intel, pricesLive, newsLive,
+    pricesUpdatedAt, newsUpdatedAt, refresh,
+    formatAssetPrice, dashboardCurrency,
   } = useLiveData();
 
-  // Pick representative names from each major asset class for the stat cards.
+  // Exclude FX from movers/headline rankings.
+  const tradable = useMemo(
+    () => commodities.filter((c) => c.category !== 'FX' && typeof c.changePct === 'number'),
+    [commodities]
+  );
+
+  const fmt = (c) => formatAssetPrice(c);
+
   const find = (sym) => commodities.find((c) => c.symbol === sym);
   const wti  = find('WTI');
   const gold = find('GOLD');
@@ -108,12 +165,27 @@ export default function Overview() {
     { label: 'Bitcoin',    c: btc  },
   ];
 
+  const gainers = useMemo(
+    () => [...tradable].filter((c) => c.changePct > 0).sort((a, b) => b.changePct - a.changePct),
+    [tradable]
+  );
+  const losers = useMemo(
+    () => [...tradable].filter((c) => c.changePct < 0).sort((a, b) => a.changePct - b.changePct),
+    [tradable]
+  );
+  const mostActive = useMemo(
+    () => [...tradable]
+      .filter((c) => typeof c.volume === 'number' && c.volume > 0)
+      .sort((a, b) => (b.volume || 0) - (a.volume || 0)),
+    [tradable]
+  );
+
   return (
     <div className="space-y-6 sm:space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] sm:text-xs uppercase tracking-[0.22em] text-gray-500">
-            <span>Live Markets</span>
+            <span>Live Markets · {dashboardCurrency}</span>
             <span className={`flex items-center gap-1.5 normal-case tracking-normal text-[11px] ${pricesLive ? 'text-emerald-400' : 'text-amber-400'}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
               {pricesLive ? 'live prices' : 'fetching'}
@@ -128,7 +200,8 @@ export default function Overview() {
             Markets &amp; Headlines
           </h2>
           <p className="mt-2 text-xs sm:text-sm text-gray-400 max-w-3xl">
-            Live prices across commodities, equities, crypto, and macro indicators, with real-time news from Google News.
+            Real-time prices across {tradable.length}+ stocks, ETFs, commodities, crypto and macro indicators,
+            plus live news. Switch the dashboard currency from the top-right to view everything in your local FX.
           </p>
         </div>
         <button
@@ -139,37 +212,27 @@ export default function Overview() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {stats.map((s) => (
           <StatCard
             key={s.label}
             label={s.label}
-            value={fmtPrice(s.c)}
-            sub={s.c
-              ? `${s.c.changePct >= 0 ? '+' : ''}${s.c.changePct.toFixed(2)}% today`
-              : '—'}
+            value={s.c ? fmt(s.c) : '—'}
+            sub={s.c ? `${fmtPctChange(s.c.changePct)} today` : '—'}
             accent={s.c
-              ? (s.c.changePct >= 0 ? 'text-green-400' : 'text-red-400')
+              ? (s.c.changePct >= 0 ? 'text-emerald-400' : 'text-red-400')
               : 'text-gray-300'}
           />
         ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Movers
-          commodities={commodities}
-          title="Top Gainers"
-          accent="text-green-400"
-          sortFn={(a, b) => b.changePct - a.changePct}
-        />
-        <Movers
-          commodities={commodities}
-          title="Top Losers"
-          accent="text-red-400"
-          sortFn={(a, b) => a.changePct - b.changePct}
-        />
-        <HeadlinesPreview intel={intel} newsLive={newsLive} />
+        <MoversCard items={gainers} title="Top Gainers" accent="text-emerald-400" fmt={fmt} />
+        <MoversCard items={losers}  title="Top Losers"  accent="text-red-400"     fmt={fmt} />
+        <MostActiveCard items={mostActive} fmt={fmt} />
       </div>
+
+      <HeadlinesPreview intel={intel} newsLive={newsLive} />
     </div>
   );
 }

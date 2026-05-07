@@ -94,7 +94,7 @@ async function pooledSettle(arr, fn, concurrency = 10) {
 
 export default async function handler(req, res) {
   try {
-    const settled = await pooledSettle(SYMBOLS, fetchOne, 16);
+    const settled = await pooledSettle(SYMBOLS, fetchOne, 22);
     const commodities = settled
       .filter((r) => r.status === 'fulfilled')
       .map((r) => r.value);

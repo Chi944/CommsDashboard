@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend,
 } from 'recharts';
@@ -7,11 +7,11 @@ import { assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
 import { downloadCSV } from '../utils/csv.js';
 
-// FX is excluded — it lives on the Currency tab.
 const CATS = [
   'ALL', 'TRENDING', 'WATCHLIST',
   'TECH', 'SEMI', 'DATA', 'AUTO', 'FINANCE', 'HEALTH',
-  'CONSUMER', 'MOMENTUM', 'CRYPTO', 'ENERGY', 'METALS',
+  'CONSUMER', 'OIL', 'INDUST', 'TELECOM', 'REIT', 'UTIL',
+  'TRAVEL', 'ASIA', 'MOMENTUM', 'CRYPTO', 'ENERGY', 'METALS',
   'AGRICULTURE', 'MACRO',
 ];
 
@@ -20,20 +20,7 @@ const RANGE_LABEL = { '1d': '1D', '5d': '5D', '1mo': '1M', '3mo': '3M', '6mo': '
 const COMPARE_COLORS = ['#22d3ee', '#a78bfa', '#f472b6', '#fbbf24', '#34d399'];
 const STORAGE_KEY = 'comms.watchlist.v2';
 
-const fmtPrice = (n) => {
-  if (n == null) return '—';
-  if (n < 1) return n.toFixed(4);
-  if (n >= 1000) return n.toLocaleString();
-  return n.toFixed(2);
-};
-
-const fmtVolume = (n) => {
-  if (n == null) return '—';
-  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
-  return String(n);
-};
+const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
 const tileBg = (pct) => {
   const a = Math.min(0.65, Math.max(0.06, Math.abs(pct) / 8));
@@ -41,7 +28,7 @@ const tileBg = (pct) => {
 };
 
 // ---------- Heatmap ----------
-const Heatmap = ({ items, selectedTicker, onSelect }) => {
+const Heatmap = ({ items, selectedTicker, onSelect, fmt }) => {
   if (items.length === 0) {
     return <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-8 text-center text-sm text-gray-500">No items.</div>;
   }
@@ -64,9 +51,9 @@ const Heatmap = ({ items, selectedTicker, onSelect }) => {
             </div>
             <div className="text-[11px] text-gray-300 truncate mt-0.5">{c.name}</div>
             <div className="mt-2 flex items-end justify-between">
-              <div className="font-mono text-sm text-gray-100">{fmtPrice(c.price)}</div>
+              <div className="font-mono text-sm text-gray-100">{fmt(c)}</div>
               <div className={`font-mono text-xs ${up ? 'text-green-300' : 'text-red-300'}`}>
-                {up ? '+' : ''}{c.changePct.toFixed(2)}%
+                {fmtPctChange(c.changePct)}
               </div>
             </div>
             <div className="mt-2">
@@ -80,7 +67,7 @@ const Heatmap = ({ items, selectedTicker, onSelect }) => {
 };
 
 // ---------- 52-week range bar ----------
-const RangeBar = ({ low, high, current }) => {
+const RangeBar = ({ low, high, current, fmt }) => {
   if (low == null || high == null || current == null || high <= low) return null;
   const pct = Math.max(0, Math.min(100, ((current - low) / (high - low)) * 100));
   return (
@@ -90,25 +77,30 @@ const RangeBar = ({ low, high, current }) => {
              style={{ left: `calc(${pct}% - 4px)` }} />
       </div>
       <div className="flex justify-between text-[10px] font-mono text-gray-500 mt-1">
-        <span>{fmtPrice(low)}</span>
+        <span>{fmt(low)}</span>
         <span className="text-gray-400">{pct.toFixed(0)}% of range</span>
-        <span>{fmtPrice(high)}</span>
+        <span>{fmt(high)}</span>
       </div>
     </div>
   );
 };
 
 // ---------- Detail panel ----------
-const DetailPanel = ({ c }) => {
+const DetailPanel = ({ c, formatAssetPrice }) => {
   if (!c) return null;
+  const fmt = (v) => formatAssetPrice(c, v);
   const items = [
-    ['Open',           c.open != null ? fmtPrice(c.open) : '—'],
-    ['Previous close', c.prevClose != null ? fmtPrice(c.prevClose) : '—'],
-    ['Day high',       fmtPrice(c.high)],
-    ['Day low',        fmtPrice(c.low)],
-    ['52w high',       c.fiftyTwoWeekHigh != null ? fmtPrice(c.fiftyTwoWeekHigh) : '—'],
-    ['52w low',        c.fiftyTwoWeekLow  != null ? fmtPrice(c.fiftyTwoWeekLow)  : '—'],
-    ['Volume',         fmtVolume(c.volume)],
+    ['Open',           c.open      != null ? fmt(c.open)      : '—'],
+    ['Previous close', c.prevClose != null ? fmt(c.prevClose) : '—'],
+    ['Day high',       fmt(c.high)],
+    ['Day low',        fmt(c.low)],
+    ['52w high',       c.fiftyTwoWeekHigh != null ? fmt(c.fiftyTwoWeekHigh) : '—'],
+    ['52w low',        c.fiftyTwoWeekLow  != null ? fmt(c.fiftyTwoWeekLow)  : '—'],
+    ['Volume',         c.volume == null ? '—'
+                       : c.volume >= 1e9 ? `${(c.volume/1e9).toFixed(2)}B`
+                       : c.volume >= 1e6 ? `${(c.volume/1e6).toFixed(2)}M`
+                       : c.volume >= 1e3 ? `${(c.volume/1e3).toFixed(1)}K`
+                       : String(c.volume)],
     ['Exchange',       c.exchange || '—'],
   ];
   return (
@@ -128,7 +120,7 @@ const DetailPanel = ({ c }) => {
       {c.fiftyTwoWeekLow != null && c.fiftyTwoWeekHigh != null && (
         <div>
           <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-2">52-week range</div>
-          <RangeBar low={c.fiftyTwoWeekLow} high={c.fiftyTwoWeekHigh} current={c.price} />
+          <RangeBar low={c.fiftyTwoWeekLow} high={c.fiftyTwoWeekHigh} current={c.price} fmt={fmt} />
         </div>
       )}
     </div>
@@ -183,9 +175,12 @@ const AssetNews = ({ asset }) => {
 
 // ---------- Main ----------
 export default function Prices() {
-  const { commodities: rawCommodities, pricesLive, pricesUpdatedAt, refresh } = useLiveData();
+  const {
+    commodities: rawCommodities, pricesLive, pricesUpdatedAt, refresh,
+    formatAssetPrice, dashboardCurrency,
+  } = useLiveData();
 
-  // FX lives on the Currency tab; exclude here.
+  // FX excluded — they live behind the Currency tab/dropdown.
   const commodities = useMemo(
     () => rawCommodities.filter((c) => c.category !== 'FX'),
     [rawCommodities]
@@ -193,6 +188,7 @@ export default function Prices() {
 
   const [cat, setCat] = useState('ALL');
   const [view, setView] = useState('table');
+  const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(commodities[0]?.ticker);
   const [range, setRange] = useState('1mo');
   const [compare, setCompare] = useState(false);
@@ -223,16 +219,25 @@ export default function Prices() {
     return n;
   });
 
+  // Search overrides category filter when active.
   const filtered = useMemo(() => {
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      return commodities.filter((c) =>
+        c.ticker.toLowerCase().includes(q) ||
+        c.name.toLowerCase().includes(q) ||
+        c.symbol.toLowerCase().includes(q)
+      );
+    }
     if (cat === 'ALL') return commodities;
     if (cat === 'WATCHLIST') return commodities.filter((c) => watchlist.has(c.ticker));
     if (cat === 'TRENDING') {
       return [...commodities]
         .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
-        .slice(0, 16);
+        .slice(0, 24);
     }
     return commodities.filter((c) => c.category === cat);
-  }, [cat, watchlist, commodities]);
+  }, [cat, query, watchlist, commodities]);
 
   const sel = useMemo(
     () => commodities.find((c) => c.ticker === selected) || commodities[0],
@@ -305,7 +310,7 @@ export default function Prices() {
   const exportCsv = () => {
     const rows = filtered.map((c) => ({
       ticker: c.ticker, name: c.name, category: c.category, unit: c.unit,
-      price: c.price, changePct: c.changePct, changeAbs: c.changeAbs,
+      price_usd: c.price, changePct: c.changePct, changeAbs: c.changeAbs,
       open: c.open, high: c.high, low: c.low,
       prevClose: c.prevClose, volume: c.volume,
       fiftyTwoWeekHigh: c.fiftyTwoWeekHigh, fiftyTwoWeekLow: c.fiftyTwoWeekLow,
@@ -318,6 +323,9 @@ export default function Prices() {
     ? `cmp:${range}:${compareTickers.join(',')}`
     : `one:${range}:${sel?.ticker}`;
 
+  // Currency-aware price formatter for any commodity row.
+  const fmt = (c) => formatAssetPrice(c);
+
   return (
     <div className="space-y-5 sm:space-y-6">
       {/* Header + toolbar */}
@@ -327,7 +335,7 @@ export default function Prices() {
             Prices
           </h2>
           <div className="text-xs sm:text-sm text-gray-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="hidden sm:inline">{commodities.length} assets · stocks, crypto, commodities, macro.</span>
+            <span className="hidden sm:inline">{commodities.length} assets · displayed in {dashboardCurrency}</span>
             <span className={`text-[11px] flex items-center gap-1.5 ${pricesLive ? 'text-emerald-400' : 'text-amber-400'}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
               {pricesLive ? 'live' : 'fetching'}
@@ -365,26 +373,50 @@ export default function Prices() {
         </div>
       </div>
 
-      {/* Filter pills */}
-      <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 sm:mx-0 px-4 sm:px-0 pb-1 sm:flex-wrap">
-        {CATS.map((c) => (
+      {/* Search bar */}
+      <div className="relative">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
+          <circle cx="11" cy="11" r="7" />
+          <path d="M20 20l-3-3" />
+        </svg>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by ticker or name (e.g. NVDA, Apple, Bitcoin)…"
+          className="w-full bg-gray-900/70 border border-gray-800 text-sm text-gray-100 rounded-md pl-9 pr-9 py-2.5 focus:outline-none focus:border-cyan-500 placeholder:text-gray-500"
+        />
+        {query && (
           <button
-            key={c}
-            onClick={() => setCat(c)}
-            className={`shrink-0 px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-all
-              ${cat === c
-                ? 'bg-gradient-to-b from-gray-50 to-gray-200 text-gray-950 border-gray-100 shadow'
-                : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:bg-gray-900'}`}
-          >
-            {c === 'WATCHLIST' ? `★ Watchlist (${watchlist.size})` : c === 'TRENDING' ? '🔥 Trending' : c}
-          </button>
-        ))}
+            onClick={() => setQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-200 text-sm"
+            aria-label="clear"
+          >×</button>
+        )}
       </div>
+
+      {/* Filter pills (hidden when searching) */}
+      {!query.trim() && (
+        <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 sm:mx-0 px-4 sm:px-0 pb-1 sm:flex-wrap">
+          {CATS.map((c) => (
+            <button
+              key={c}
+              onClick={() => setCat(c)}
+              className={`shrink-0 px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-all
+                ${cat === c
+                  ? 'bg-gradient-to-b from-gray-50 to-gray-200 text-gray-950 border-gray-100 shadow'
+                  : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:bg-gray-900'}`}
+            >
+              {c === 'WATCHLIST' ? `★ Watchlist (${watchlist.size})` : c === 'TRENDING' ? '🔥 Trending' : c}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Two-column layout: chart sticky on right (lg+), list on left.
           On mobile/tablet the chart appears first so it's always visible. */}
       <div className="grid grid-cols-1 lg:grid-cols-12 lg:gap-6">
-        {/* Right column: chart + detail (sticky on lg) */}
         <div className="lg:col-span-7 lg:order-2 lg:sticky lg:top-28 lg:self-start space-y-4">
           <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -404,9 +436,9 @@ export default function Prices() {
               <div className="flex items-center gap-3">
                 {!compare && sel && (
                   <div className="flex flex-col items-end">
-                    <div className="font-mono text-xl sm:text-2xl text-gray-100">{fmtPrice(sel.price)}</div>
+                    <div className="font-mono text-xl sm:text-2xl text-gray-100">{fmt(sel)}</div>
                     <div className={`font-mono text-[11px] ${sel.changePct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {sel.changePct >= 0 ? '+' : ''}{sel.changePct.toFixed(2)}%
+                      {fmtPctChange(sel.changePct)}
                     </div>
                   </div>
                 )}
@@ -448,81 +480,80 @@ export default function Prices() {
               )}
             </div>
           </div>
-          {!compare && <DetailPanel c={sel} />}
+          {!compare && <DetailPanel c={sel} formatAssetPrice={formatAssetPrice} />}
         </div>
 
-        {/* Left column: list (table or heatmap or mobile cards) */}
+        {/* Left column: list */}
         <div className="lg:col-span-5 lg:order-1 mt-4 lg:mt-0">
           {view === 'table' ? (
-            <>
-              {/* Mobile-style card list (visible everywhere in this narrower column) */}
-              <div className="rounded-xl border border-gray-800 bg-gray-900/70 overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-gray-800 flex items-center justify-between">
-                  <div className="text-[11px] uppercase tracking-widest text-gray-500">
-                    {filtered.length} {filtered.length === 1 ? 'asset' : 'assets'}
-                  </div>
-                  {compare && <div className="text-[10px] text-gray-500">{compareTickers.length}/5 selected</div>}
+            <div className="rounded-xl border border-gray-800 bg-gray-900/70 overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-gray-800 flex items-center justify-between">
+                <div className="text-[11px] uppercase tracking-widest text-gray-500">
+                  {filtered.length} {filtered.length === 1 ? 'asset' : 'assets'}
+                  {query.trim() && <span className="text-cyan-400 normal-case"> · "{query}"</span>}
                 </div>
-                <div className="divide-y divide-gray-800 max-h-[80vh] lg:max-h-[calc(100vh-12rem)] overflow-y-auto">
-                  {filtered.length === 0 && (
-                    <div className="p-6 text-center text-sm text-gray-500">
-                      {cat === 'WATCHLIST' ? 'Watchlist is empty — tap ★ to add.' : 'No items.'}
-                    </div>
-                  )}
-                  {filtered.map((c) => {
-                    const up = c.changePct >= 0;
-                    const isSel = c.ticker === selected;
-                    const watched = watchlist.has(c.ticker);
-                    const inCompare = compareSet.has(c.ticker);
-                    return (
-                      <div
-                        key={c.ticker}
-                        onClick={() => setSelected(c.ticker)}
-                        className={`flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3 cursor-pointer transition-colors
-                          ${isSel ? 'bg-gray-800/60' : 'hover:bg-gray-800/30'}`}
-                      >
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleWatch(c.ticker); }}
-                          className={`text-base leading-none ${watched ? 'text-yellow-400' : 'text-gray-600 hover:text-gray-300'}`}
-                          aria-label="watchlist toggle"
-                        >★</button>
-                        {compare && (
-                          <input
-                            type="checkbox"
-                            checked={inCompare}
-                            onChange={() => toggleCompare(c.ticker)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="accent-cyan-400"
-                          />
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono text-sm text-gray-100">{c.ticker}</span>
-                            <span className={`text-[9px] uppercase tracking-wider ${assetCategoryColor(c.category)}`}>
-                              {c.category}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-gray-500 truncate">{c.name}</div>
-                        </div>
-                        <Sparkline
-                          data={c.history.map((h) => h.price)}
-                          color={up ? '#22c55e' : '#ef4444'}
-                          width={60} height={20}
+                {compare && <div className="text-[10px] text-gray-500">{compareTickers.length}/5 selected</div>}
+              </div>
+              <div className="divide-y divide-gray-800 max-h-[80vh] lg:max-h-[calc(100vh-12rem)] overflow-y-auto">
+                {filtered.length === 0 && (
+                  <div className="p-6 text-center text-sm text-gray-500">
+                    {query.trim() ? `No matches for "${query}".` :
+                     cat === 'WATCHLIST' ? 'Watchlist is empty — tap ★ to add.' : 'No items.'}
+                  </div>
+                )}
+                {filtered.map((c) => {
+                  const up = c.changePct >= 0;
+                  const isSel = c.ticker === selected;
+                  const watched = watchlist.has(c.ticker);
+                  const inCompare = compareSet.has(c.ticker);
+                  return (
+                    <div
+                      key={c.ticker}
+                      onClick={() => setSelected(c.ticker)}
+                      className={`flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3 cursor-pointer transition-colors
+                        ${isSel ? 'bg-gray-800/60' : 'hover:bg-gray-800/30'}`}
+                    >
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleWatch(c.ticker); }}
+                        className={`text-base leading-none ${watched ? 'text-yellow-400' : 'text-gray-600 hover:text-gray-300'}`}
+                        aria-label="watchlist toggle"
+                      >★</button>
+                      {compare && (
+                        <input
+                          type="checkbox"
+                          checked={inCompare}
+                          onChange={() => toggleCompare(c.ticker)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="accent-cyan-400"
                         />
-                        <div className="text-right w-20">
-                          <div className="font-mono text-xs text-gray-100">{fmtPrice(c.price)}</div>
-                          <div className={`font-mono text-[10px] ${up ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {up ? '+' : ''}{c.changePct.toFixed(2)}%
-                          </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-sm text-gray-100">{c.ticker}</span>
+                          <span className={`text-[9px] uppercase tracking-wider ${assetCategoryColor(c.category)}`}>
+                            {c.category}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-gray-500 truncate">{c.name}</div>
+                      </div>
+                      <Sparkline
+                        data={c.history.map((h) => h.price)}
+                        color={up ? '#22c55e' : '#ef4444'}
+                        width={60} height={20}
+                      />
+                      <div className="text-right w-24">
+                        <div className="font-mono text-xs text-gray-100">{fmt(c)}</div>
+                        <div className={`font-mono text-[10px] ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {fmtPctChange(c.changePct)}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  );
+                })}
               </div>
-            </>
+            </div>
           ) : (
-            <Heatmap items={filtered} selectedTicker={selected} onSelect={setSelected} />
+            <Heatmap items={filtered} selectedTicker={selected} onSelect={setSelected} fmt={fmt} />
           )}
         </div>
       </div>
