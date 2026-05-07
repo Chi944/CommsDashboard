@@ -3,15 +3,6 @@ import { useLiveData } from '../state/LiveData.jsx';
 import { categoryColor, assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
 
-const StatCard = ({ label, value, sub, accent }) => (
-  <div className="relative overflow-hidden rounded-xl border border-gray-800 bg-gradient-to-br from-gray-900/90 to-gray-900/40 p-4 sm:p-5 transition-colors hover:border-gray-700">
-    <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-cyan-500/40 to-transparent" />
-    <div className="text-[10px] sm:text-[11px] uppercase tracking-[0.18em] text-gray-500">{label}</div>
-    <div className={`mt-2 font-mono text-2xl sm:text-3xl tracking-tight ${accent || 'text-gray-100'}`}>{value}</div>
-    {sub && <div className="mt-1 text-[11px] sm:text-xs text-gray-400">{sub}</div>}
-  </div>
-);
-
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
 const fmtVolume = (n) => {
@@ -22,22 +13,67 @@ const fmtVolume = (n) => {
   return String(n);
 };
 
-const MoversCard = ({ items, title, accent, fmt, count = 8 }) => {
+const StatCard = ({ label, c, fmt, onClick }) => {
+  const accent = c
+    ? (c.changePct >= 0 ? 'text-emerald-400' : 'text-red-400')
+    : 'text-gray-300';
+  const value = c ? fmt(c) : '—';
+  const sub = c ? `${fmtPctChange(c.changePct)} today` : '—';
+  const up = c?.changePct >= 0;
+
   return (
-    <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className={`text-xs sm:text-sm font-semibold uppercase tracking-wider ${accent}`}>{title}</h3>
-        <span className="text-[10px] text-gray-500 font-mono">{items.length}</span>
+    <button
+      onClick={() => c && onClick && onClick(c.ticker)}
+      disabled={!c}
+      className="group relative overflow-hidden rounded-xl border border-gray-800 bg-gradient-to-br from-gray-900/90 to-gray-900/40 p-4 sm:p-5 text-left transition-all hover:border-cyan-700/60 hover:bg-gray-900 disabled:cursor-default disabled:hover:border-gray-800 cursor-pointer"
+    >
+      <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-cyan-500/40 to-transparent" />
+      <div className="flex items-start justify-between">
+        <div className="text-[10px] sm:text-[11px] uppercase tracking-[0.18em] text-gray-500">{label}</div>
+        {c && (
+          <span className="text-gray-600 group-hover:text-cyan-300 transition-colors text-[10px]">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M5 12h14" /><path d="M13 5l7 7-7 7" />
+            </svg>
+          </span>
+        )}
       </div>
-      <ul className="divide-y divide-gray-800">
-        {items.slice(0, count).map((c, i) => {
-          const up = c.changePct >= 0;
-          return (
-            <li key={c.ticker} className="py-2 flex items-center gap-3">
+      <div className={`mt-2 font-mono text-2xl sm:text-3xl tracking-tight ${accent}`}>{value}</div>
+      <div className="mt-1 flex items-center gap-2">
+        <div className="text-[11px] sm:text-xs text-gray-400">{sub}</div>
+        {c?.history && (
+          <div className="ml-auto">
+            <Sparkline
+              data={c.history.map((h) => h.price)}
+              color={up ? '#22c55e' : '#ef4444'}
+              width={70} height={20}
+            />
+          </div>
+        )}
+      </div>
+    </button>
+  );
+};
+
+const MoversCard = ({ items, title, accent, fmt, onSelect, count = 8 }) => (
+  <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">
+    <div className="flex items-center justify-between mb-3">
+      <h3 className={`text-xs sm:text-sm font-semibold uppercase tracking-wider ${accent}`}>{title}</h3>
+      <span className="text-[10px] text-gray-500 font-mono">{items.length}</span>
+    </div>
+    <ul className="divide-y divide-gray-800">
+      {items.slice(0, count).map((c, i) => {
+        const up = c.changePct >= 0;
+        return (
+          <li key={c.ticker}>
+            <button
+              onClick={() => onSelect && onSelect(c.ticker)}
+              className="w-full text-left py-2 flex items-center gap-3 group hover:bg-gray-800/30 -mx-2 px-2 rounded-md transition-colors cursor-pointer"
+            >
               <span className="font-mono text-[10px] text-gray-600 w-4 shrink-0">{i + 1}</span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  <span className="font-mono text-xs text-gray-100">{c.ticker}</span>
+                  <span className="font-mono text-xs text-gray-100 group-hover:text-cyan-300 transition-colors">{c.ticker}</span>
                   <span className={`text-[9px] uppercase tracking-wider ${assetCategoryColor(c.category)}`}>{c.category}</span>
                 </div>
                 <div className="text-[10px] text-gray-500 truncate">{c.name}</div>
@@ -53,18 +89,18 @@ const MoversCard = ({ items, title, accent, fmt, count = 8 }) => {
                   {fmtPctChange(c.changePct)}
                 </div>
               </div>
-            </li>
-          );
-        })}
-        {items.length === 0 && (
-          <li className="text-xs text-gray-500 py-4 text-center">No data yet.</li>
-        )}
-      </ul>
-    </div>
-  );
-};
+            </button>
+          </li>
+        );
+      })}
+      {items.length === 0 && (
+        <li className="text-xs text-gray-500 py-4 text-center">No data yet.</li>
+      )}
+    </ul>
+  </div>
+);
 
-const MostActiveCard = ({ items, fmt }) => (
+const MostActiveCard = ({ items, fmt, onSelect }) => (
   <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">
     <div className="flex items-center justify-between mb-3">
       <h3 className="text-xs sm:text-sm font-semibold uppercase tracking-wider text-cyan-300">Most Active</h3>
@@ -74,22 +110,27 @@ const MostActiveCard = ({ items, fmt }) => (
       {items.slice(0, 8).map((c, i) => {
         const up = c.changePct >= 0;
         return (
-          <li key={c.ticker} className="py-2 flex items-center gap-3">
-            <span className="font-mono text-[10px] text-gray-600 w-4 shrink-0">{i + 1}</span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <span className="font-mono text-xs text-gray-100">{c.ticker}</span>
-                <span className={`text-[9px] uppercase tracking-wider ${assetCategoryColor(c.category)}`}>{c.category}</span>
+          <li key={c.ticker}>
+            <button
+              onClick={() => onSelect && onSelect(c.ticker)}
+              className="w-full text-left py-2 flex items-center gap-3 group hover:bg-gray-800/30 -mx-2 px-2 rounded-md transition-colors cursor-pointer"
+            >
+              <span className="font-mono text-[10px] text-gray-600 w-4 shrink-0">{i + 1}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-xs text-gray-100 group-hover:text-cyan-300 transition-colors">{c.ticker}</span>
+                  <span className={`text-[9px] uppercase tracking-wider ${assetCategoryColor(c.category)}`}>{c.category}</span>
+                </div>
+                <div className="text-[10px] text-gray-500 truncate">{c.name}</div>
               </div>
-              <div className="text-[10px] text-gray-500 truncate">{c.name}</div>
-            </div>
-            <div className="text-right w-20">
-              <div className="font-mono text-[11px] text-gray-100">{fmt(c)}</div>
-              <div className="font-mono text-[10px] text-gray-400">{fmtVolume(c.volume)}</div>
-            </div>
-            <div className={`font-mono text-[10px] w-12 text-right ${up ? 'text-emerald-400' : 'text-red-400'}`}>
-              {fmtPctChange(c.changePct)}
-            </div>
+              <div className="text-right w-20">
+                <div className="font-mono text-[11px] text-gray-100">{fmt(c)}</div>
+                <div className="font-mono text-[10px] text-gray-400">{fmtVolume(c.volume)}</div>
+              </div>
+              <div className={`font-mono text-[10px] w-12 text-right ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+                {fmtPctChange(c.changePct)}
+              </div>
+            </button>
           </li>
         );
       })}
@@ -137,10 +178,10 @@ const HeadlinesPreview = ({ intel, newsLive }) => {
   );
 };
 
-export default function Overview() {
+export default function Overview({ onSelectAsset }) {
   const {
     commodities, intel, pricesLive, newsLive,
-    pricesUpdatedAt, newsUpdatedAt, refresh,
+    pricesUpdatedAt, refresh,
     formatAssetPrice, dashboardCurrency,
   } = useLiveData();
 
@@ -153,16 +194,11 @@ export default function Overview() {
   const fmt = (c) => formatAssetPrice(c);
 
   const find = (sym) => commodities.find((c) => c.symbol === sym);
-  const wti  = find('WTI');
-  const gold = find('GOLD');
-  const nvda = find('NVDA');
-  const btc  = find('BTC');
-
   const stats = [
-    { label: 'WTI Crude',  c: wti  },
-    { label: 'Gold',       c: gold },
-    { label: 'Nvidia',     c: nvda },
-    { label: 'Bitcoin',    c: btc  },
+    { label: 'WTI Crude', c: find('WTI')  },  // oil
+    { label: 'Gold',      c: find('GOLD') },  // safe-haven metal
+    { label: 'S&P 500',   c: find('SPX')  },  // broad equities
+    { label: 'Bitcoin',   c: find('BTC')  },  // crypto
   ];
 
   const gainers = useMemo(
@@ -200,8 +236,8 @@ export default function Overview() {
             Markets &amp; Headlines
           </h2>
           <p className="mt-2 text-xs sm:text-sm text-gray-400 max-w-3xl">
-            Real-time prices across {tradable.length}+ stocks, ETFs, commodities, crypto and macro indicators,
-            plus live news. Switch the dashboard currency from the top-right to view everything in your local FX.
+            Click any asset to open its full chart in Prices. Switch the dashboard currency from the top-right
+            to view everything in your local FX.
           </p>
         </div>
         <button
@@ -214,22 +250,14 @@ export default function Overview() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {stats.map((s) => (
-          <StatCard
-            key={s.label}
-            label={s.label}
-            value={s.c ? fmt(s.c) : '—'}
-            sub={s.c ? `${fmtPctChange(s.c.changePct)} today` : '—'}
-            accent={s.c
-              ? (s.c.changePct >= 0 ? 'text-emerald-400' : 'text-red-400')
-              : 'text-gray-300'}
-          />
+          <StatCard key={s.label} label={s.label} c={s.c} fmt={fmt} onClick={onSelectAsset} />
         ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <MoversCard items={gainers} title="Top Gainers" accent="text-emerald-400" fmt={fmt} />
-        <MoversCard items={losers}  title="Top Losers"  accent="text-red-400"     fmt={fmt} />
-        <MostActiveCard items={mostActive} fmt={fmt} />
+        <MoversCard items={gainers} title="Top Gainers" accent="text-emerald-400" fmt={fmt} onSelect={onSelectAsset} />
+        <MoversCard items={losers}  title="Top Losers"  accent="text-red-400"     fmt={fmt} onSelect={onSelectAsset} />
+        <MostActiveCard items={mostActive} fmt={fmt} onSelect={onSelectAsset} />
       </div>
 
       <HeadlinesPreview intel={intel} newsLive={newsLive} />

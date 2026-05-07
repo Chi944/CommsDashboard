@@ -174,7 +174,7 @@ const AssetNews = ({ asset }) => {
 };
 
 // ---------- Main ----------
-export default function Prices() {
+export default function Prices({ initialTicker, onTickerConsumed } = {}) {
   const {
     commodities: rawCommodities, pricesLive, pricesUpdatedAt, refresh,
     formatAssetPrice, dashboardCurrency,
@@ -208,6 +208,22 @@ export default function Prices() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...watchlist])); } catch {}
   }, [watchlist]);
+
+  // When the user navigates to Prices via "click on Overview", honour
+  // the requested ticker: clear the search/filter so it's visible,
+  // select it, then notify the parent so it can clear pendingTicker.
+  useEffect(() => {
+    if (!initialTicker) return;
+    if (!commodities.some((c) => c.ticker === initialTicker)) return;
+    setQuery('');
+    setCat('ALL');
+    setSelected(initialTicker);
+    onTickerConsumed && onTickerConsumed();
+    // Scroll the page to the top so the chart panel is in view
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [initialTicker, commodities, onTickerConsumed]);
 
   const toggleWatch = (t) => setWatchlist((p) => {
     const n = new Set(p); n.has(t) ? n.delete(t) : n.add(t); return n;
