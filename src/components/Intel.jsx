@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { categoryColor } from '../data/mockData.js';
 import { useLiveData } from '../state/LiveData.jsx';
 
-const FILTERS = ['All', 'Breaking', 'Shipping', 'Energy', 'Metals', 'Agri', 'Geopolitical', 'Tech', 'Data', 'Crypto'];
+const FILTERS = ['All', 'Breaking', 'Shipping', 'Energy', 'Metals', 'Agri', 'Geopolitical', 'Tech', 'Data', 'Finance', 'Currency', 'Crypto'];
 
 const severityDot = (s) => ({
   CRITICAL: 'bg-red-500',

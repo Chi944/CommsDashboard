@@ -5,6 +5,7 @@ import Nav from './components/Nav.jsx';
 import BottomNav from './components/BottomNav.jsx';
 import Overview from './components/Overview.jsx';
 import Prices from './components/Prices.jsx';
+import Currency from './components/Currency.jsx';
 import Intel from './components/Intel.jsx';
 import NotificationsDrawer from './components/NotificationsDrawer.jsx';
 import { LiveDataProvider } from './state/LiveData.jsx';
@@ -24,6 +25,7 @@ export default function App() {
         <main className="px-4 sm:px-6 py-5 sm:py-7 max-w-[1600px] mx-auto pb-24 md:pb-10 animate-fade-in">
           {tab === 'Overview' && <Overview />}
           {tab === 'Prices' && <Prices />}
+          {tab === 'Currency' && <Currency />}
           {tab === 'Intel' && <Intel />}
         </main>
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLiveData } from '../state/LiveData.jsx';
 
-const TABS = ['Overview', 'Prices', 'Intel'];
+const TABS = ['Overview', 'Prices', 'Currency', 'Intel'];
 
 export default function Nav({ active, setActive, onOpenAlerts }) {
   const [now, setNow] = useState(new Date());
