@@ -15,6 +15,12 @@ const ICONS = {
       <path d="M14 7h6v6" />
     </svg>
   ),
+  Currency: (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7h13l-3-3" />
+      <path d="M21 17H8l3 3" />
+    </svg>
+  ),
   Intel: (
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 5h12a3 3 0 0 1 3 3v9a2 2 0 0 0 2 2H6a2 2 0 0 1-2-2V5z" />
@@ -24,10 +30,10 @@ const ICONS = {
 };
 
 export default function BottomNav({ active, setActive }) {
-  const tabs = ['Overview', 'Prices', 'Intel'];
+  const tabs = ['Overview', 'Prices', 'Currency', 'Intel'];
   return (
     <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-gray-950/90 backdrop-blur border-t border-gray-800 safe-bottom">
-      <div className="grid grid-cols-3">
+      <div className="grid grid-cols-4">
         {tabs.map((t) => {
           const sel = active === t;
           return (

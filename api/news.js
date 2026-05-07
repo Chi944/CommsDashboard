@@ -13,6 +13,8 @@ const QUERIES = [
   { category: 'Tech',         q: 'tech stocks earnings Apple Microsoft Nvidia' },
   { category: 'Data',         q: 'AI infrastructure cloud computing Palantir Snowflake' },
   { category: 'Crypto',       q: 'bitcoin ethereum cryptocurrency price' },
+  { category: 'Currency',     q: 'forex EUR USD JPY currency markets central bank' },
+  { category: 'Finance',      q: 'stock market S&P 500 Federal Reserve earnings' },
 ];
 
 const PER_QUERY = 4;
