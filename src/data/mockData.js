@@ -30,7 +30,7 @@ const buildHistory = (start, vol, seed) => {
 const ANCHOR = {
   CL: 80, BZ: 85, NG: 2.4,
   GC: 2300, SI: 28, HG: 4.4,
-  ZW: 620, ZC: 440, ZS: 1175,
+  ZW: 620, ZC: 440, SOY: 1175,
   AAPL: 220, MSFT: 420, GOOGL: 175, META: 500, AMZN: 185, NFLX: 620,
   ADBE: 510, CRM: 280, ORCL: 130, IBM: 175, NOW: 760, INTU: 620,
   NVDA: 880, AVGO: 1450, AMD: 165, TSM: 155, INTC: 32, MU: 110, QCOM: 175,

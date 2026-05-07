@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend,
 } from 'recharts';
@@ -7,13 +7,19 @@ import { assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
 import { downloadCSV } from '../utils/csv.js';
 
-const CATS = [
-  'ALL', 'TRENDING', 'WATCHLIST',
-  'TECH', 'SEMI', 'DATA', 'AUTO', 'FINANCE', 'HEALTH',
-  'CONSUMER', 'OIL', 'INDUST', 'TELECOM', 'REIT', 'UTIL',
-  'TRAVEL', 'ASIA', 'MOMENTUM', 'CRYPTO', 'ENERGY', 'METALS',
-  'AGRICULTURE', 'MACRO',
+// Quick filter pills (always visible).
+const PRIMARY_CATS = ['ALL', 'TRENDING', 'WATCHLIST'];
+
+// Categories grouped by sector for the secondary nav. Keeps the pill
+// row from getting overwhelmingly long while still surfacing every
+// category on tap.
+const CATEGORY_GROUPS = [
+  { label: 'Stocks',      cats: ['TECH', 'SEMI', 'DATA', 'AUTO', 'FINANCE', 'HEALTH', 'CONSUMER', 'INDUST', 'TELECOM', 'REIT', 'UTIL', 'TRAVEL', 'ASIA', 'OIL', 'MOMENTUM'] },
+  { label: 'Commodities', cats: ['ENERGY', 'METALS', 'AGRICULTURE'] },
+  { label: 'Crypto',      cats: ['CRYPTO'] },
+  { label: 'Macro',       cats: ['MACRO'] },
 ];
+const ALL_CATS = [...PRIMARY_CATS, ...CATEGORY_GROUPS.flatMap((g) => g.cats)];
 
 const RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', 'ytd'];
 const RANGE_LABEL = { '1d': '1D', '5d': '5D', '1mo': '1M', '3mo': '3M', '6mo': '6M', '1y': '1Y', 'ytd': 'YTD' };
@@ -204,10 +210,28 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
 
   const [historyCache, setHistoryCache] = useState({});
   const [chartLoading, setChartLoading] = useState(false);
+  const searchRef = useRef(null);
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...watchlist])); } catch {}
   }, [watchlist]);
+
+  // Keyboard shortcut: '/' focuses the search input. Esc clears it.
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = (e.target && e.target.tagName) || '';
+      const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable;
+      if (e.key === '/' && !isTyping) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      } else if (e.key === 'Escape' && document.activeElement === searchRef.current) {
+        setQuery('');
+        searchRef.current?.blur();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // When the user navigates to Prices via "click on Overview", honour
   // the requested ticker: clear the search/filter so it's visible,
@@ -389,7 +413,7 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
         </div>
       </div>
 
-      {/* Search bar */}
+      {/* Search bar with keyboard hint */}
       <div className="relative">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
           className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
@@ -397,35 +421,59 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
           <path d="M20 20l-3-3" />
         </svg>
         <input
+          ref={searchRef}
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search by ticker or name (e.g. NVDA, Apple, Bitcoin)…"
-          className="w-full bg-gray-900/70 border border-gray-800 text-sm text-gray-100 rounded-md pl-9 pr-9 py-2.5 focus:outline-none focus:border-cyan-500 placeholder:text-gray-500"
+          className="w-full bg-gray-900/70 border border-gray-800 text-sm text-gray-100 rounded-md pl-9 pr-20 py-2.5 focus:outline-none focus:border-cyan-500 placeholder:text-gray-500"
         />
+        <kbd className="hidden sm:inline absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-500 font-mono px-1.5 py-0.5 rounded border border-gray-700 bg-gray-900">
+          {query ? 'esc' : '/'}
+        </kbd>
         {query && (
           <button
             onClick={() => setQuery('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-200 text-sm"
+            className="absolute right-3 top-1/2 -translate-y-1/2 sm:hidden text-gray-500 hover:text-gray-200 text-sm"
             aria-label="clear"
           >×</button>
         )}
       </div>
 
-      {/* Filter pills (hidden when searching) */}
+      {/* Filter pills: primary always visible, then grouped sector pills.
+          All hidden while searching. */}
       {!query.trim() && (
-        <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 sm:mx-0 px-4 sm:px-0 pb-1 sm:flex-wrap">
-          {CATS.map((c) => (
-            <button
-              key={c}
-              onClick={() => setCat(c)}
-              className={`shrink-0 px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-all
-                ${cat === c
-                  ? 'bg-gradient-to-b from-gray-50 to-gray-200 text-gray-950 border-gray-100 shadow'
-                  : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:bg-gray-900'}`}
-            >
-              {c === 'WATCHLIST' ? `★ Watchlist (${watchlist.size})` : c === 'TRENDING' ? '🔥 Trending' : c}
-            </button>
+        <div className="space-y-2">
+          <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 sm:mx-0 px-4 sm:px-0 pb-1 sm:flex-wrap">
+            {PRIMARY_CATS.map((c) => (
+              <button
+                key={c}
+                onClick={() => setCat(c)}
+                className={`shrink-0 px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-all
+                  ${cat === c
+                    ? 'bg-gradient-to-b from-cyan-300 to-cyan-500 text-gray-950 border-cyan-200 shadow'
+                    : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:bg-gray-900'}`}
+              >
+                {c === 'WATCHLIST' ? `★ Watchlist (${watchlist.size})` : c === 'TRENDING' ? '🔥 Trending' : c}
+              </button>
+            ))}
+          </div>
+          {CATEGORY_GROUPS.map((g) => (
+            <div key={g.label} className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 sm:mx-0 px-4 sm:px-0 pb-1 sm:flex-wrap">
+              <span className="shrink-0 text-[10px] uppercase tracking-widest text-gray-500 w-20">{g.label}</span>
+              {g.cats.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setCat(c)}
+                  className={`shrink-0 px-2.5 py-1 text-[11px] uppercase tracking-wider rounded-md border transition-all
+                    ${cat === c
+                      ? 'bg-gradient-to-b from-gray-50 to-gray-200 text-gray-950 border-gray-100 shadow-sm'
+                      : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:bg-gray-900'}`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
           ))}
         </div>
       )}

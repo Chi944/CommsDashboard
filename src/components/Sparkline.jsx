@@ -1,7 +1,9 @@
 import React from 'react';
 
-// Minimal inline SVG sparkline. `data` is an array of numbers.
-export default function Sparkline({ data, width = 80, height = 24, color = '#22d3ee', fill = false }) {
+// Inline SVG sparkline. Memoised because it re-renders for every row
+// in the prices list (140+ rows × 3 places), and the input data is
+// stable per asset between price polls.
+function Sparkline({ data, width = 80, height = 24, color = '#22d3ee', fill = false }) {
   if (!data || data.length < 2) return null;
   const min = Math.min(...data);
   const max = Math.max(...data);
@@ -22,3 +24,12 @@ export default function Sparkline({ data, width = 80, height = 24, color = '#22d
     </svg>
   );
 }
+
+const equal = (a, b) =>
+  a.color === b.color &&
+  a.fill === b.fill &&
+  a.width === b.width &&
+  a.height === b.height &&
+  a.data === b.data; // shallow ref check on data; price polls produce new arrays
+
+export default React.memo(Sparkline, equal);
