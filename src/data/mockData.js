@@ -1,5 +1,7 @@
-// Fallback data used when the live API is unavailable.
-// All on-screen "live" indicators reflect whether the API succeeded.
+// Fallback rows used when /api/prices is offline.
+// Live API values overlay these on first successful poll.
+
+import { SYMBOLS } from '../../lib/symbols.js';
 
 const seeded = (seed) => {
   let s = seed;
@@ -18,156 +20,69 @@ const buildHistory = (start, vol, seed) => {
     arr.push({
       day: `D-${i}`,
       date: new Date(Date.now() - i * 86400000).toISOString().slice(5, 10),
-      price: Math.round(p * 100) / 100,
+      price: Math.round(p * 10000) / 10000,
     });
   }
   return arr;
 };
 
-// Compact seed rows: just the metadata + a starting price. The 30-day
-// history is built deterministically. Live values from /api/prices will
-// overlay these on first successful fetch.
-const SEED = [
-  // ENERGY
-  ['CL','WTI','WTI Crude','ENERGY','$/bbl', 80, 1.4],
-  ['BZ','BRENT','Brent Crude','ENERGY','$/bbl', 85, 1.5],
-  ['NG','NATGAS','Natural Gas','ENERGY','$/MMBtu', 2.4, 0.08],
-  // METALS
-  ['GC','GOLD','Gold','METALS','$/oz', 2300, 18],
-  ['SI','SILVER','Silver','METALS','$/oz', 28, 0.4],
-  ['HG','COPPER','Copper','METALS','$/lb', 4.4, 0.06],
-  // AGRICULTURE
-  ['ZW','WHEAT','Wheat','AGRICULTURE','¢/bu', 620, 8],
-  ['ZC','CORN','Corn','AGRICULTURE','¢/bu', 440, 6],
-  ['ZS','SOY','Soybeans','AGRICULTURE','¢/bu', 1175, 12],
-  // TECH
-  ['AAPL','AAPL','Apple','TECH','$', 220, 2.5],
-  ['MSFT','MSFT','Microsoft','TECH','$', 420, 4],
-  ['GOOGL','GOOGL','Alphabet','TECH','$', 175, 2.2],
-  ['META','META','Meta Platforms','TECH','$', 500, 6],
-  ['AMZN','AMZN','Amazon','TECH','$', 185, 2.5],
-  ['NFLX','NFLX','Netflix','TECH','$', 620, 8],
-  ['ADBE','ADBE','Adobe','TECH','$', 510, 6],
-  ['CRM','CRM','Salesforce','TECH','$', 280, 4],
-  ['ORCL','ORCL','Oracle','TECH','$', 130, 1.6],
-  ['IBM','IBM','IBM','TECH','$', 175, 1.8],
-  // SEMI
-  ['NVDA','NVDA','Nvidia','SEMI','$', 880, 25],
-  ['AVGO','AVGO','Broadcom','SEMI','$', 1450, 22],
-  ['AMD','AMD','AMD','SEMI','$', 165, 3.5],
-  ['TSM','TSM','TSMC','SEMI','$', 155, 2.4],
-  ['INTC','INTC','Intel','SEMI','$', 32, 0.6],
-  ['MU','MU','Micron','SEMI','$', 110, 2],
-  ['QCOM','QCOM','Qualcomm','SEMI','$', 175, 2.4],
-  ['ASML','ASML','ASML','SEMI','$', 950, 14],
-  ['AMAT','AMAT','Applied Materials','SEMI','$', 210, 3],
-  // DATA
-  ['PLTR','PLTR','Palantir','DATA','$', 25, 0.6],
-  ['SNOW','SNOW','Snowflake','DATA','$', 160, 3.2],
-  ['NET','NET','Cloudflare','DATA','$', 95, 1.8],
-  ['DDOG','DDOG','Datadog','DATA','$', 130, 2],
-  ['MDB','MDB','MongoDB','DATA','$', 360, 6],
-  ['CRWD','CRWD','CrowdStrike','DATA','$', 320, 5],
-  ['PANW','PANW','Palo Alto Nets','DATA','$', 320, 4],
-  ['AI','AI','C3.ai','DATA','$', 22, 0.5],
-  ['SMCI','SMCI','Super Micro','DATA','$', 720, 18],
-  ['ARM','ARM','Arm Holdings','DATA','$', 110, 2.5],
-  ['COIN','COIN','Coinbase','DATA','$', 220, 6],
-  // AUTO
-  ['TSLA','TSLA','Tesla','AUTO','$', 200, 5],
-  ['RIVN','RIVN','Rivian','AUTO','$', 12, 0.4],
-  ['LCID','LCID','Lucid','AUTO','$', 3.5, 0.15],
-  ['NIO','NIO','NIO','AUTO','$', 5.5, 0.2],
-  ['F','F','Ford','AUTO','$', 12, 0.2],
-  ['GM','GM','General Motors','AUTO','$', 45, 0.7],
-  // FINANCE
-  ['JPM','JPM','JPMorgan','FINANCE','$', 200, 2.5],
-  ['BAC','BAC','Bank of America','FINANCE','$', 38, 0.5],
-  ['GS','GS','Goldman Sachs','FINANCE','$', 470, 5],
-  ['WFC','WFC','Wells Fargo','FINANCE','$', 60, 0.7],
-  ['C','C','Citigroup','FINANCE','$', 60, 0.8],
-  ['V','V','Visa','FINANCE','$', 275, 2.5],
-  ['MA','MA','Mastercard','FINANCE','$', 460, 4],
-  ['BRK-B','BRK.B','Berkshire Hathaway','FINANCE','$', 410, 3.5],
-  // HEALTH
-  ['LLY','LLY','Eli Lilly','HEALTH','$', 760, 10],
-  ['UNH','UNH','UnitedHealth','HEALTH','$', 490, 5],
-  ['JNJ','JNJ','Johnson & Johnson','HEALTH','$', 150, 1.5],
-  ['PFE','PFE','Pfizer','HEALTH','$', 27, 0.4],
-  ['MRNA','MRNA','Moderna','HEALTH','$', 110, 3],
-  ['ABT','ABT','Abbott','HEALTH','$', 105, 1],
-  ['NVO','NVO','Novo Nordisk','HEALTH','$', 130, 2],
-  // CONSUMER
-  ['WMT','WMT','Walmart','CONSUMER','$', 60, 0.6],
-  ['COST','COST','Costco','CONSUMER','$', 800, 8],
-  ['HD','HD','Home Depot','CONSUMER','$', 350, 4],
-  ['MCD','MCD','McDonald\'s','CONSUMER','$', 270, 2.5],
-  ['KO','KO','Coca-Cola','CONSUMER','$', 60, 0.5],
-  ['NKE','NKE','Nike','CONSUMER','$', 90, 1.2],
-  ['DIS','DIS','Disney','CONSUMER','$', 105, 1.4],
-  ['SBUX','SBUX','Starbucks','CONSUMER','$', 80, 1],
-  // MOMENTUM
-  ['HOOD','HOOD','Robinhood','MOMENTUM','$', 22, 0.6],
-  ['RBLX','RBLX','Roblox','MOMENTUM','$', 35, 0.8],
-  ['ABNB','ABNB','Airbnb','MOMENTUM','$', 160, 2.2],
-  ['SHOP','SHOP','Shopify','MOMENTUM','$', 70, 1.4],
-  ['SQ','SQ','Block','MOMENTUM','$', 70, 1.4],
-  ['PYPL','PYPL','PayPal','MOMENTUM','$', 65, 0.9],
-  ['UBER','UBER','Uber','MOMENTUM','$', 70, 1.2],
-  ['SPOT','SPOT','Spotify','MOMENTUM','$', 320, 5],
-  ['MSTR','MSTR','MicroStrategy','MOMENTUM','$', 1500, 60],
-  ['RIOT','RIOT','Riot Platforms','MOMENTUM','$', 10, 0.4],
-  ['GME','GME','GameStop','MOMENTUM','$', 22, 0.8],
-  ['AMC','AMC','AMC Entertainment','MOMENTUM','$', 4, 0.2],
-  // CRYPTO
-  ['BTC','BTC','Bitcoin','CRYPTO','$', 65000, 800],
-  ['ETH','ETH','Ethereum','CRYPTO','$', 3200, 60],
-  ['SOL','SOL','Solana','CRYPTO','$', 145, 4],
-  ['BNB','BNB','BNB','CRYPTO','$', 580, 10],
-  ['XRP','XRP','Ripple','CRYPTO','$', 0.52, 0.012],
-  ['DOGE','DOGE','Dogecoin','CRYPTO','$', 0.16, 0.005],
-  ['ADA','ADA','Cardano','CRYPTO','$', 0.46, 0.012],
-  ['AVAX','AVAX','Avalanche','CRYPTO','$', 35, 1.0],
-  ['DOT','DOT','Polkadot','CRYPTO','$', 6.8, 0.18],
-  ['LINK','LINK','Chainlink','CRYPTO','$', 14.5, 0.4],
-  ['MATIC','MATIC','Polygon','CRYPTO','$', 0.7, 0.02],
-  ['ATOM','ATOM','Cosmos','CRYPTO','$', 8.5, 0.25],
-  ['NEAR','NEAR','Near','CRYPTO','$', 7, 0.2],
-  ['APT','APT','Aptos','CRYPTO','$', 9, 0.3],
-  // MACRO
-  ['SPX','SPX','S&P 500','MACRO','index', 5100, 30],
-  ['NDX','NDX','Nasdaq Composite','MACRO','index', 16000, 120],
-  ['DJI','DJI','Dow Jones','MACRO','index', 38500, 200],
-  ['VIX','VIX','VIX','MACRO','index', 14, 0.6],
-  ['TNX','US10Y','US 10Y Yield','MACRO','%', 4.4, 0.05],
-  ['DXY','DXY','Dollar Index','MACRO','index', 104, 0.4],
-  // FX
-  ['EURUSD','EUR/USD','Euro / US Dollar','FX','rate', 1.08, 0.005],
-  ['USDJPY','USD/JPY','US Dollar / Yen','FX','rate', 155, 0.5],
-  ['GBPUSD','GBP/USD','Pound / US Dollar','FX','rate', 1.25, 0.006],
-  ['USDCHF','USD/CHF','US Dollar / Swiss Franc','FX','rate', 0.91, 0.004],
-  ['USDCAD','USD/CAD','US Dollar / Canadian','FX','rate', 1.37, 0.005],
-  ['AUDUSD','AUD/USD','Australian / US Dollar','FX','rate', 0.66, 0.004],
-  ['NZDUSD','NZD/USD','New Zealand / US Dollar','FX','rate', 0.60, 0.004],
-  ['USDCNY','USD/CNY','US Dollar / Yuan','FX','rate', 7.23, 0.02],
-  ['USDINR','USD/INR','US Dollar / Rupee','FX','rate', 83.5, 0.1],
-  ['USDMXN','USD/MXN','US Dollar / Peso','FX','rate', 17, 0.1],
-  ['USDBRL','USD/BRL','US Dollar / Real','FX','rate', 5.1, 0.04],
-  ['USDKRW','USD/KRW','US Dollar / Won','FX','rate', 1370, 5],
-  ['EURGBP','EUR/GBP','Euro / Pound','FX','rate', 0.86, 0.003],
-  ['EURJPY','EUR/JPY','Euro / Yen','FX','rate', 167, 0.6],
-  ['GBPJPY','GBP/JPY','Pound / Yen','FX','rate', 194, 0.7],
-];
+// Coarse anchor prices so fallbacks aren't all $1. Live API replaces.
+const ANCHOR = {
+  CL: 80, BZ: 85, NG: 2.4,
+  GC: 2300, SI: 28, HG: 4.4,
+  ZW: 620, ZC: 440, ZS: 1175,
+  AAPL: 220, MSFT: 420, GOOGL: 175, META: 500, AMZN: 185, NFLX: 620,
+  ADBE: 510, CRM: 280, ORCL: 130, IBM: 175, NOW: 760, INTU: 620,
+  NVDA: 880, AVGO: 1450, AMD: 165, TSM: 155, INTC: 32, MU: 110, QCOM: 175,
+  ASML: 950, AMAT: 210, LRCX: 950, KLAC: 720, MRVL: 75,
+  PLTR: 25, SNOW: 160, NET: 95, DDOG: 130, MDB: 360, CRWD: 320, PANW: 320,
+  ZS: 200, OKTA: 95, AI: 22, SMCI: 720, ARM: 110, COIN: 220,
+  TSLA: 200, RIVN: 12, LCID: 3.5, NIO: 5.5, XPEV: 9, LI: 22, F: 12, GM: 45, STLA: 25,
+  JPM: 200, BAC: 38, GS: 470, WFC: 60, C: 60, MS: 100, SCHW: 75, USB: 45,
+  V: 275, MA: 460, AXP: 235, 'BRK-B': 410,
+  LLY: 760, UNH: 490, JNJ: 150, PFE: 27, MRNA: 110, ABT: 105, NVO: 130,
+  AZN: 70, NVS: 100, AMGN: 280, GILD: 70, VRTX: 420, REGN: 920, ISRG: 380,
+  WMT: 60, COST: 800, HD: 350, LOW: 230, TGT: 150, MCD: 270, SBUX: 80,
+  KO: 60, PEP: 175, PG: 165, NKE: 90, LULU: 360, DIS: 105, MO: 45,
+  XOM: 115, CVX: 160, COP: 125, SLB: 50, OXY: 65, MPC: 175, PSX: 165, EOG: 130,
+  BA: 175, CAT: 350, GE: 160, HON: 200, RTX: 100, LMT: 460, NOC: 470, DE: 400, UPS: 145, FDX: 270,
+  T: 17, VZ: 40, TMUS: 165, CMCSA: 40,
+  O: 55, AMT: 195, PLD: 110, SPG: 150, EQIX: 770,
+  NEE: 65, DUK: 100, AEP: 90, SO: 75,
+  DAL: 50, UAL: 50, LUV: 28, AAL: 14, BKNG: 3700, MAR: 240, EXPE: 130, CCL: 16,
+  BABA: 80, JD: 30, PDD: 130, BIDU: 100, SE: 65, MELI: 1500,
+  HOOD: 22, RBLX: 35, ABNB: 160, SHOP: 70, SQ: 70, PYPL: 65, UBER: 70, LYFT: 18,
+  SPOT: 320, MSTR: 1500, RIOT: 10, MARA: 18, DKNG: 40, SOFI: 8, GME: 22, AMC: 4,
+  BTC: 65000, ETH: 3200, SOL: 145, BNB: 580, XRP: 0.52, DOGE: 0.16, ADA: 0.46,
+  AVAX: 35, DOT: 6.8, LINK: 14.5, MATIC: 0.7, ATOM: 8.5, NEAR: 7, APT: 9,
+  LTC: 80, TRX: 0.12,
+  SPX: 5100, NDX: 16000, DJI: 38500, VIX: 14, TNX: 4.4, DXY: 104,
+  // FX anchors
+  EURUSD: 1.08, GBPUSD: 1.25, AUDUSD: 0.66, NZDUSD: 0.60,
+  USDJPY: 155, USDCHF: 0.91, USDCAD: 1.37, USDCNY: 7.23, USDINR: 83.5,
+  USDMXN: 17, USDBRL: 5.1, USDKRW: 1370, USDSGD: 1.35, USDHKD: 7.83,
+  USDTWD: 32.4, USDTHB: 36.8, USDIDR: 16100, USDPHP: 57, USDMYR: 4.7,
+  USDVND: 25400, USDAED: 3.67, USDSAR: 3.75, USDILS: 3.7, USDTRY: 32.2,
+  USDZAR: 18.6, USDEGP: 47, USDNGN: 1500, USDKES: 130, USDPKR: 280, USDBDT: 110,
+  USDSEK: 10.8, USDNOK: 10.9, USDDKK: 6.9, USDPLN: 4.0, USDCZK: 23.2,
+  USDHUF: 358, USDRON: 4.6, USDARS: 870, USDCLP: 950, USDCOP: 3850, USDPEN: 3.7,
+};
 
-export const commodities = SEED.map(([ticker, symbol, name, category, unit, price, vol], i) => ({
-  ticker, symbol, name, category, unit,
-  price,
-  high: price * 1.01,
-  low:  price * 0.99,
-  changePct: 0,
-  changeAbs: 0,
-  history: buildHistory(price, vol, (i + 11) * 7),
-}));
+const VOL_RATIO = 0.012; // typical daily move ~1.2%
+
+export const commodities = SYMBOLS.map((s, i) => {
+  const anchor = ANCHOR[s.ticker] ?? 100;
+  const vol = anchor * VOL_RATIO;
+  return {
+    ...s,
+    price: anchor,
+    high: anchor * 1.01,
+    low:  anchor * 0.99,
+    changePct: 0,
+    changeAbs: 0,
+    history: buildHistory(anchor, vol, (i + 11) * 7),
+  };
+});
 
 // Empty by default — populated by /api/news.
 export const intel = [];
@@ -214,5 +129,12 @@ export const assetCategoryColor = (c) => ({
   MOMENTUM:    'text-orange-300',
   CRYPTO:      'text-amber-300',
   MACRO:       'text-slate-300',
+  OIL:         'text-orange-200',
+  INDUST:      'text-stone-300',
+  TELECOM:     'text-sky-300',
+  REIT:        'text-lime-300',
+  UTIL:        'text-teal-300',
+  TRAVEL:      'text-indigo-300',
+  ASIA:        'text-red-300',
   FX:          'text-emerald-300',
 }[c] || 'text-gray-300');

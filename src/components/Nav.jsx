@@ -1,11 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useLiveData } from '../state/LiveData.jsx';
+import { CURRENCY_META } from '../../lib/symbols.js';
 
 const TABS = ['Overview', 'Prices', 'Currency', 'Intel'];
 
 export default function Nav({ active, setActive, onOpenAlerts }) {
   const [now, setNow] = useState(new Date());
-  const { pricesLive, newsLive, notifications } = useLiveData();
+  const {
+    pricesLive, newsLive, notifications,
+    dashboardCurrency, setDashboardCurrency, availableCurrencies,
+  } = useLiveData();
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -46,7 +50,26 @@ export default function Nav({ active, setActive, onOpenAlerts }) {
         </div>
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-4 text-xs text-gray-400">
+      <div className="flex items-center gap-2 sm:gap-3 text-xs text-gray-400">
+        <label className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-900/60 border border-gray-800 hover:border-gray-600 transition-colors cursor-pointer" title="Display currency for the whole dashboard">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-gray-400">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M3 12h18" />
+            <path d="M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+          </svg>
+          <select
+            value={dashboardCurrency}
+            onChange={(e) => setDashboardCurrency(e.target.value)}
+            className="bg-transparent text-gray-100 font-mono text-xs focus:outline-none cursor-pointer"
+            aria-label="Display currency"
+          >
+            {availableCurrencies.map((c) => (
+              <option key={c} value={c} className="bg-gray-900">
+                {c} {CURRENCY_META[c] ? `· ${CURRENCY_META[c].name}` : ''}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="hidden lg:flex items-center gap-2 px-2 py-1 rounded-md bg-gray-900/60 border border-gray-800" title="Data source status">
           <span className={`w-1.5 h-1.5 rounded-full ${liveDot}`} />
           <span className={`uppercase tracking-widest text-[10px] ${liveColor}`}>{liveStatus}</span>
