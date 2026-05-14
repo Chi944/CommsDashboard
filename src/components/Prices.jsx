@@ -5,6 +5,7 @@ import {
 import { useLiveData } from '../state/LiveData.jsx';
 import { assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
+import AnalysisPanel from './AnalysisPanel.jsx';
 import { downloadCSV } from '../utils/csv.js';
 
 // Quick filter pills (always visible).
@@ -545,6 +546,7 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
             </div>
           </div>
           {!compare && <DetailPanel c={sel} formatAssetPrice={formatAssetPrice} />}
+          {!compare && sel && <AnalysisPanel asset={sel} />}
         </div>
 
         {/* Left column: list */}
