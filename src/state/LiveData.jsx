@@ -1,9 +1,10 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   commodities as fallbackCommodities,
   intel as fallbackIntel,
 } from '../data/mockData.js';
 import { CURRENCY_META, CURRENCY_NO_DECIMAL } from '../../lib/symbols.js';
+import { useLocalStorage } from '../utils/useLocalStorage.js';
 
 const PRICE_INTERVAL_MS = 60_000;
 const NEWS_INTERVAL_MS = 5 * 60_000;
@@ -45,6 +46,90 @@ export function LiveDataProvider({ children }) {
     try { localStorage.setItem(CCY_KEY, c); } catch {}
   }, []);
 
+  // ---------- Multi-watchlist ----------
+  // Shape: { active: 'Default', lists: { Default: ['NVDA', ...], ... } }
+  const [watchState, setWatchState] = useLocalStorage('comms.watchlists.v1', {
+    active: 'Default',
+    lists: { Default: [] },
+  });
+
+  const watchlistNames = Object.keys(watchState.lists);
+  const activeList = watchState.lists[watchState.active] || [];
+  const activeWatchSet = useMemo(() => new Set(activeList), [activeList]);
+
+  const setActiveList = useCallback((name) => {
+    setWatchState((p) => p.lists[name] ? { ...p, active: name } : p);
+  }, [setWatchState]);
+
+  const createList = useCallback((name) => {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    setWatchState((p) => ({
+      active: trimmed,
+      lists: { ...p.lists, [trimmed]: p.lists[trimmed] || [] },
+    }));
+  }, [setWatchState]);
+
+  const renameList = useCallback((oldName, newName) => {
+    const trimmed = (newName || '').trim();
+    if (!trimmed || trimmed === oldName) return;
+    setWatchState((p) => {
+      if (!p.lists[oldName]) return p;
+      const { [oldName]: items, ...rest } = p.lists;
+      return {
+        active: p.active === oldName ? trimmed : p.active,
+        lists: { ...rest, [trimmed]: items },
+      };
+    });
+  }, [setWatchState]);
+
+  const deleteList = useCallback((name) => {
+    setWatchState((p) => {
+      if (Object.keys(p.lists).length <= 1) return p; // keep at least one
+      const { [name]: _drop, ...rest } = p.lists;
+      const nextActive = p.active === name ? Object.keys(rest)[0] : p.active;
+      return { active: nextActive, lists: rest };
+    });
+  }, [setWatchState]);
+
+  const toggleWatch = useCallback((ticker) => {
+    setWatchState((p) => {
+      const cur = new Set(p.lists[p.active] || []);
+      cur.has(ticker) ? cur.delete(ticker) : cur.add(ticker);
+      return { ...p, lists: { ...p.lists, [p.active]: [...cur] } };
+    });
+  }, [setWatchState]);
+
+  // ---------- Price alerts ----------
+  // [{ id, ticker, op: '>'|'<', price, name, enabled, lastTriggeredAt }]
+  const [alerts, setAlerts] = useLocalStorage('comms.alerts.v1', []);
+  const [triggeredAlerts, setTriggeredAlerts] = useLocalStorage('comms.alerts.triggered.v1', []);
+  const lastPriceRef = useRef({});
+
+  const addAlert = useCallback(({ ticker, op, price, name }) => {
+    const id = `${ticker}-${op}-${price}-${Date.now()}`;
+    setAlerts((p) => [...p, { id, ticker, op, price: Number(price), name, enabled: true, lastTriggeredAt: null }]);
+  }, [setAlerts]);
+
+  const removeAlert = useCallback((id) => {
+    setAlerts((p) => p.filter((a) => a.id !== id));
+  }, [setAlerts]);
+
+  const toggleAlert = useCallback((id) => {
+    setAlerts((p) => p.map((a) => a.id === id ? { ...a, enabled: !a.enabled } : a));
+  }, [setAlerts]);
+
+  const clearTriggered = useCallback(() => setTriggeredAlerts([]), [setTriggeredAlerts]);
+
+  const requestNotificationPermission = useCallback(async () => {
+    try {
+      if (!('Notification' in window)) return 'unsupported';
+      if (Notification.permission === 'granted') return 'granted';
+      const r = await Notification.requestPermission();
+      return r;
+    } catch { return 'error'; }
+  }, []);
+
   const fetchPrices = useCallback(async () => {
     try {
       setPricesLoading(true);
@@ -59,13 +144,60 @@ export function LiveDataProvider({ children }) {
         setCommodities(merged);
         setPricesUpdatedAt(j.fetchedAt);
         setPricesLive(true);
+
+        // Alert evaluation: compare prev vs current price for each alert.
+        const prev = lastPriceRef.current;
+        const next = {};
+        const newlyTriggered = [];
+        for (const c of merged) next[c.ticker] = c.price;
+
+        setAlerts((curAlerts) => {
+          const updated = [];
+          for (const a of curAlerts) {
+            const cur = next[a.ticker];
+            const was = prev[a.ticker];
+            if (!a.enabled || cur == null) { updated.push(a); continue; }
+            const crossed =
+              (a.op === '>' && was != null && was < a.price && cur >= a.price) ||
+              (a.op === '<' && was != null && was > a.price && cur <= a.price);
+            if (crossed) {
+              const ts = Date.now();
+              newlyTriggered.push({
+                id: `t-${a.id}-${ts}`,
+                ticker: a.ticker,
+                name: a.name,
+                op: a.op,
+                threshold: a.price,
+                price: cur,
+                ts,
+              });
+              if ('Notification' in window && Notification.permission === 'granted') {
+                try {
+                  new Notification(`${a.ticker} ${a.op} ${a.price}`, {
+                    body: `${a.name}: now ${cur}`,
+                    tag: `alert-${a.id}`,
+                  });
+                } catch {}
+              }
+              updated.push({ ...a, lastTriggeredAt: ts });
+            } else {
+              updated.push(a);
+            }
+          }
+          return updated;
+        });
+
+        if (newlyTriggered.length) {
+          setTriggeredAlerts((p) => [...newlyTriggered, ...p].slice(0, 50));
+        }
+        lastPriceRef.current = next;
       }
     } catch {
       /* keep last good state */
     } finally {
       setPricesLoading(false);
     }
-  }, []);
+  }, [setAlerts, setTriggeredAlerts]);
 
   const fetchNews = useCallback(async () => {
     try {
@@ -97,10 +229,26 @@ export function LiveDataProvider({ children }) {
     return () => { clearInterval(a); clearInterval(b); };
   }, [fetchPrices, fetchNews]);
 
-  const refresh = useCallback(() => {
-    fetchPrices();
-    fetchNews();
-  }, [fetchPrices, fetchNews]);
+  const refresh = useCallback(() => { fetchPrices(); fetchNews(); }, [fetchPrices, fetchNews]);
+
+  // ---------- Portfolio (positions) ----------
+  // [{ ticker, qty, avgCost }]
+  const [positions, setPositions] = useLocalStorage('comms.positions.v1', []);
+
+  const upsertPosition = useCallback(({ ticker, qty, avgCost }) => {
+    if (!ticker) return;
+    setPositions((p) => {
+      const existing = p.find((x) => x.ticker === ticker);
+      if (existing) {
+        return p.map((x) => x.ticker === ticker ? { ...x, qty: Number(qty), avgCost: Number(avgCost) } : x);
+      }
+      return [...p, { ticker, qty: Number(qty), avgCost: Number(avgCost) }];
+    });
+  }, [setPositions]);
+
+  const removePosition = useCallback((ticker) => {
+    setPositions((p) => p.filter((x) => x.ticker !== ticker));
+  }, [setPositions]);
 
   // Notifications: latest non-LOW headlines, freshest first, capped to past 7 days.
   const notifications = useMemo(() => {
@@ -121,8 +269,7 @@ export function LiveDataProvider({ children }) {
       }));
   }, [intel, newsLive]);
 
-  // ----- Currency conversion -----
-  // Build a fast {pair: rate} index from FX rows.
+  // ---------- Currency conversion ----------
   const fxIndex = useMemo(() => {
     const m = {};
     for (const c of commodities) {
@@ -137,16 +284,12 @@ export function LiveDataProvider({ children }) {
   const getRate = useCallback((from, to) => {
     if (from === to) return 1;
     if (fxIndex[`${from}->${to}`]) return fxIndex[`${from}->${to}`];
-    // Cross via USD
     const fromUsd = from === 'USD' ? 1 : fxIndex[`${from}->USD`];
     const toUsd = to === 'USD' ? 1 : fxIndex[`USD->${to}`];
     if (fromUsd && toUsd) return fromUsd * toUsd;
     return null;
   }, [fxIndex]);
 
-  // Determine whether an asset's price is convertible by display ccy.
-  // Stocks/crypto/futures priced in $ → convert. Macro indices/yields,
-  // agri (¢/bu), and FX rates themselves don't convert.
   const convertible = useCallback((c) => {
     if (!c) return false;
     if (c.category === 'MACRO' || c.category === 'FX') return false;
@@ -160,13 +303,10 @@ export function LiveDataProvider({ children }) {
     return r != null ? amount * r : amount;
   }, [getRate, dashboardCurrency]);
 
-  // Currency-aware price formatter for an asset row.
-  // Returns the displayable string with appropriate symbol prefix.
   const formatAssetPrice = useCallback((asset, raw = null) => {
     const value = raw != null ? raw : asset?.price;
     if (value == null || !isFinite(value)) return '—';
     if (!convertible(asset)) {
-      // Show in original unit (no ccy prefix); just numeric formatting.
       if (Math.abs(value) < 1) return value.toFixed(4);
       if (Math.abs(value) >= 1000) return value.toLocaleString();
       return value.toFixed(2);
@@ -182,8 +322,6 @@ export function LiveDataProvider({ children }) {
     return `${meta.sym}${num}`;
   }, [convert, convertible, dashboardCurrency]);
 
-  // List of currencies the user can pick as the dashboard currency.
-  // Anything we have a USD pair (direct or inverse) for.
   const availableCurrencies = useMemo(() => {
     const set = new Set(['USD']);
     for (const c of commodities) {
@@ -207,7 +345,7 @@ export function LiveDataProvider({ children }) {
     pricesLoading,
     newsLoading,
     refresh,
-    // currency switching
+    // currency
     dashboardCurrency,
     setDashboardCurrency,
     availableCurrencies,
@@ -215,6 +353,27 @@ export function LiveDataProvider({ children }) {
     convert,
     convertible,
     formatAssetPrice,
+    // watchlists
+    watchlistNames,
+    activeWatchlist: watchState.active,
+    activeWatchSet,
+    setActiveList,
+    createList,
+    renameList,
+    deleteList,
+    toggleWatch,
+    // alerts
+    alerts,
+    addAlert,
+    removeAlert,
+    toggleAlert,
+    triggeredAlerts,
+    clearTriggered,
+    requestNotificationPermission,
+    // portfolio
+    positions,
+    upsertPosition,
+    removePosition,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

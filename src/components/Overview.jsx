@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { useLiveData } from '../state/LiveData.jsx';
 import { categoryColor, assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
+import SectorHeatmap from './SectorHeatmap.jsx';
+import Briefing from './Briefing.jsx';
 
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
@@ -248,11 +250,15 @@ export default function Overview({ onSelectAsset }) {
         </button>
       </div>
 
+      <Briefing />
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {stats.map((s) => (
           <StatCard key={s.label} label={s.label} c={s.c} fmt={fmt} onClick={onSelectAsset} />
         ))}
       </div>
+
+      <SectorHeatmap onSelectAsset={onSelectAsset} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <MoversCard items={gainers} title="Top Gainers" accent="text-emerald-400" fmt={fmt} onSelect={onSelectAsset} />

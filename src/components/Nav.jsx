@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useLiveData } from '../state/LiveData.jsx';
 import { CURRENCY_META } from '../../lib/symbols.js';
 
-const TABS = ['Overview', 'Prices', 'Currency', 'Intel'];
+const TABS = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel'];
 
-export default function Nav({ active, setActive, onOpenAlerts }) {
+export default function Nav({ active, setActive, onOpenAlerts, onOpenPalette }) {
   const [now, setNow] = useState(new Date());
   const {
     pricesLive, newsLive, notifications,
@@ -74,6 +74,17 @@ export default function Nav({ active, setActive, onOpenAlerts }) {
           <span className={`w-1.5 h-1.5 rounded-full ${liveDot}`} />
           <span className={`uppercase tracking-widest text-[10px] ${liveColor}`}>{liveStatus}</span>
         </div>
+        <button
+          onClick={onOpenPalette}
+          className="hidden sm:flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-gray-900/60 border border-gray-800 text-gray-400 hover:text-white hover:border-gray-600 transition-colors"
+          aria-label="open command palette"
+          title="Command palette"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="7" /><path d="M20 20l-3-3" />
+          </svg>
+          <kbd className="font-mono text-[10px] text-gray-500">⌘K</kbd>
+        </button>
         <button
           onClick={onOpenAlerts}
           className="relative p-2 rounded-md bg-gray-900/60 border border-gray-800 text-gray-300 hover:text-white hover:border-gray-600 transition-colors"

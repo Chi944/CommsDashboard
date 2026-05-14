@@ -6,6 +6,7 @@ import { useLiveData } from '../state/LiveData.jsx';
 import { assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
 import AnalysisPanel from './AnalysisPanel.jsx';
+import AlertButton from './AlertButton.jsx';
 import { downloadCSV } from '../utils/csv.js';
 
 // Quick filter pills (always visible).
@@ -185,6 +186,8 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
   const {
     commodities: rawCommodities, pricesLive, pricesUpdatedAt, refresh,
     formatAssetPrice, dashboardCurrency,
+    watchlistNames, activeWatchlist, activeWatchSet,
+    setActiveList, createList, toggleWatch,
   } = useLiveData();
 
   // FX excluded — they live behind the Currency tab/dropdown.
@@ -202,20 +205,12 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
   const [compareSet, setCompareSet] = useState(
     () => new Set(['NVDA', 'AAPL', 'BTC'].filter((t) => commodities.some((c) => c.ticker === t)))
   );
-  const [watchlist, setWatchlist] = useState(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? new Set(JSON.parse(raw)) : new Set();
-    } catch { return new Set(); }
-  });
+  const watchlist = activeWatchSet;
 
   const [historyCache, setHistoryCache] = useState({});
   const [chartLoading, setChartLoading] = useState(false);
   const searchRef = useRef(null);
-
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...watchlist])); } catch {}
-  }, [watchlist]);
+  const [shareCopied, setShareCopied] = useState(false);
 
   // Keyboard shortcut: '/' focuses the search input. Esc clears it.
   useEffect(() => {
@@ -250,9 +245,6 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
     }
   }, [initialTicker, commodities, onTickerConsumed]);
 
-  const toggleWatch = (t) => setWatchlist((p) => {
-    const n = new Set(p); n.has(t) ? n.delete(t) : n.add(t); return n;
-  });
   const toggleCompare = (t) => setCompareSet((p) => {
     const n = new Set(p);
     if (n.has(t)) { if (n.size > 1) n.delete(t); }
@@ -479,6 +471,30 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
         </div>
       )}
 
+      {/* Watchlist switcher (only visible when WATCHLIST filter is active) */}
+      {cat === 'WATCHLIST' && !query.trim() && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-800 bg-gray-900/40 px-3 py-2">
+          <span className="text-[10px] uppercase tracking-widest text-gray-500">Lists</span>
+          {watchlistNames.map((n) => (
+            <button
+              key={n}
+              onClick={() => setActiveList(n)}
+              className={`px-2.5 py-1 text-[11px] uppercase tracking-wider rounded-md border transition-colors
+                ${activeWatchlist === n
+                  ? 'bg-yellow-400/20 border-yellow-400/60 text-yellow-200'
+                  : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600'}`}
+            >★ {n}</button>
+          ))}
+          <button
+            onClick={() => {
+              const name = window.prompt('New watchlist name:');
+              if (name) createList(name);
+            }}
+            className="ml-auto px-2.5 py-1 text-[11px] uppercase tracking-wider rounded-md border border-dashed border-gray-700 text-gray-400 hover:text-white hover:border-gray-500"
+          >+ new list</button>
+        </div>
+      )}
+
       {/* Two-column layout: chart sticky on right (lg+), list on left.
           On mobile/tablet the chart appears first so it's always visible. */}
       <div className="grid grid-cols-1 lg:grid-cols-12 lg:gap-6">
@@ -500,11 +516,27 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
               </div>
               <div className="flex items-center gap-3">
                 {!compare && sel && (
-                  <div className="flex flex-col items-end">
-                    <div className="font-mono text-xl sm:text-2xl text-gray-100">{fmt(sel)}</div>
-                    <div className={`font-mono text-[11px] ${sel.changePct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {fmtPctChange(sel.changePct)}
+                  <div className="flex items-center gap-2">
+                    <div className="flex flex-col items-end">
+                      <div className="font-mono text-xl sm:text-2xl text-gray-100">{fmt(sel)}</div>
+                      <div className={`font-mono text-[11px] ${sel.changePct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {fmtPctChange(sel.changePct)}
+                      </div>
                     </div>
+                    <AlertButton asset={sel} />
+                    <button
+                      onClick={async () => {
+                        try {
+                          const url = `${location.origin}${location.pathname}?tab=Prices&t=${encodeURIComponent(sel.ticker)}`;
+                          await navigator.clipboard.writeText(url);
+                          setShareCopied(true);
+                          setTimeout(() => setShareCopied(false), 1500);
+                        } catch {}
+                      }}
+                      className="text-base leading-none text-gray-600 hover:text-cyan-300"
+                      title="Copy share link"
+                      aria-label="share"
+                    >{shareCopied ? '✓' : '🔗'}</button>
                   </div>
                 )}
                 <div className="flex flex-wrap gap-1">
@@ -584,6 +616,9 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
                         className={`text-base leading-none ${watched ? 'text-yellow-400' : 'text-gray-600 hover:text-gray-300'}`}
                         aria-label="watchlist toggle"
                       >★</button>
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <AlertButton asset={c} compact />
+                      </span>
                       {compare && (
                         <input
                           type="checkbox"
