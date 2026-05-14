@@ -111,9 +111,10 @@ export default function AnalysisPanel({ asset }) {
         <div className="text-[11px] text-gray-500 border border-gray-800 bg-gray-950/50 rounded-md p-3 space-y-1">
           <div className="text-amber-400 uppercase tracking-widest text-[10px]">AI narrative disabled</div>
           <div>
-            Set <code className="font-mono text-cyan-300">ANTHROPIC_API_KEY</code> in your Vercel project's environment
-            variables (Settings → Environment Variables) to enable Claude-powered narratives. The technical signals
-            above work without it.
+            Get a free key at <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer"
+              className="text-cyan-300 underline">console.groq.com</a> and set{' '}
+            <code className="font-mono text-cyan-300">GROQ_API_KEY</code> in your Vercel project's environment
+            variables (Settings → Environment Variables). The technical signals above work without it.
           </div>
         </div>
       )}

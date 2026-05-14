@@ -23,9 +23,9 @@ The app deploys to Vercel as-is (Vite + serverless API routes under
 
 Add these in **Vercel → Project → Settings → Environment Variables**:
 
-| Variable             | Required for       | Notes                                                         |
-| -------------------- | ------------------ | ------------------------------------------------------------- |
-| `ANTHROPIC_API_KEY`  | AI analysis panel  | Without it, the panel still shows technical signals + news, but no AI narrative. Get one at <https://console.anthropic.com/>. |
+| Variable        | Required for       | Notes                                                         |
+| --------------- | ------------------ | ------------------------------------------------------------- |
+| `GROQ_API_KEY`  | AI analysis panel  | Free, no credit card. Sign up at <https://console.groq.com/>, generate a key, paste it here. The model used is `llama-3.3-70b-versatile`. Without the key, the panel still shows technical signals + headlines (no AI narrative). |
 
 After adding the key, redeploy (the next push to `main` is enough).
 
