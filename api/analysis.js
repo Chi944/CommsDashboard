@@ -170,17 +170,15 @@ async function fetchHeadlines(name, limit = 5) {
   }
 }
 
-async function callClaude({ symbol, technicals, headlines }) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+async function callLLM({ symbol, technicals, headlines }) {
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return null;
 
   const headlineText = headlines.length
     ? headlines.map((h, i) => `${i + 1}. "${h.title}" — ${h.source}`).join('\n')
     : '(no recent headlines)';
 
-  const prompt = `You are a measured, neutral financial analyst. Analyse the asset below using ONLY the data provided. Respond in plain prose (no markdown headings) suitable for a finance dashboard panel.
-
-Asset: ${symbol.name} (${symbol.ticker}) — ${symbol.category}
+  const userPrompt = `Asset: ${symbol.name} (${symbol.ticker}) — ${symbol.category}
 Current price: ${technicals.last}
 Returns: 1-month ${technicals.return_1m}%, 3-month ${technicals.return_3m}%, 6-month ${technicals.return_6m}%
 Moving averages: 20-day ${technicals.sma20}, 50-day ${technicals.sma50} (price ${technicals.above_sma20 ? 'above' : 'below'} 20-day, ${technicals.above_sma50 ? 'above' : 'below'} 50-day)
@@ -191,33 +189,38 @@ Annualised volatility: ${technicals.vol_annual}%
 Recent headlines:
 ${headlineText}
 
-Respond with EXACTLY these sections, each as a single short paragraph (2-3 sentences):
+Respond with EXACTLY these four sections, each as a single short paragraph (2-3 sentences). Use these exact labels with a colon, all caps:
 
 TREND: Describe the current trend and what the technicals indicate.
 CATALYSTS: Reference the headlines if relevant, or note 'No notable headline catalysts in the recent set.'
 RISKS: Highlight the key risk factors visible in the data (overbought/oversold, near highs/lows, high volatility, etc).
 OUTLOOK: A qualitative directional view (constructive / cautious / neutral / mixed). Do NOT give specific price targets or forecasts. End with: "Informational only — not financial advice."`;
 
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
+  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
+      'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'llama-3.3-70b-versatile',
+      temperature: 0.35,
       max_tokens: 700,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a measured, neutral financial analyst. Use only the data provided. Plain prose, no markdown headings, no specific price targets. Always end with the required disclaimer.',
+        },
+        { role: 'user', content: userPrompt },
+      ],
     }),
   });
   if (!r.ok) {
     const detail = await r.text().catch(() => '');
-    throw new Error(`claude ${r.status}: ${detail.slice(0, 200)}`);
+    throw new Error(`groq ${r.status}: ${detail.slice(0, 200)}`);
   }
   const j = await r.json();
-  const text = j?.content?.[0]?.text || '';
-  // Parse sections.
+  const text = j?.choices?.[0]?.message?.content || '';
   const sect = (label) => {
     const re = new RegExp(`${label}\\s*:\\s*([\\s\\S]*?)(?=\\n\\s*(?:TREND|CATALYSTS|RISKS|OUTLOOK)\\s*:|$)`, 'i');
     const m = text.match(re);
@@ -229,7 +232,7 @@ OUTLOOK: A qualitative directional view (constructive / cautious / neutral / mix
     catalysts: sect('CATALYSTS'),
     risks:     sect('RISKS'),
     outlook:   sect('OUTLOOK'),
-    model: 'claude-haiku-4-5',
+    model: 'llama-3.3-70b-versatile (Groq)',
   };
 }
 
@@ -251,12 +254,12 @@ export default async function handler(req, res) {
     const signals = deriveSignals(technicals);
     const headlines = await fetchHeadlines(sym.name, 5);
 
-    const aiAvailable = Boolean(process.env.ANTHROPIC_API_KEY);
+    const aiAvailable = Boolean(process.env.GROQ_API_KEY);
     let ai = null;
     let aiError = null;
     if (aiAvailable) {
       try {
-        ai = await callClaude({ symbol: sym, technicals, headlines });
+        ai = await callLLM({ symbol: sym, technicals, headlines });
       } catch (e) {
         aiError = String(e?.message || e);
       }
