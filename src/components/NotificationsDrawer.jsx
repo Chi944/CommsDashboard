@@ -3,7 +3,7 @@ import { severityBg } from '../data/mockData.js';
 import { useLiveData } from '../state/LiveData.jsx';
 
 export default function NotificationsDrawer({ open, onClose }) {
-  const { notifications, newsLive, newsUpdatedAt } = useLiveData();
+  const { notifications, triggeredAlerts, clearTriggered, newsLive, newsUpdatedAt } = useLiveData();
 
   return (
     <>
@@ -29,9 +29,9 @@ export default function NotificationsDrawer({ open, onClose }) {
             >×</button>
           </div>
           <div className="mt-2 flex items-center gap-2 text-[10px]">
-            <span className={`flex items-center gap-1.5 ${newsLive ? 'text-green-400' : 'text-yellow-400'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${newsLive ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`} />
-              {newsLive ? 'derived from live news feed' : 'fallback (mock)'}
+            <span className={`flex items-center gap-1.5 ${newsLive ? 'text-emerald-400' : 'text-amber-400'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${newsLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
+              {newsLive ? 'live news + price alerts' : 'fetching'}
             </span>
             {newsUpdatedAt && (
               <span className="text-gray-500 font-mono">
@@ -41,7 +41,29 @@ export default function NotificationsDrawer({ open, onClose }) {
           </div>
         </header>
         <div className="overflow-y-auto h-[calc(100%-95px)]">
-          {notifications.length === 0 && (
+
+          {/* Triggered price alerts */}
+          {triggeredAlerts.length > 0 && (
+            <div>
+              <div className="px-5 py-2 text-[10px] uppercase tracking-widest text-cyan-300 flex items-center justify-between border-b border-gray-800 bg-cyan-900/10">
+                <span>🔔 Price alerts triggered</span>
+                <button onClick={clearTriggered} className="text-gray-500 hover:text-gray-200 normal-case">clear</button>
+              </div>
+              {triggeredAlerts.map((t) => (
+                <div key={t.id} className="px-5 py-3 border-b border-gray-800 bg-cyan-500/5">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-cyan-300">
+                    <span>Crossed</span>
+                    <span className="font-mono text-cyan-200">{t.ticker} {t.op} {t.threshold}</span>
+                    <span className="ml-auto text-gray-500 normal-case">{new Date(t.ts).toLocaleTimeString()}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-gray-100">{t.name}</div>
+                  <div className="mt-0.5 font-mono text-xs text-cyan-200">now {t.price}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {notifications.length === 0 && triggeredAlerts.length === 0 && (
             <div className="px-5 py-8 text-sm text-gray-500 text-center">
               No active alerts.
             </div>

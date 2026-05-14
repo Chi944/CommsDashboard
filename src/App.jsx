@@ -1,17 +1,19 @@
-import React, { Suspense, lazy, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Analytics } from '@vercel/analytics/react';
 import Ticker from './components/Ticker.jsx';
 import Nav from './components/Nav.jsx';
 import BottomNav from './components/BottomNav.jsx';
 import NotificationsDrawer from './components/NotificationsDrawer.jsx';
+import CommandPalette from './components/CommandPalette.jsx';
 import { LiveDataProvider } from './state/LiveData.jsx';
 
-// Heavy tabs (Recharts pulled in by Prices/Currency) are split into
-// separate chunks and lazy-loaded so the initial page paint stays fast.
-const Overview = lazy(() => import('./components/Overview.jsx'));
-const Prices   = lazy(() => import('./components/Prices.jsx'));
-const Currency = lazy(() => import('./components/Currency.jsx'));
-const Intel    = lazy(() => import('./components/Intel.jsx'));
+const Overview  = lazy(() => import('./components/Overview.jsx'));
+const Prices    = lazy(() => import('./components/Prices.jsx'));
+const Currency  = lazy(() => import('./components/Currency.jsx'));
+const Portfolio = lazy(() => import('./components/Portfolio.jsx'));
+const Intel     = lazy(() => import('./components/Intel.jsx'));
+
+const VALID_TABS = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel'];
 
 const TabSkeleton = () => (
   <div className="space-y-4 animate-pulse">
@@ -30,45 +32,89 @@ const TabSkeleton = () => (
   </div>
 );
 
+function readShareParams() {
+  if (typeof window === 'undefined') return {};
+  try {
+    const sp = new URLSearchParams(window.location.search);
+    const tab = sp.get('tab');
+    const t = sp.get('t');
+    return {
+      tab: VALID_TABS.includes(tab) ? tab : null,
+      ticker: t ? t.toUpperCase() : null,
+    };
+  } catch { return {}; }
+}
+
 export default function App() {
-  const [tab, setTab] = useState('Overview');
+  const initial = readShareParams();
+  const [tab, setTab] = useState(initial.tab || 'Overview');
   const [alertsOpen, setAlertsOpen] = useState(false);
-  const [pendingTicker, setPendingTicker] = useState(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [pendingTicker, setPendingTicker] = useState(initial.ticker || null);
 
   const openInPrices = (ticker) => {
     setPendingTicker(ticker);
     setTab('Prices');
   };
 
+  // Keyboard shortcuts: ⌘K / Ctrl+K opens command palette anywhere.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setPaletteOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Reflect tab + selected ticker in the URL so it's shareable.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    sp.set('tab', tab);
+    if (pendingTicker) sp.set('t', pendingTicker); else sp.delete('t');
+    const next = `${window.location.pathname}?${sp.toString()}`;
+    window.history.replaceState(null, '', next);
+  }, [tab, pendingTicker]);
+
   return (
     <LiveDataProvider>
       <div className="min-h-screen text-gray-100">
         <div className="sticky top-0 z-30">
           <Ticker />
-          <Nav active={tab} setActive={setTab} onOpenAlerts={() => setAlertsOpen(true)} />
+          <Nav
+            active={tab}
+            setActive={setTab}
+            onOpenAlerts={() => setAlertsOpen(true)}
+            onOpenPalette={() => setPaletteOpen(true)}
+          />
         </div>
 
         <main className="px-4 sm:px-6 py-5 sm:py-7 max-w-[1600px] mx-auto pb-24 md:pb-10 animate-fade-in">
           <Suspense fallback={<TabSkeleton />}>
-            {tab === 'Overview' && <Overview onSelectAsset={openInPrices} />}
-            {tab === 'Prices' && (
-              <Prices
-                initialTicker={pendingTicker}
-                onTickerConsumed={() => setPendingTicker(null)}
-              />
-            )}
-            {tab === 'Currency' && <Currency />}
-            {tab === 'Intel' && <Intel />}
+            {tab === 'Overview'  && <Overview onSelectAsset={openInPrices} />}
+            {tab === 'Prices'    && <Prices initialTicker={pendingTicker} onTickerConsumed={() => setPendingTicker(null)} />}
+            {tab === 'Currency'  && <Currency />}
+            {tab === 'Portfolio' && <Portfolio onSelectAsset={openInPrices} />}
+            {tab === 'Intel'     && <Intel />}
           </Suspense>
         </main>
 
         <NotificationsDrawer open={alertsOpen} onClose={() => setAlertsOpen(false)} />
         <BottomNav active={tab} setActive={setTab} />
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          onSelectAsset={(t) => openInPrices(t)}
+          onSwitchTab={(t) => setTab(t)}
+        />
         <Analytics />
 
         <footer className="hidden md:flex px-6 py-4 border-t border-gray-800 text-[11px] text-gray-500 items-center justify-between">
-          <span>Live data: Yahoo Finance (prices), Google News RSS (news).</span>
-          <span className="font-mono">v0.11.0</span>
+          <span>Live data: Yahoo Finance (prices), Google News RSS (news). Press <kbd className="font-mono px-1 rounded border border-gray-700 bg-gray-900">⌘K</kbd> to jump anywhere.</span>
+          <span className="font-mono">v0.14.0</span>
         </footer>
       </div>
     </LiveDataProvider>
