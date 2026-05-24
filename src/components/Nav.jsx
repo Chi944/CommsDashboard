@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLiveData } from '../state/LiveData.jsx';
 import { CURRENCY_META } from '../../lib/symbols.js';
+import DataModeBadge from './DataModeBadge.jsx';
 
 const TABS = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel'];
 
@@ -9,6 +10,8 @@ export default function Nav({ active, setActive, onOpenAlerts, onOpenPalette }) 
   const {
     pricesLive, newsLive, notifications,
     dashboardCurrency, setDashboardCurrency, availableCurrencies,
+    dataMode, marketUpdatedLabel, marketRefreshing, refreshMarketSnapshot,
+    useMarketV2,
   } = useLiveData();
 
   useEffect(() => {
@@ -70,7 +73,13 @@ export default function Nav({ active, setActive, onOpenAlerts, onOpenPalette }) 
             ))}
           </select>
         </label>
-        <div className="hidden lg:flex items-center gap-2 px-2 py-1 rounded-md bg-gray-900/60 border border-gray-800" title="Data source status">
+        <DataModeBadge
+          mode={dataMode}
+          updatedLabel={useMarketV2 ? marketUpdatedLabel : null}
+          onRefresh={useMarketV2 ? refreshMarketSnapshot : null}
+          refreshing={marketRefreshing}
+        />
+        <div className="hidden xl:flex items-center gap-2 px-2 py-1 rounded-md bg-gray-900/60 border border-gray-800" title="News + Yahoo prices">
           <span className={`w-1.5 h-1.5 rounded-full ${liveDot}`} />
           <span className={`uppercase tracking-widest text-[10px] ${liveColor}`}>{liveStatus}</span>
         </div>
