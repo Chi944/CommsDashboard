@@ -433,7 +433,7 @@ export function LiveDataProvider({ children }) {
   const activityScore = useCallback((c) => {
     if (!c) return 0;
     if (typeof c.volume === 'number' && c.volume > 0) return c.volume;
-    const cgVol = marketVolumes[c.ticker];
+    const cgVol = marketVolumes?.[c.ticker];
     if (typeof cgVol === 'number' && cgVol > 0) return cgVol;
     return Math.abs(c.changePct || 0) * (c.price || 1);
   }, [marketVolumes]);

@@ -19,14 +19,14 @@ export function overlayV2Fields(base, v2Row) {
 
 /** Ticker strip: crypto only from v2. */
 export function resolveTickerAsset(asset, v2ByTicker, useV2) {
-  if (!useV2 || !asset || !isV2Crypto(asset.ticker)) return asset;
+  if (!useV2 || !asset || !v2ByTicker || !isV2Crypto(asset.ticker)) return asset;
   const v2 = v2ByTicker[asset.ticker];
   return v2 ? overlayV2Fields(asset, v2) : asset;
 }
 
 /** Sector / prices heatmap: commodity categories from v2. */
 export function resolveHeatmapAsset(asset, v2ByTicker, useV2) {
-  if (!useV2 || !asset || !isV2HeatmapCategory(asset.category)) return asset;
+  if (!useV2 || !asset || !v2ByTicker || !isV2HeatmapCategory(asset.category)) return asset;
   const v2 = v2ByTicker[asset.ticker];
   if (!v2) return asset;
   if (asset.category === 'CRYPTO' && !isV2Crypto(asset.ticker)) return asset;
@@ -38,7 +38,7 @@ export function resolveHeatmapAsset(asset, v2ByTicker, useV2) {
 
 /** Prices table: last price column for v2-eligible tickers only. */
 export function resolveTablePrice(asset, v2ByTicker, useV2) {
-  if (!useV2 || !asset) return asset;
+  if (!useV2 || !asset || !v2ByTicker) return asset;
   const v2 = v2ByTicker[asset.ticker];
   if (!v2) return asset;
   if (isV2Crypto(asset.ticker) || isV2Commodity(asset.ticker)) {
