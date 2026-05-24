@@ -51,6 +51,7 @@ export default async function handler(req, res) {
       ok: true,
       ...payload,
       kv: Boolean(process.env.KV_REST_API_URL),
+      blob: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });

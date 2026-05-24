@@ -4,6 +4,7 @@
 
 import { commodities as fallbackCommodities } from '../../src/data/mockData.js';
 import { fetchCoinGeckoPrices } from '../../lib/market/providers/coingecko.js';
+import { fetchCoinGeckoVolumes } from '../../lib/market/providers/coingecko-volumes.js';
 import { avRowsFromCache } from '../../lib/market/providers/alphavantage.js';
 import { fetchEiaEnergy, eiaRowsFromCache } from '../../lib/market/providers/eia.js';
 import { readProviderCache } from '../../lib/market/store.js';
@@ -19,13 +20,14 @@ export default async function handler(req, res) {
     const errors = [];
     const cache = await readProviderCache();
 
-    const [cg, avCached, eiaCached] = await Promise.all([
+    const [cg, cgVol, avCached, eiaCached] = await Promise.all([
       fetchCoinGeckoPrices(),
+      fetchCoinGeckoVolumes(),
       Promise.resolve(avRowsFromCache(cache)),
       Promise.resolve(eiaRowsFromCache(cache)),
     ]);
 
-    errors.push(...(cg.errors || []));
+    errors.push(...(cg.errors || []), ...(cgVol.errors || []));
 
     let eiaRows = eiaCached.rows;
     let eiaStale = eiaCached.stale;
@@ -67,6 +69,7 @@ export default async function handler(req, res) {
       providers: meta.sources,
       liveSymbolCount: meta.liveSymbolCount,
       staleProviders,
+      marketVolumes: cgVol.volumes || {},
       errors: errors.length ? errors : undefined,
     });
   } catch (e) {
