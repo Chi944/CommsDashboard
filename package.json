@@ -20,5 +20,8 @@
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.7",
     "vite": "^5.3.5"
+  },
+  "optionalDependencies": {
+    "@vercel/kv": "^3.0.0"
   }
 }
