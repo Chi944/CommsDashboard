@@ -25,13 +25,13 @@ export default function Nav({ active, setActive, onOpenAlerts, onOpenPalette }) 
   const criticalCount = (notifications || []).filter((n) => n.severity === 'CRITICAL' || n.severity === 'HIGH').length;
 
   return (
-    <nav className="bg-gray-950/85 backdrop-blur border-b border-gray-800/80 px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
+    <nav className="bg-[#000000]/90 backdrop-blur border-b border-[#262626] px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
       <div className="flex items-center gap-3 sm:gap-6 min-w-0">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-7 h-7 rounded-md bg-gradient-to-br from-cyan-400 to-violet-500 grid place-items-center shadow-glow shrink-0">
-            <span className="text-[11px] font-bold text-gray-950">M</span>
+          <div className="w-7 h-7 rounded-md bg-[#171717] border border-[#333] grid place-items-center shrink-0">
+            <span className="text-[11px] font-bold font-mono text-[#f5f5f5]">M</span>
           </div>
-          <h1 className="text-[12px] sm:text-sm font-semibold tracking-wide text-gray-100 truncate">
+          <h1 className="text-[12px] sm:text-sm font-semibold tracking-tight text-[#f5f5f5] truncate">
             <span className="hidden sm:inline">Markets &amp; Headlines</span>
             <span className="sm:hidden">Markets</span>
           </h1>
@@ -41,62 +41,45 @@ export default function Nav({ active, setActive, onOpenAlerts, onOpenPalette }) 
             <button
               key={t}
               onClick={() => setActive(t)}
-              className={`relative px-3 py-1.5 text-xs uppercase tracking-wider rounded-lg transition-all
+              className={`relative px-3 py-1.5 text-xs uppercase tracking-wider rounded-lg transition-all font-mono
                 ${active === t
-                  ? 'text-white bg-gray-800/80 shadow-inner'
-                  : 'text-gray-400 hover:text-gray-100 hover:bg-gray-900/60'}`}
+                  ? 'text-white bg-[#171717] border border-[#333]'
+                  : 'text-[#737373] hover:text-[#f5f5f5] hover:bg-[#0a0a0a]'}`}
             >
               {t}
-              {active === t && <span className="absolute -bottom-px left-1/2 -translate-x-1/2 w-6 h-px bg-cyan-400" />}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-3 text-xs text-gray-400">
-        <label className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-900/60 border border-gray-800 hover:border-gray-600 transition-colors cursor-pointer" title="Display currency for the whole dashboard">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="text-gray-400">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M3 12h18" />
-            <path d="M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
-          </svg>
+      <div className="flex items-center gap-2 sm:gap-2.5 text-xs text-[#737373]">
+        <label className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#0a0a0a] border border-[#333] hover:border-[#525252] transition-colors cursor-pointer">
           <select
             value={dashboardCurrency}
             onChange={(e) => setDashboardCurrency(e.target.value)}
-            className="bg-transparent text-gray-100 font-mono text-xs focus:outline-none cursor-pointer"
+            className="bg-transparent text-[#f5f5f5] font-mono text-xs focus:outline-none cursor-pointer"
             aria-label="Display currency"
           >
             {availableCurrencies.map((c) => (
-              <option key={c} value={c} className="bg-gray-900">
-                {c} {CURRENCY_META[c] ? `· ${CURRENCY_META[c].name}` : ''}
+              <option key={c} value={c} className="bg-[#171717]">
+                {c}
               </option>
             ))}
           </select>
         </label>
-        <DataModeBadge
-          mode={dataMode}
-          updatedLabel={useMarketV2 ? marketUpdatedLabel : null}
-          onRefresh={useMarketV2 ? refreshMarketSnapshot : null}
-          refreshing={marketRefreshing}
-        />
-        <div className="hidden xl:flex items-center gap-2 px-2 py-1 rounded-md bg-gray-900/60 border border-gray-800" title="News + Yahoo prices">
-          <span className={`w-1.5 h-1.5 rounded-full ${liveDot}`} />
-          <span className={`uppercase tracking-widest text-[10px] ${liveColor}`}>{liveStatus}</span>
-        </div>
         <button
           onClick={onOpenPalette}
-          className="hidden sm:flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-gray-900/60 border border-gray-800 text-gray-400 hover:text-white hover:border-gray-600 transition-colors"
+          className="hidden sm:flex items-center p-1.5 rounded-md border border-[#333] bg-[#0a0a0a] text-[#737373] hover:text-[#f5f5f5] hover:border-[#525252] transition-colors"
           aria-label="open command palette"
           title="Command palette"
         >
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="7" /><path d="M20 20l-3-3" />
           </svg>
-          <kbd className="font-mono text-[10px] text-gray-500">⌘K</kbd>
         </button>
         <button
           onClick={onOpenAlerts}
-          className="relative p-2 rounded-md bg-gray-900/60 border border-gray-800 text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
+          className="relative p-1.5 rounded-md border border-[#333] bg-[#0a0a0a] text-[#a3a3a3] hover:text-[#f5f5f5] hover:border-[#525252] transition-colors"
           aria-label="open alerts"
           title="Alerts"
         >
@@ -105,13 +88,25 @@ export default function Nav({ active, setActive, onOpenAlerts, onOpenPalette }) 
             <path d="M10 21a2 2 0 0 0 4 0" />
           </svg>
           {criticalCount > 0 && (
-            <span className="absolute -top-1 -right-1 bg-red-500 text-[9px] font-bold text-gray-950 rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">
+            <span className="absolute -top-1 -right-1 bg-red-500 text-[9px] font-bold text-[#0a0a0a] rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center font-mono">
               {criticalCount}
             </span>
           )}
         </button>
-        <div className="hidden sm:block font-mono text-gray-300 text-xs">
-          {now.toUTCString().slice(17, 25)} <span className="text-gray-500">UTC</span>
+        <DataModeBadge
+          mode={dataMode}
+          updatedLabel={marketUpdatedLabel}
+          onRefresh={refreshMarketSnapshot}
+          refreshing={marketRefreshing}
+        />
+        {!useMarketV2 && (
+          <div className="hidden xl:flex items-center gap-2 px-2 py-1 rounded-md bg-[#0a0a0a] border border-[#333]" title="News + Yahoo prices">
+            <span className={`w-1.5 h-1.5 rounded-full ${liveDot}`} />
+            <span className={`uppercase tracking-widest text-[10px] font-mono ${liveColor}`}>{liveStatus}</span>
+          </div>
+        )}
+        <div className="hidden sm:block font-mono text-[#a3a3a3] text-xs tabular-nums">
+          {now.toUTCString().slice(17, 25)} <span className="text-[#525252]">UTC</span>
         </div>
       </div>
     </nav>
