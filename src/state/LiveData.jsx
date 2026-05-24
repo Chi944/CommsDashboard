@@ -43,6 +43,7 @@ export function LiveDataProvider({ children }) {
 
   const [pricesLive, setPricesLive] = useState(false);
   const [v2ByTicker, setV2ByTicker] = useState({});
+  const [marketVolumes, setMarketVolumes] = useState({});
   const [v2FetchedAt, setV2FetchedAt] = useState(null);
   const [v2StaleProviders, setV2StaleProviders] = useState([]);
   const [marketRefreshing, setMarketRefreshing] = useState(false);
@@ -213,6 +214,9 @@ export function LiveDataProvider({ children }) {
     setV2ByTicker(Object.fromEntries(rows.map((c) => [c.ticker, c])));
     setV2FetchedAt(j.fetchedAt);
     setV2StaleProviders(j.staleProviders || []);
+    if (j.marketVolumes && typeof j.marketVolumes === 'object') {
+      setMarketVolumes(j.marketVolumes);
+    }
     return j;
   }, []);
 
@@ -229,11 +233,10 @@ export function LiveDataProvider({ children }) {
     try {
       setPricesLoading(true);
       if (USE_MARKET_V2) {
-        const [, v2Result] = await Promise.allSettled([
-          fetchYahooPrices(),
-          fetchV2Snapshot(),
-        ]);
-        if (v2Result.status === 'rejected') {
+        await fetchYahooPrices();
+        try {
+          await fetchV2Snapshot();
+        } catch {
           /* keep prior v2 snapshot */
         }
       } else {
@@ -426,6 +429,14 @@ export function LiveDataProvider({ children }) {
       .sort((a, b) => (CURRENCY_META[a]?.name || a).localeCompare(CURRENCY_META[b]?.name || b));
   }, [commodities]);
 
+  const activityScore = useCallback((c) => {
+    if (!c) return 0;
+    if (typeof c.volume === 'number' && c.volume > 0) return c.volume;
+    const cgVol = marketVolumes[c.ticker];
+    if (typeof cgVol === 'number' && cgVol > 0) return cgVol;
+    return Math.abs(c.changePct || 0) * (c.price || 1);
+  }, [marketVolumes]);
+
   const value = {
     commodities,
     intel,
@@ -438,6 +449,8 @@ export function LiveDataProvider({ children }) {
     resolveTickerAsset: resolveTickerAssetFn,
     resolveHeatmapAsset: resolveHeatmapAssetFn,
     resolveTablePrice: resolveTablePriceFn,
+    marketVolumes,
+    activityScore,
     useMarketV2: USE_MARKET_V2,
     newsLive,
     pricesUpdatedAt,

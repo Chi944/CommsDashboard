@@ -36,6 +36,7 @@ Add in **Vercel → Project → Settings → Environment Variables** (or `.env.l
 | `CRON_SECRET` | AV cache refresh | Random string; secures `/api/market/refresh` |
 | `VITE_USE_LIVE_DATA` | v2 price path | `true` → `/api/market/snapshot`; `false` → `/api/prices` (Yahoo) |
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | AV cache persistence | Optional Vercel KV / Upstash Redis |
+| `BLOB_READ_WRITE_TOKEN` | AV cache persistence | **Recommended** — Vercel → Storage → Blob → Create store → copy token |
 
 See [docs/commodities-v2-api-spec.md](docs/commodities-v2-api-spec.md) for architecture and rate limits.
 

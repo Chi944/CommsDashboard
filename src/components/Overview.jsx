@@ -127,7 +127,9 @@ const MostActiveCard = ({ items, fmt, onSelect }) => (
               </div>
               <div className="text-right w-20">
                 <div className="font-mono text-[11px] text-gray-100">{fmt(c)}</div>
-                <div className="font-mono text-[10px] text-gray-400">{fmtVolume(c.volume)}</div>
+                <div className="font-mono text-[10px] text-gray-400">
+                  {fmtVolume(c.displayVolume ?? c.volume)}
+                </div>
               </div>
               <div className={`font-mono text-[10px] w-12 text-right ${up ? 'text-emerald-400' : 'text-red-400'}`}>
                 {fmtPctChange(c.changePct)}
@@ -185,6 +187,7 @@ export default function Overview({ onSelectAsset }) {
     commodities, intel, pricesLive, newsLive,
     pricesUpdatedAt, refresh,
     formatAssetPrice, dashboardCurrency,
+    activityScore, marketVolumes,
   } = useLiveData();
 
   // Exclude FX from movers/headline rankings.
@@ -213,9 +216,16 @@ export default function Overview({ onSelectAsset }) {
   );
   const mostActive = useMemo(
     () => [...tradable]
-      .filter((c) => typeof c.volume === 'number' && c.volume > 0)
-      .sort((a, b) => (b.volume || 0) - (a.volume || 0)),
-    [tradable]
+      .map((c) => ({
+        ...c,
+        displayVolume: (typeof c.volume === 'number' && c.volume > 0)
+          ? c.volume
+          : marketVolumes[c.ticker],
+      }))
+      .filter((c) => activityScore(c) > 0)
+      .sort((a, b) => activityScore(b) - activityScore(a))
+      .slice(0, 8),
+    [tradable, activityScore, marketVolumes],
   );
 
   return (
