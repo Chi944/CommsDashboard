@@ -220,7 +220,7 @@ export default function Overview({ onSelectAsset }) {
         ...c,
         displayVolume: (typeof c.volume === 'number' && c.volume > 0)
           ? c.volume
-          : marketVolumes[c.ticker],
+          : marketVolumes?.[c.ticker],
       }))
       .filter((c) => activityScore(c) > 0)
       .sort((a, b) => activityScore(b) - activityScore(a))

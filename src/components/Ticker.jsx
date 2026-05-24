@@ -26,7 +26,6 @@ export default function Ticker() {
     formatAssetPrice,
     resolveTickerAsset,
     useMarketV2,
-    v2ByTicker,
   } = useLiveData();
 
   const items = useMemo(() => {
@@ -36,20 +35,11 @@ export default function Ticker() {
       const base = find(sym);
       if (!base) return null;
 
-      if (useMarketV2 && isV2Crypto(base.ticker) && v2ByTicker[base.ticker]) {
-        const v2 = v2ByTicker[base.ticker];
-        return {
-          ...base,
-          price: v2.price,
-          changePct: v2.changePct,
-          changeAbs: v2.changeAbs,
-          _live: true,
-        };
-      }
-
-      return useMarketV2 ? resolveTickerAsset(base) : base;
+      const row = useMarketV2 ? resolveTickerAsset(base) : base;
+      const live = useMarketV2 && isV2Crypto(base.ticker) && row?.marketSource;
+      return live ? { ...row, _live: true } : row;
     }).filter(Boolean);
-  }, [commodities, useMarketV2, v2ByTicker, resolveTickerAsset]);
+  }, [commodities, useMarketV2, resolveTickerAsset]);
 
   const looped = [...items, ...items];
   const fmt = (c) => formatAssetPrice(c);
