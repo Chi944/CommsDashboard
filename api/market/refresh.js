@@ -45,13 +45,14 @@ export default async function handler(req, res) {
       previousRefresh: prev?.refreshedAt ?? null,
     };
 
-    await writeProviderCache(payload);
+    const writeResult = await writeProviderCache(payload);
 
     res.status(200).json({
       ok: true,
       ...payload,
       kv: Boolean(process.env.KV_REST_API_URL),
-      blob: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+      blob: Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.COMMS_DASHBOARD_READ_WRITE_TOKEN),
+      blobWrite: writeResult.blobWrite,
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
