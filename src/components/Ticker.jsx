@@ -15,9 +15,11 @@ const TickerItem = ({ c, fmt }) => {
 };
 
 export default function Ticker() {
-  const { commodities, formatAssetPrice } = useLiveData();
+  const { commodities, formatAssetPrice, resolveTickerAsset } = useLiveData();
   const featured = ['WTI', 'BRENT', 'GOLD', 'SILVER', 'NVDA', 'AAPL', 'MSFT', 'TSLA', 'BTC', 'ETH', 'SOL', 'SPX', 'NDX', 'VIX'];
-  const items = commodities.filter((c) => featured.includes(c.symbol));
+  const items = commodities
+    .filter((c) => featured.includes(c.symbol))
+    .map((c) => resolveTickerAsset(c));
   const looped = [...items, ...items];
   const fmt = (c) => formatAssetPrice(c);
   return (

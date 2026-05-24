@@ -5,9 +5,17 @@ import {
 } from '../data/mockData.js';
 import { CURRENCY_META, CURRENCY_NO_DECIMAL } from '../../lib/symbols.js';
 import { useLocalStorage } from '../utils/useLocalStorage.js';
+import {
+  dataModeFromState,
+  minutesAgo,
+  resolveHeatmapAsset,
+  resolveTablePrice,
+  resolveTickerAsset,
+} from '../lib/marketDisplay.js';
 
 const USE_MARKET_V2 = import.meta.env.VITE_USE_LIVE_DATA === 'true';
-const PRICES_URL = USE_MARKET_V2 ? '/api/market/snapshot' : '/api/prices';
+const YAHOO_PRICES_URL = '/api/prices';
+const MARKET_V2_URL = '/api/market/snapshot';
 const PRICE_INTERVAL_MS = 60_000;
 const NEWS_INTERVAL_MS = 5 * 60_000;
 const CCY_KEY = 'comms.displayCurrency';
@@ -34,7 +42,10 @@ export function LiveDataProvider({ children }) {
   const [intel, setIntel] = useState(fallbackIntel);
 
   const [pricesLive, setPricesLive] = useState(false);
-  const [marketMode, setMarketMode] = useState(USE_MARKET_V2 ? 'MOCK' : 'YAHOO');
+  const [v2ByTicker, setV2ByTicker] = useState({});
+  const [v2FetchedAt, setV2FetchedAt] = useState(null);
+  const [v2StaleProviders, setV2StaleProviders] = useState([]);
+  const [marketRefreshing, setMarketRefreshing] = useState(false);
   const [newsLive, setNewsLive] = useState(false);
   const [pricesUpdatedAt, setPricesUpdatedAt] = useState(null);
   const [newsUpdatedAt, setNewsUpdatedAt] = useState(null);
@@ -133,80 +144,122 @@ export function LiveDataProvider({ children }) {
     } catch { return 'error'; }
   }, []);
 
+  const applyYahooPrices = useCallback((j) => {
+    if (!j?.ok || !Array.isArray(j.commodities) || !j.commodities.length) return null;
+    const liveByTicker = Object.fromEntries(j.commodities.map((c) => [c.ticker, c]));
+    const merged = fallbackCommodities.map((m) =>
+      liveByTicker[m.ticker] ? { ...m, ...liveByTicker[m.ticker] } : m
+    );
+    setCommodities(merged);
+    setPricesUpdatedAt(j.fetchedAt);
+    setPricesLive(true);
+    return merged;
+  }, []);
+
+  const runAlertEvaluation = useCallback((merged) => {
+    const prev = lastPriceRef.current;
+    const next = {};
+    const newlyTriggered = [];
+    for (const c of merged) next[c.ticker] = c.price;
+
+    setAlerts((curAlerts) => {
+      const updated = [];
+      for (const a of curAlerts) {
+        const cur = next[a.ticker];
+        const was = prev[a.ticker];
+        if (!a.enabled || cur == null) { updated.push(a); continue; }
+        const crossed =
+          (a.op === '>' && was != null && was < a.price && cur >= a.price) ||
+          (a.op === '<' && was != null && was > a.price && cur <= a.price);
+        if (crossed) {
+          const ts = Date.now();
+          newlyTriggered.push({
+            id: `t-${a.id}-${ts}`,
+            ticker: a.ticker,
+            name: a.name,
+            op: a.op,
+            threshold: a.price,
+            price: cur,
+            ts,
+          });
+          if ('Notification' in window && Notification.permission === 'granted') {
+            try {
+              new Notification(`${a.ticker} ${a.op} ${a.price}`, {
+                body: `${a.name}: now ${cur}`,
+                tag: `alert-${a.id}`,
+              });
+            } catch {}
+          }
+          updated.push({ ...a, lastTriggeredAt: ts });
+        } else {
+          updated.push(a);
+        }
+      }
+      return updated;
+    });
+
+    if (newlyTriggered.length) {
+      setTriggeredAlerts((p) => [...newlyTriggered, ...p].slice(0, 50));
+    }
+    lastPriceRef.current = next;
+  }, [setAlerts, setTriggeredAlerts]);
+
+  const fetchV2Snapshot = useCallback(async () => {
+    const r = await fetch(MARKET_V2_URL, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`snapshot ${r.status}`);
+    const j = await r.json();
+    if (!j?.ok) throw new Error('snapshot not ok');
+    const rows = (j.commodities || []).filter((c) => c.source);
+    setV2ByTicker(Object.fromEntries(rows.map((c) => [c.ticker, c])));
+    setV2FetchedAt(j.fetchedAt);
+    setV2StaleProviders(j.staleProviders || []);
+    return j;
+  }, []);
+
+  const fetchYahooPrices = useCallback(async () => {
+    const r = await fetch(YAHOO_PRICES_URL, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`yahoo ${r.status}`);
+    const j = await r.json();
+    const merged = applyYahooPrices(j);
+    if (merged) runAlertEvaluation(merged);
+    return j;
+  }, [applyYahooPrices, runAlertEvaluation]);
+
   const fetchPrices = useCallback(async () => {
     try {
       setPricesLoading(true);
-      const r = await fetch(PRICES_URL, { cache: 'no-store' });
-      if (!r.ok) throw new Error(`status ${r.status}`);
-      const j = await r.json();
-      if (j?.ok && Array.isArray(j.commodities) && j.commodities.length) {
-        const liveByTicker = Object.fromEntries(j.commodities.map((c) => [c.ticker, c]));
-        const merged = fallbackCommodities.map((m) =>
-          liveByTicker[m.ticker] ? { ...m, ...liveByTicker[m.ticker] } : m
-        );
-        setCommodities(merged);
-        setPricesUpdatedAt(j.fetchedAt);
-        setPricesLive(true);
-        if (USE_MARKET_V2) {
-          const stale = Array.isArray(j.staleProviders) && j.staleProviders.length > 0;
-          setMarketMode(stale ? 'STALE' : 'LIVE');
-        } else {
-          setMarketMode('YAHOO');
+      if (USE_MARKET_V2) {
+        const [, v2Result] = await Promise.allSettled([
+          fetchYahooPrices(),
+          fetchV2Snapshot(),
+        ]);
+        if (v2Result.status === 'rejected') {
+          /* keep prior v2 snapshot */
         }
-
-        // Alert evaluation: compare prev vs current price for each alert.
-        const prev = lastPriceRef.current;
-        const next = {};
-        const newlyTriggered = [];
-        for (const c of merged) next[c.ticker] = c.price;
-
-        setAlerts((curAlerts) => {
-          const updated = [];
-          for (const a of curAlerts) {
-            const cur = next[a.ticker];
-            const was = prev[a.ticker];
-            if (!a.enabled || cur == null) { updated.push(a); continue; }
-            const crossed =
-              (a.op === '>' && was != null && was < a.price && cur >= a.price) ||
-              (a.op === '<' && was != null && was > a.price && cur <= a.price);
-            if (crossed) {
-              const ts = Date.now();
-              newlyTriggered.push({
-                id: `t-${a.id}-${ts}`,
-                ticker: a.ticker,
-                name: a.name,
-                op: a.op,
-                threshold: a.price,
-                price: cur,
-                ts,
-              });
-              if ('Notification' in window && Notification.permission === 'granted') {
-                try {
-                  new Notification(`${a.ticker} ${a.op} ${a.price}`, {
-                    body: `${a.name}: now ${cur}`,
-                    tag: `alert-${a.id}`,
-                  });
-                } catch {}
-              }
-              updated.push({ ...a, lastTriggeredAt: ts });
-            } else {
-              updated.push(a);
-            }
-          }
-          return updated;
-        });
-
-        if (newlyTriggered.length) {
-          setTriggeredAlerts((p) => [...newlyTriggered, ...p].slice(0, 50));
-        }
-        lastPriceRef.current = next;
+      } else {
+        await fetchYahooPrices();
       }
     } catch {
       /* keep last good state */
     } finally {
       setPricesLoading(false);
     }
-  }, [setAlerts, setTriggeredAlerts]);
+  }, [fetchYahooPrices, fetchV2Snapshot]);
+
+  const refreshMarketSnapshot = useCallback(async () => {
+    if (!USE_MARKET_V2) {
+      await fetchYahooPrices();
+      return;
+    }
+    try {
+      setMarketRefreshing(true);
+      await fetchV2Snapshot();
+    } catch {
+      /* keep prior v2 snapshot */
+    } finally {
+      setMarketRefreshing(false);
+    }
+  }, [fetchV2Snapshot, fetchYahooPrices]);
 
   const fetchNews = useCallback(async () => {
     try {
@@ -239,6 +292,36 @@ export function LiveDataProvider({ children }) {
   }, [fetchPrices, fetchNews]);
 
   const refresh = useCallback(() => { fetchPrices(); fetchNews(); }, [fetchPrices, fetchNews]);
+
+  const dataMode = useMemo(
+    () => dataModeFromState({
+      useV2: USE_MARKET_V2,
+      fetchedAt: USE_MARKET_V2 ? v2FetchedAt : pricesUpdatedAt,
+      staleProviders: v2StaleProviders,
+      loading: pricesLoading,
+    }),
+    [v2FetchedAt, v2StaleProviders, pricesLoading, pricesUpdatedAt],
+  );
+
+  const marketUpdatedLabel = useMemo(() => {
+    const iso = USE_MARKET_V2 ? v2FetchedAt : pricesUpdatedAt;
+    const m = minutesAgo(iso);
+    if (m == null) return null;
+    return `updated ${m}m ago`;
+  }, [v2FetchedAt, pricesUpdatedAt]);
+
+  const resolveTickerAssetFn = useCallback(
+    (asset) => resolveTickerAsset(asset, v2ByTicker, USE_MARKET_V2),
+    [v2ByTicker],
+  );
+  const resolveHeatmapAssetFn = useCallback(
+    (asset) => resolveHeatmapAsset(asset, v2ByTicker, USE_MARKET_V2),
+    [v2ByTicker],
+  );
+  const resolveTablePriceFn = useCallback(
+    (asset) => resolveTablePrice(asset, v2ByTicker, USE_MARKET_V2),
+    [v2ByTicker],
+  );
 
   // ---------- Portfolio (positions) ----------
   // [{ ticker, qty, avgCost }]
@@ -348,7 +431,13 @@ export function LiveDataProvider({ children }) {
     intel,
     notifications,
     pricesLive,
-    marketMode,
+    dataMode,
+    marketUpdatedLabel,
+    marketRefreshing,
+    refreshMarketSnapshot,
+    resolveTickerAsset: resolveTickerAssetFn,
+    resolveHeatmapAsset: resolveHeatmapAssetFn,
+    resolveTablePrice: resolveTablePriceFn,
     useMarketV2: USE_MARKET_V2,
     newsLive,
     pricesUpdatedAt,
