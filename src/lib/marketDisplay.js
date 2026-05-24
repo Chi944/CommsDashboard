@@ -47,18 +47,16 @@ export function resolveTablePrice(asset, v2ByTicker, useV2) {
   return asset;
 }
 
-export function dataModeFromState({ useV2, fetchedAt, staleProviders, loading }) {
+/** LIVE/STALE from snapshot age only (30 min), not AV cache gaps. */
+export function dataModeFromState({ useV2, fetchedAt, loading }) {
   if (!useV2) return 'MOCK';
   if (loading && !fetchedAt) return 'MOCK';
-  const stale = Array.isArray(staleProviders) && staleProviders.length > 0;
-  if (!fetchedAt) return stale ? 'STALE' : 'MOCK';
+  if (!fetchedAt) return 'STALE';
   const ageMs = Date.now() - new Date(fetchedAt).getTime();
-  if (ageMs > 30 * 60 * 1000 || stale) return 'STALE';
-  return 'LIVE';
+  return ageMs > 30 * 60 * 1000 ? 'STALE' : 'LIVE';
 }
 
-export function minutesAgo(iso) {
+export function secondsAgo(iso) {
   if (!iso) return null;
-  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
-  return Math.max(0, m);
+  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
 }

@@ -7,7 +7,7 @@ import { CURRENCY_META, CURRENCY_NO_DECIMAL } from '../../lib/symbols.js';
 import { useLocalStorage } from '../utils/useLocalStorage.js';
 import {
   dataModeFromState,
-  minutesAgo,
+  secondsAgo,
   resolveHeatmapAsset,
   resolveTablePrice,
   resolveTickerAsset,
@@ -47,6 +47,7 @@ export function LiveDataProvider({ children }) {
   const [v2FetchedAt, setV2FetchedAt] = useState(null);
   const [v2StaleProviders, setV2StaleProviders] = useState([]);
   const [marketRefreshing, setMarketRefreshing] = useState(false);
+  const [clockTick, setClockTick] = useState(0);
   const [newsLive, setNewsLive] = useState(false);
   const [pricesUpdatedAt, setPricesUpdatedAt] = useState(null);
   const [newsUpdatedAt, setNewsUpdatedAt] = useState(null);
@@ -291,7 +292,8 @@ export function LiveDataProvider({ children }) {
     fetchNews();
     const a = setInterval(fetchPrices, PRICE_INTERVAL_MS);
     const b = setInterval(fetchNews, NEWS_INTERVAL_MS);
-    return () => { clearInterval(a); clearInterval(b); };
+    const c = setInterval(() => setClockTick((n) => n + 1), 1000);
+    return () => { clearInterval(a); clearInterval(b); clearInterval(c); };
   }, [fetchPrices, fetchNews]);
 
   const refresh = useCallback(() => { fetchPrices(); fetchNews(); }, [fetchPrices, fetchNews]);
@@ -300,18 +302,17 @@ export function LiveDataProvider({ children }) {
     () => dataModeFromState({
       useV2: USE_MARKET_V2,
       fetchedAt: USE_MARKET_V2 ? v2FetchedAt : pricesUpdatedAt,
-      staleProviders: v2StaleProviders,
       loading: pricesLoading,
     }),
-    [v2FetchedAt, v2StaleProviders, pricesLoading, pricesUpdatedAt],
+    [v2FetchedAt, pricesLoading, pricesUpdatedAt],
   );
 
   const marketUpdatedLabel = useMemo(() => {
     const iso = USE_MARKET_V2 ? v2FetchedAt : pricesUpdatedAt;
-    const m = minutesAgo(iso);
-    if (m == null) return null;
-    return `updated ${m}m ago`;
-  }, [v2FetchedAt, pricesUpdatedAt]);
+    const s = secondsAgo(iso);
+    if (s == null) return null;
+    return `updated ${s}s ago`;
+  }, [v2FetchedAt, pricesUpdatedAt, clockTick]);
 
   const resolveTickerAssetFn = useCallback(
     (asset) => resolveTickerAsset(asset, v2ByTicker, USE_MARKET_V2),
