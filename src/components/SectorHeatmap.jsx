@@ -16,15 +16,16 @@ const SECTOR_LABEL = {
 };
 
 export default function SectorHeatmap({ onSelectAsset }) {
-  const { commodities } = useLiveData();
+  const { commodities, resolveHeatmapAsset } = useLiveData();
 
   const sectors = useMemo(() => {
     const map = {};
     for (const c of commodities) {
-      if (c.category === 'FX' || c.category === 'MACRO') continue;
-      if (typeof c.changePct !== 'number') continue;
-      if (!map[c.category]) map[c.category] = [];
-      map[c.category].push(c);
+      const row = resolveHeatmapAsset(c);
+      if (row.category === 'FX' || row.category === 'MACRO') continue;
+      if (typeof row.changePct !== 'number') continue;
+      if (!map[row.category]) map[row.category] = [];
+      map[row.category].push(row);
     }
     const rows = Object.entries(map).map(([cat, items]) => {
       const avg = items.reduce((s, i) => s + i.changePct, 0) / items.length;
@@ -33,7 +34,7 @@ export default function SectorHeatmap({ onSelectAsset }) {
       return { cat, items, avg, top, bottom };
     });
     return rows.sort((a, b) => b.avg - a.avg);
-  }, [commodities]);
+  }, [commodities, resolveHeatmapAsset]);
 
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">

@@ -36,20 +36,21 @@ const tileBg = (pct) => {
 };
 
 // ---------- Heatmap ----------
-const Heatmap = ({ items, selectedTicker, onSelect, fmt }) => {
+const Heatmap = ({ items, selectedTicker, onSelect, fmt, resolveHeatmapAsset }) => {
   if (items.length === 0) {
     return <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-8 text-center text-sm text-gray-500">No items.</div>;
   }
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 xl:grid-cols-3 gap-2">
       {items.map((c) => {
-        const up = c.changePct >= 0;
+        const display = resolveHeatmapAsset ? resolveHeatmapAsset(c) : c;
+        const up = display.changePct >= 0;
         const sel = c.ticker === selectedTicker;
         return (
           <button
             key={c.ticker}
             onClick={() => onSelect(c.ticker)}
-            style={{ background: tileBg(c.changePct) }}
+            style={{ background: tileBg(display.changePct) }}
             className={`text-left rounded-lg p-3 border transition-all
               ${sel ? 'border-cyan-400 ring-1 ring-cyan-400/40' : 'border-gray-800 hover:border-gray-600'}`}
           >
@@ -59,9 +60,9 @@ const Heatmap = ({ items, selectedTicker, onSelect, fmt }) => {
             </div>
             <div className="text-[11px] text-gray-300 truncate mt-0.5">{c.name}</div>
             <div className="mt-2 flex items-end justify-between">
-              <div className="font-mono text-sm text-gray-100">{fmt(c)}</div>
+              <div className="font-mono text-sm text-gray-100">{fmt(display)}</div>
               <div className={`font-mono text-xs ${up ? 'text-green-300' : 'text-red-300'}`}>
-                {fmtPctChange(c.changePct)}
+                {fmtPctChange(display.changePct)}
               </div>
             </div>
             <div className="mt-2">
@@ -185,7 +186,7 @@ const AssetNews = ({ asset }) => {
 export default function Prices({ initialTicker, onTickerConsumed } = {}) {
   const {
     commodities: rawCommodities, pricesLive, pricesUpdatedAt, refresh,
-    formatAssetPrice, dashboardCurrency,
+    formatAssetPrice, dashboardCurrency, resolveHeatmapAsset, resolveTablePrice,
     watchlistNames, activeWatchlist, activeWatchSet,
     setActiveList, createList, toggleWatch,
   } = useLiveData();
@@ -358,6 +359,7 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
 
   // Currency-aware price formatter for any commodity row.
   const fmt = (c) => formatAssetPrice(c);
+  const fmtTablePrice = (c) => formatAssetPrice(resolveTablePrice(c));
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -643,9 +645,9 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
                         width={60} height={20}
                       />
                       <div className="text-right w-24">
-                        <div className="font-mono text-xs text-gray-100">{fmt(c)}</div>
+                        <div className="font-mono text-xs text-gray-100">{fmtTablePrice(c)}</div>
                         <div className={`font-mono text-[10px] ${up ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {fmtPctChange(c.changePct)}
+                          {fmtPctChange(resolveTablePrice(c).changePct)}
                         </div>
                       </div>
                     </div>
@@ -654,7 +656,13 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
               </div>
             </div>
           ) : (
-            <Heatmap items={filtered} selectedTicker={selected} onSelect={setSelected} fmt={fmt} />
+            <Heatmap
+              items={filtered}
+              selectedTicker={selected}
+              onSelect={setSelected}
+              fmt={fmt}
+              resolveHeatmapAsset={resolveHeatmapAsset}
+            />
           )}
         </div>
       </div>
