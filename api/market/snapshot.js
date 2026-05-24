@@ -7,7 +7,7 @@ import { fetchCoinGeckoPrices } from '../../lib/market/providers/coingecko.js';
 import { fetchCoinGeckoVolumes } from '../../lib/market/providers/coingecko-volumes.js';
 import { avRowsFromCache } from '../../lib/market/providers/alphavantage.js';
 import { fetchEiaEnergy, eiaRowsFromCache } from '../../lib/market/providers/eia.js';
-import { readProviderCache } from '../../lib/market/store.js';
+import { getStorageDiagnostics, readProviderCache } from '../../lib/market/store.js';
 import { mergeMarketSnapshot } from '../../lib/market/merge.js';
 
 export default async function handler(req, res) {
@@ -19,6 +19,7 @@ export default async function handler(req, res) {
   try {
     const errors = [];
     const cache = await readProviderCache();
+    const storage = await getStorageDiagnostics(cache);
 
     const [cg, cgVol, avCached, eiaCached] = await Promise.all([
       fetchCoinGeckoPrices(),
@@ -66,7 +67,13 @@ export default async function handler(req, res) {
       fetchedAt: new Date().toISOString(),
       partial: liveRows.length < meta.liveSymbolCount || staleProviders.length > 0,
       commodities,
-      providers: meta.sources,
+      providers: {
+        ...meta.sources,
+        blob: storage.blob,
+        blobHit: storage.blobHit,
+        blobError: storage.blobError || undefined,
+        kv: storage.kv,
+      },
       liveSymbolCount: meta.liveSymbolCount,
       staleProviders,
       marketVolumes: cgVol.volumes || {},
