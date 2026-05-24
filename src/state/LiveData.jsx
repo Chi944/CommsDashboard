@@ -6,6 +6,8 @@ import {
 import { CURRENCY_META, CURRENCY_NO_DECIMAL } from '../../lib/symbols.js';
 import { useLocalStorage } from '../utils/useLocalStorage.js';
 
+const USE_MARKET_V2 = import.meta.env.VITE_USE_LIVE_DATA === 'true';
+const PRICES_URL = USE_MARKET_V2 ? '/api/market/snapshot' : '/api/prices';
 const PRICE_INTERVAL_MS = 60_000;
 const NEWS_INTERVAL_MS = 5 * 60_000;
 const CCY_KEY = 'comms.displayCurrency';
@@ -32,6 +34,7 @@ export function LiveDataProvider({ children }) {
   const [intel, setIntel] = useState(fallbackIntel);
 
   const [pricesLive, setPricesLive] = useState(false);
+  const [marketMode, setMarketMode] = useState(USE_MARKET_V2 ? 'MOCK' : 'YAHOO');
   const [newsLive, setNewsLive] = useState(false);
   const [pricesUpdatedAt, setPricesUpdatedAt] = useState(null);
   const [newsUpdatedAt, setNewsUpdatedAt] = useState(null);
@@ -133,7 +136,7 @@ export function LiveDataProvider({ children }) {
   const fetchPrices = useCallback(async () => {
     try {
       setPricesLoading(true);
-      const r = await fetch('/api/prices', { cache: 'no-store' });
+      const r = await fetch(PRICES_URL, { cache: 'no-store' });
       if (!r.ok) throw new Error(`status ${r.status}`);
       const j = await r.json();
       if (j?.ok && Array.isArray(j.commodities) && j.commodities.length) {
@@ -144,6 +147,12 @@ export function LiveDataProvider({ children }) {
         setCommodities(merged);
         setPricesUpdatedAt(j.fetchedAt);
         setPricesLive(true);
+        if (USE_MARKET_V2) {
+          const stale = Array.isArray(j.staleProviders) && j.staleProviders.length > 0;
+          setMarketMode(stale ? 'STALE' : 'LIVE');
+        } else {
+          setMarketMode('YAHOO');
+        }
 
         // Alert evaluation: compare prev vs current price for each alert.
         const prev = lastPriceRef.current;
@@ -339,6 +348,8 @@ export function LiveDataProvider({ children }) {
     intel,
     notifications,
     pricesLive,
+    marketMode,
+    useMarketV2: USE_MARKET_V2,
     newsLive,
     pricesUpdatedAt,
     newsUpdatedAt,
