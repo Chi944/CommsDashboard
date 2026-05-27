@@ -7,13 +7,14 @@ import NotificationsDrawer from './components/NotificationsDrawer.jsx';
 import CommandPalette from './components/CommandPalette.jsx';
 import { LiveDataProvider } from './state/LiveData.jsx';
 
-const Overview  = lazy(() => import('./components/Overview.jsx'));
-const Prices    = lazy(() => import('./components/Prices.jsx'));
-const Currency  = lazy(() => import('./components/Currency.jsx'));
-const Portfolio = lazy(() => import('./components/Portfolio.jsx'));
-const Intel     = lazy(() => import('./components/Intel.jsx'));
+const Overview   = lazy(() => import('./components/Overview.jsx'));
+const Prices     = lazy(() => import('./components/Prices.jsx'));
+const Currency   = lazy(() => import('./components/Currency.jsx'));
+const Portfolio  = lazy(() => import('./components/Portfolio.jsx'));
+const Intel      = lazy(() => import('./components/Intel.jsx'));
+const TokenFlow  = lazy(() => import('./components/TokenFlow.jsx'));
 
-const VALID_TABS = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel'];
+const VALID_TABS = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel', 'TokenFlow'];
 
 const TabSkeleton = () => (
   <div className="space-y-4 animate-pulse">
@@ -94,11 +95,12 @@ export default function App() {
 
         <main className="px-4 sm:px-6 py-5 sm:py-7 max-w-[1600px] mx-auto pb-24 md:pb-10 animate-fade-in">
           <Suspense fallback={<TabSkeleton />}>
-            {tab === 'Overview'  && <Overview onSelectAsset={openInPrices} />}
-            {tab === 'Prices'    && <Prices initialTicker={pendingTicker} onTickerConsumed={() => setPendingTicker(null)} />}
-            {tab === 'Currency'  && <Currency />}
-            {tab === 'Portfolio' && <Portfolio onSelectAsset={openInPrices} />}
-            {tab === 'Intel'     && <Intel />}
+            {tab === 'Overview'   && <Overview onSelectAsset={openInPrices} />}
+            {tab === 'Prices'     && <Prices initialTicker={pendingTicker} onTickerConsumed={() => setPendingTicker(null)} />}
+            {tab === 'Currency'   && <Currency />}
+            {tab === 'Portfolio'  && <Portfolio onSelectAsset={openInPrices} />}
+            {tab === 'Intel'      && <Intel />}
+            {tab === 'TokenFlow'  && <TokenFlow />}
           </Suspense>
         </main>
 
