@@ -23,9 +23,9 @@ const CATEGORY_GROUPS = [
 ];
 const ALL_CATS = [...PRIMARY_CATS, ...CATEGORY_GROUPS.flatMap((g) => g.cats)];
 
-const RANGES = ['1D', '7D', '30D', '90D'];
+const RANGES = ['1D', '7D', '30D', '90D', 'YTD'];
 // Maps display range labels to the API range param used by /api/history
-const API_RANGE = { '1D': '1d', '7D': '5d', '30D': '1mo', '90D': '3mo' };
+const API_RANGE = { '1D': '1d', '7D': '5d', '30D': '1mo', '90D': '3mo', 'YTD': 'ytd' };
 const COMPARE_COLORS = ['#22d3ee', '#a78bfa', '#f472b6', '#fbbf24', '#34d399'];
 const STORAGE_KEY = 'comms.watchlist.v2';
 
