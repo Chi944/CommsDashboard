@@ -23,8 +23,9 @@ const CATEGORY_GROUPS = [
 ];
 const ALL_CATS = [...PRIMARY_CATS, ...CATEGORY_GROUPS.flatMap((g) => g.cats)];
 
-const RANGES = ['1d', '5d', '1mo', '3mo', '6mo', '1y', 'ytd'];
-const RANGE_LABEL = { '1d': '1D', '5d': '5D', '1mo': '1M', '3mo': '3M', '6mo': '6M', '1y': '1Y', 'ytd': 'YTD' };
+const RANGES = ['1D', '7D', '30D', '90D'];
+// Maps display range labels to the API range param used by /api/history
+const API_RANGE = { '1D': '1d', '7D': '5d', '30D': '1mo', '90D': '3mo' };
 const COMPARE_COLORS = ['#22d3ee', '#a78bfa', '#f472b6', '#fbbf24', '#34d399'];
 const STORAGE_KEY = 'comms.watchlist.v2';
 
@@ -201,7 +202,7 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
   const [view, setView] = useState('table');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(commodities[0]?.ticker);
-  const [range, setRange] = useState('1mo');
+  const [range, setRange] = useState('30D');
   const [compare, setCompare] = useState(false);
   const [compareSet, setCompareSet] = useState(
     () => new Set(['NVDA', 'AAPL', 'BTC'].filter((t) => commodities.some((c) => c.ticker === t)))
@@ -298,7 +299,7 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
     setChartLoading(true);
     Promise.all(
       missing.map((t) =>
-        fetch(`/api/history?ticker=${encodeURIComponent(t)}&range=${range}`)
+        fetch(`/api/history?ticker=${encodeURIComponent(t)}&range=${API_RANGE[range]}`)
           .then((r) => r.ok ? r.json() : null)
           .then((j) => (j && j.ok && Array.isArray(j.points) && j.points.length) ? [t, j.points] : [t, null])
           .catch(() => [t, null])
@@ -335,7 +336,7 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
     if (!sel) return [];
     const cached = historyCache[`${sel.ticker}|${range}`];
     if (cached && cached.length) return cached;
-    if (range === '1mo' && sel.history && sel.history.length) {
+    if (range === '30D' && sel.history && sel.history.length) {
       return sel.history.map((h) => ({ date: h.date, price: h.price }));
     }
     return [];
@@ -544,9 +545,9 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
                 <div className="flex flex-wrap gap-1">
                   {RANGES.map((r) => (
                     <button key={r} onClick={() => setRange(r)}
-                      className={`px-2 py-1 text-[11px] uppercase tracking-wider rounded
+                      className={`px-2 py-1 text-[11px] uppercase tracking-wider rounded transition-colors
                         ${range === r ? 'bg-gray-100 text-gray-950' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
-                    >{RANGE_LABEL[r]}</button>
+                    >{r}</button>
                   ))}
                 </div>
               </div>
@@ -554,7 +555,7 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
             <div className="h-64 sm:h-72 relative">
               {chartLoading && chartData.length === 0 && (
                 <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-500">
-                  Loading {RANGE_LABEL[range]} history…
+                  Loading {range} history…
                 </div>
               )}
               {chartData.length > 0 && (
