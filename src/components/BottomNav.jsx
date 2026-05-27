@@ -34,13 +34,19 @@ const ICONS = {
       <path d="M8 9h7" /><path d="M8 13h7" /><path d="M8 17h4" />
     </svg>
   ),
+  TokenFlow: (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2v20M2 12h20" />
+      <circle cx="12" cy="12" r="4" />
+    </svg>
+  ),
 };
 
 export default function BottomNav({ active, setActive }) {
-  const tabs = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel'];
+  const tabs = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel', 'TokenFlow'];
   return (
     <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-gray-950/90 backdrop-blur border-t border-gray-800 safe-bottom">
-      <div className="grid grid-cols-5">
+      <div className="grid grid-cols-6">
         {tabs.map((t) => {
           const sel = active === t;
           return (
@@ -52,7 +58,7 @@ export default function BottomNav({ active, setActive }) {
               aria-current={sel ? 'page' : undefined}
             >
               <span className={sel ? 'text-cyan-300' : 'text-gray-400'}>{ICONS[t]}</span>
-              <span>{t}</span>
+              <span>{t === 'TokenFlow' ? 'Tokens' : t}</span>
             </button>
           );
         })}
