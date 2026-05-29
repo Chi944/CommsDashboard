@@ -4,8 +4,6 @@ import { categoryColor, assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
 import SectorHeatmap from './SectorHeatmap.jsx';
 import Briefing from './Briefing.jsx';
-import CorridorMap from './CorridorMap.jsx';
-
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
 const fmtVolume = (n) => {
@@ -270,8 +268,6 @@ export default function Overview({ onSelectAsset }) {
       </div>
 
       <SectorHeatmap onSelectAsset={onSelectAsset} />
-
-      <CorridorMap />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <MoversCard items={gainers} title="Top Gainers" accent="text-emerald-400" fmt={fmt} onSelect={onSelectAsset} />
