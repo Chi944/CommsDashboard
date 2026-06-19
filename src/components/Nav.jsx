@@ -3,7 +3,7 @@ import { useLiveData } from '../state/LiveData.jsx';
 import { CURRENCY_META } from '../../lib/symbols.js';
 import DataModeBadge from './DataModeBadge.jsx';
 
-const TABS = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel', 'TokenFlow'];
+const TABS = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel'];
 
 export default function Nav({ active, setActive, onOpenAlerts, onOpenPalette }) {
   const [now, setNow] = useState(new Date());

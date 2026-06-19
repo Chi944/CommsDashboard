@@ -12,9 +12,8 @@ const Prices     = lazy(() => import('./components/Prices.jsx'));
 const Currency   = lazy(() => import('./components/Currency.jsx'));
 const Portfolio  = lazy(() => import('./components/Portfolio.jsx'));
 const Intel      = lazy(() => import('./components/Intel.jsx'));
-const TokenFlow  = lazy(() => import('./components/TokenFlow.jsx'));
 
-const VALID_TABS = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel', 'TokenFlow'];
+const VALID_TABS = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel'];
 
 const TabSkeleton = () => (
   <div className="space-y-4 animate-pulse">
@@ -100,7 +99,6 @@ export default function App() {
             {tab === 'Currency'   && <Currency />}
             {tab === 'Portfolio'  && <Portfolio onSelectAsset={openInPrices} />}
             {tab === 'Intel'      && <Intel />}
-            {tab === 'TokenFlow'  && <TokenFlow />}
           </Suspense>
         </main>
 
