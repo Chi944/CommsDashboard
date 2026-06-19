@@ -834,10 +834,15 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
                       </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); setEditingNote(editingNote === c.ticker ? null : c.ticker); }}
-                        className={`text-[12px] leading-none transition-colors ${notes[c.ticker] ? 'text-amber-400' : 'text-gray-700 hover:text-gray-400'}`}
+                        className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${notes[c.ticker] ? 'text-amber-400 hover:bg-amber-400/10' : 'text-gray-600 hover:text-gray-300 hover:bg-gray-700/50'}`}
                         title={notes[c.ticker] ? 'Edit note' : 'Add note'}
                         aria-label="note"
-                      >✎</button>
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 20h9" />
+                          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                        </svg>
+                      </button>
                       <Sparkline
                         data={c.history.map((h) => h.price)}
                         color={up ? '#22c55e' : '#ef4444'}
