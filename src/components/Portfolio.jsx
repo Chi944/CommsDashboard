@@ -3,6 +3,7 @@ import { useLiveData } from '../state/LiveData.jsx';
 import { assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
 import { downloadCSV } from '../utils/csv.js';
+import CorrelationMatrix from './CorrelationMatrix.jsx';
 
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
@@ -223,6 +224,10 @@ export default function Portfolio({ onSelectAsset }) {
       <div className="text-[11px] text-gray-500">
         Holdings are stored only on this device (localStorage). Clear your browser data and they're gone.
       </div>
+
+      {enriched.filter((p) => !p.missing).length >= 2 && (
+        <CorrelationMatrix tickers={enriched.filter((p) => !p.missing).map((p) => p.ticker)} />
+      )}
     </div>
   );
 }

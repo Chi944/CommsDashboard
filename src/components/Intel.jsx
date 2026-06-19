@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { categoryColor } from '../data/mockData.js';
 import { useLiveData } from '../state/LiveData.jsx';
+import EconomicCalendar from './EconomicCalendar.jsx';
+import OptionsFlow from './OptionsFlow.jsx';
 
 const FILTERS = ['All', 'Breaking', 'Shipping', 'Energy', 'Metals', 'Agri', 'Geopolitical', 'Tech', 'Data', 'Finance', 'Currency', 'Crypto'];
 
@@ -121,6 +123,12 @@ export default function Intel() {
 
       <div className="text-[11px] uppercase tracking-widest text-gray-500">
         Showing {list.length} of {intel.length} items
+      </div>
+
+      {/* Economic calendar + Options flow */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+        <EconomicCalendar />
+        <OptionsFlow />
       </div>
 
       <div className="space-y-2">

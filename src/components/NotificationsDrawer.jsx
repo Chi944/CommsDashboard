@@ -1,9 +1,24 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { severityBg } from '../data/mockData.js';
 import { useLiveData } from '../state/LiveData.jsx';
 
 export default function NotificationsDrawer({ open, onClose }) {
-  const { notifications, triggeredAlerts, clearTriggered, newsLive, newsUpdatedAt } = useLiveData();
+  const { notifications, triggeredAlerts, clearTriggered, newsLive, newsUpdatedAt, requestNotificationPermission } = useLiveData();
+  const [notifPerm, setNotifPerm] = useState(() => {
+    try { return typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'; } catch { return 'unsupported'; }
+  });
+
+  useEffect(() => {
+    const update = () => {
+      try { setNotifPerm(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'); } catch {}
+    };
+    update();
+  }, [open]);
+
+  const enableNotifications = async () => {
+    const result = await requestNotificationPermission();
+    setNotifPerm(result);
+  };
 
   return (
     <>
@@ -28,7 +43,7 @@ export default function NotificationsDrawer({ open, onClose }) {
               aria-label="close"
             >×</button>
           </div>
-          <div className="mt-2 flex items-center gap-2 text-[10px]">
+          <div className="mt-2 flex items-center gap-2 text-[10px] flex-wrap">
             <span className={`flex items-center gap-1.5 ${newsLive ? 'text-emerald-400' : 'text-amber-400'}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${newsLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
               {newsLive ? 'live news + price alerts' : 'fetching'}
@@ -37,6 +52,21 @@ export default function NotificationsDrawer({ open, onClose }) {
               <span className="text-gray-500 font-mono">
                 {new Date(newsUpdatedAt).toUTCString().slice(17, 25)}Z
               </span>
+            )}
+            {notifPerm === 'default' && (
+              <button
+                onClick={enableNotifications}
+                className="ml-auto px-2 py-0.5 rounded text-[10px] uppercase tracking-wider bg-cyan-500/20 border border-cyan-500/50 text-cyan-300 hover:bg-cyan-500/30 transition-colors"
+              >Enable push notifications</button>
+            )}
+            {notifPerm === 'granted' && (
+              <span className="ml-auto flex items-center gap-1 text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                Push on
+              </span>
+            )}
+            {notifPerm === 'denied' && (
+              <span className="ml-auto text-gray-500">Push blocked in browser</span>
             )}
           </div>
         </header>

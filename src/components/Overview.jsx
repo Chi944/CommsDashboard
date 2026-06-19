@@ -1,9 +1,10 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useLiveData } from '../state/LiveData.jsx';
 import { categoryColor, assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
 import SectorHeatmap from './SectorHeatmap.jsx';
 import Briefing from './Briefing.jsx';
+import FearGreed from './FearGreed.jsx';
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
 const fmtVolume = (n) => {
@@ -14,13 +15,22 @@ const fmtVolume = (n) => {
   return String(n);
 };
 
-const StatCard = ({ label, c, fmt, onClick }) => {
+const SF_OPTIONS = ['7D', '30D'];
+
+const StatCard = ({ label, c, fmt, onClick, sfRange }) => {
   const accent = c
     ? (c.changePct >= 0 ? 'text-emerald-400' : 'text-red-400')
     : 'text-gray-300';
   const value = c ? fmt(c) : '—';
   const sub = c ? `${fmtPctChange(c.changePct)} today` : '—';
   const up = c?.changePct >= 0;
+
+  const sparkData = useMemo(() => {
+    if (!c?.history) return [];
+    const pts = c.history.map((h) => h.price);
+    if (sfRange === '7D') return pts.slice(-7);
+    return pts;
+  }, [c, sfRange]);
 
   return (
     <button
@@ -42,10 +52,10 @@ const StatCard = ({ label, c, fmt, onClick }) => {
       <div className={`mt-2 font-mono text-2xl sm:text-3xl tracking-tight ${accent}`}>{value}</div>
       <div className="mt-1 flex items-center gap-2">
         <div className="text-[11px] sm:text-xs text-gray-400">{sub}</div>
-        {c?.history && (
+        {sparkData.length > 1 && (
           <div className="ml-auto">
             <Sparkline
-              data={c.history.map((h) => h.price)}
+              data={sparkData}
               color={up ? '#22c55e' : '#ef4444'}
               width={70} height={20}
             />
@@ -188,6 +198,7 @@ export default function Overview({ onSelectAsset }) {
     formatAssetPrice, dashboardCurrency,
     activityScore, marketVolumes,
   } = useLiveData();
+  const [sfRange, setSfRange] = useState('30D');
 
   // Exclude FX from movers/headline rankings.
   const tradable = useMemo(
@@ -261,10 +272,34 @@ export default function Overview({ onSelectAsset }) {
 
       <Briefing />
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        {stats.map((s) => (
-          <StatCard key={s.label} label={s.label} c={s.c} fmt={fmt} onClick={onSelectAsset} />
-        ))}
+      {/* Stat cards with sparkline range toggle */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-gray-500">Key Assets</div>
+          <div className="flex gap-1">
+            {SF_OPTIONS.map((o) => (
+              <button
+                key={o}
+                onClick={() => setSfRange(o)}
+                className={`px-2 py-0.5 text-[10px] rounded font-mono transition-colors ${
+                  sfRange === o
+                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                    : 'text-gray-500 hover:text-gray-300 border border-transparent'
+                }`}
+              >{o}</button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          {stats.map((s) => (
+            <StatCard key={s.label} label={s.label} c={s.c} fmt={fmt} onClick={onSelectAsset} sfRange={sfRange} />
+          ))}
+        </div>
+      </div>
+
+      {/* Fear & Greed */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <FearGreed />
       </div>
 
       <SectorHeatmap onSelectAsset={onSelectAsset} />

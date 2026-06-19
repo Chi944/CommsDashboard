@@ -1,6 +1,7 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend,
+  ReferenceLine,
 } from 'recharts';
 import { useLiveData } from '../state/LiveData.jsx';
 import { assetCategoryColor } from '../data/mockData.js';
@@ -30,6 +31,55 @@ const COMPARE_COLORS = ['#22d3ee', '#a78bfa', '#f472b6', '#fbbf24', '#34d399'];
 const STORAGE_KEY = 'comms.watchlist.v2';
 
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+
+// RSI (Wilder, period 14) from an array of prices + parallel dates array.
+function computeRSI(prices, dates, period = 14) {
+  if (prices.length < period + 1) return [];
+  const changes = prices.slice(1).map((p, i) => p - prices[i]);
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 0; i < period; i++) {
+    if (changes[i] > 0) avgGain += changes[i]; else avgLoss += Math.abs(changes[i]);
+  }
+  avgGain /= period; avgLoss /= period;
+  const result = [];
+  const rs0 = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  result.push({ date: dates[period], rsi: +(100 - 100 / (1 + rs0)).toFixed(1) });
+  for (let i = period; i < changes.length; i++) {
+    const gain = Math.max(0, changes[i]);
+    const loss = Math.max(0, -changes[i]);
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    result.push({ date: dates[i + 1], rsi: +(100 - 100 / (1 + rs)).toFixed(1) });
+  }
+  return result;
+}
+
+// Approximate next earnings dates for common tickers (MM-DD format for chart x-axis).
+const EARNINGS_DATES = {
+  AAPL:  ['07-25', '10-24'],
+  NVDA:  ['08-20', '11-19'],
+  MSFT:  ['07-22', '10-21'],
+  TSLA:  ['07-19', '10-18'],
+  META:  ['07-23', '10-22'],
+  AMZN:  ['07-25', '10-24'],
+  GOOGL: ['07-23', '10-22'],
+  AMD:   ['07-22', '10-21'],
+  NFLX:  ['07-15', '10-14'],
+  BABA:  ['08-05', '11-04'],
+  MSTR:  ['07-30', '10-29'],
+  COIN:  ['07-28', '10-27'],
+  SNOW:  ['08-27', '11-26'],
+  SHOP:  ['08-06', '11-05'],
+  TSM:   ['07-17', '10-16'],
+  INTC:  ['07-24', '10-23'],
+  QCOM:  ['07-29', '10-28'],
+  BA:    ['07-23', '10-22'],
+  JPM:   ['07-10', '10-09'],
+};
+
+const PRESETS_KEY = 'comms.presets.v1';
+const NOTES_KEY = 'comms.notes.v1';
 
 const tileBg = (pct) => {
   const a = Math.min(0.65, Math.max(0.06, Math.abs(pct) / 8));
@@ -213,6 +263,14 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
   const [chartLoading, setChartLoading] = useState(false);
   const searchRef = useRef(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const [showRsi, setShowRsi] = useState(false);
+  const [presets, setPresets] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); } catch { return []; }
+  });
+  const [notes, setNotesMap] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(NOTES_KEY) || '{}'); } catch { return {}; }
+  });
+  const [editingNote, setEditingNote] = useState(null); // ticker being edited
 
   // Keyboard shortcut: '/' focuses the search input. Esc clears it.
   useEffect(() => {
@@ -342,6 +400,48 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
     return [];
   }, [compare, compareSet, sel, range, historyCache]);
 
+  const rsiData = useMemo(() => {
+    if (!showRsi || compare || chartData.length === 0) return [];
+    const prices = chartData.map((d) => d.price).filter((p) => p != null);
+    const dates = chartData.map((d) => d.date);
+    return computeRSI(prices, dates);
+  }, [showRsi, compare, chartData]);
+
+  // Earnings reference lines for current ticker and range.
+  const earningsLines = useMemo(() => {
+    if (compare || !sel || range === '1D' || range === '7D') return [];
+    const dates = EARNINGS_DATES[sel.ticker] || [];
+    return dates.filter((d) => chartData.some((pt) => pt.date === d));
+  }, [compare, sel, range, chartData]);
+
+  const setNote = useCallback((ticker, note) => {
+    setNotesMap((prev) => {
+      const next = { ...prev };
+      if (note?.trim()) next[ticker] = note.trim();
+      else delete next[ticker];
+      try { localStorage.setItem(NOTES_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const savePreset = useCallback(() => {
+    const name = window.prompt('Save current layout as:');
+    if (!name?.trim()) return;
+    setPresets((prev) => {
+      const next = [...prev, { name: name.trim(), cat, view }];
+      try { localStorage.setItem(PRESETS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, [cat, view]);
+
+  const deletePreset = useCallback((i) => {
+    setPresets((prev) => {
+      const next = prev.filter((_, j) => j !== i);
+      try { localStorage.setItem(PRESETS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
   const exportCsv = () => {
     const rows = filtered.map((c) => ({
       ticker: c.ticker, name: c.name, category: c.category, unit: c.unit,
@@ -405,6 +505,13 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
           <button onClick={exportCsv}
             className="px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white">
             <span className="hidden sm:inline">Export CSV</span><span className="sm:hidden">CSV</span>
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white"
+            title="Print / Save as PDF"
+          >
+            <span className="hidden sm:inline">Print / PDF</span><span className="sm:hidden">PDF</span>
           </button>
         </div>
       </div>
@@ -471,6 +578,33 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
               ))}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Saved layout presets */}
+      {(presets.length > 0 || true) && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] uppercase tracking-widest text-gray-500">Layouts</span>
+          {presets.map((p, i) => (
+            <div key={i} className="flex items-center group">
+              <button
+                onClick={() => { setCat(p.cat); setView(p.view); }}
+                className="px-2.5 py-1 text-[11px] uppercase tracking-wider rounded-l-md border border-gray-700 bg-gray-900/70 text-gray-300 hover:border-gray-500 hover:text-white transition-colors"
+              >
+                {p.name}
+              </button>
+              <button
+                onClick={() => deletePreset(i)}
+                className="px-1.5 py-1 text-[11px] rounded-r-md border border-l-0 border-gray-700 bg-gray-900/70 text-gray-600 hover:text-red-400 hover:border-gray-500 transition-colors"
+                title="Delete preset"
+              >×</button>
+            </div>
+          ))}
+          <button
+            onClick={savePreset}
+            className="px-2.5 py-1 text-[11px] uppercase tracking-wider rounded-md border border-dashed border-gray-700 text-gray-400 hover:text-cyan-300 hover:border-cyan-700 transition-colors"
+            title="Save current filter+view as layout"
+          >+ save layout</button>
         </div>
       )}
 
@@ -549,6 +683,14 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
                         ${range === r ? 'bg-gray-100 text-gray-950' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
                     >{r}</button>
                   ))}
+                  {!compare && (
+                    <button
+                      onClick={() => setShowRsi((v) => !v)}
+                      className={`px-2 py-1 text-[11px] uppercase tracking-wider rounded transition-colors
+                        ${showRsi ? 'bg-purple-500/30 text-purple-300 border border-purple-500/50' : 'bg-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-700'}`}
+                      title="Toggle RSI indicator"
+                    >RSI</button>
+                  )}
                 </div>
               </div>
             </div>
@@ -575,11 +717,42 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
                     ) : (
                       <Line type="monotone" dataKey="price" stroke="#22d3ee" strokeWidth={2} dot={false} />
                     )}
+                    {earningsLines.map((d) => (
+                      <ReferenceLine key={d} x={d} stroke="#f59e0b" strokeDasharray="4 3"
+                        label={{ value: 'ERN', position: 'top', fontSize: 9, fill: '#f59e0b' }} />
+                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               )}
             </div>
           </div>
+          {!compare && showRsi && rsiData.length > 0 && (
+            <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[10px] uppercase tracking-widest text-gray-500">RSI · 14</div>
+                <div className="flex items-center gap-3 text-[10px] font-mono">
+                  <span className="text-red-400">70 overbought</span>
+                  <span className="text-emerald-400">30 oversold</span>
+                  <span className="text-purple-300">{rsiData[rsiData.length - 1]?.rsi ?? '—'}</span>
+                </div>
+              </div>
+              <div className="h-24">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={rsiData} margin={{ top: 2, right: 16, left: 0, bottom: 0 }}>
+                    <CartesianGrid stroke="#1f2937" strokeDasharray="3 3" />
+                    <XAxis dataKey="date" stroke="#6b7280" tick={{ fontSize: 10 }} minTickGap={30} />
+                    <YAxis stroke="#6b7280" domain={[0, 100]} ticks={[0, 30, 50, 70, 100]} tick={{ fontSize: 10 }} />
+                    <Tooltip contentStyle={{ background: '#0b0f19', border: '1px solid #1f2937', borderRadius: 6, fontSize: 11 }}
+                      labelStyle={{ color: '#9ca3af' }} itemStyle={{ color: '#c4b5fd' }} />
+                    <ReferenceLine y={70} stroke="#ef4444" strokeDasharray="4 3" />
+                    <ReferenceLine y={30} stroke="#22c55e" strokeDasharray="4 3" />
+                    <ReferenceLine y={50} stroke="#374151" />
+                    <Line type="monotone" dataKey="rsi" stroke="#a78bfa" strokeWidth={1.5} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
           {!compare && <DetailPanel c={sel} formatAssetPrice={formatAssetPrice} />}
           {!compare && sel && <AnalysisPanel asset={sel} />}
         </div>
@@ -637,9 +810,34 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
                           <span className={`text-[9px] uppercase tracking-wider ${assetCategoryColor(c.category)}`}>
                             {c.category}
                           </span>
+                          {notes[c.ticker] && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title={notes[c.ticker]} />
+                          )}
                         </div>
-                        <div className="text-[10px] text-gray-500 truncate">{c.name}</div>
+                        {editingNote === c.ticker ? (
+                          <input
+                            autoFocus
+                            type="text"
+                            defaultValue={notes[c.ticker] || ''}
+                            placeholder="Add note… (Enter to save)"
+                            className="text-[10px] bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-100 focus:outline-none focus:border-cyan-500 w-full mt-0.5"
+                            onBlur={(e) => { setNote(c.ticker, e.target.value); setEditingNote(null); }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { setNote(c.ticker, e.target.value); setEditingNote(null); }
+                              if (e.key === 'Escape') setEditingNote(null);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        ) : (
+                          <div className="text-[10px] text-gray-500 truncate">{notes[c.ticker] || c.name}</div>
+                        )}
                       </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditingNote(editingNote === c.ticker ? null : c.ticker); }}
+                        className={`text-[12px] leading-none transition-colors ${notes[c.ticker] ? 'text-amber-400' : 'text-gray-700 hover:text-gray-400'}`}
+                        title={notes[c.ticker] ? 'Edit note' : 'Add note'}
+                        aria-label="note"
+                      >✎</button>
                       <Sparkline
                         data={c.history.map((h) => h.price)}
                         color={up ? '#22c55e' : '#ef4444'}
