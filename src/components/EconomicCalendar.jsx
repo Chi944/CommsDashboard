@@ -109,8 +109,13 @@ export default function EconomicCalendar() {
               const ccy = CCY_COLORS[e.currency] || 'text-gray-400';
               const isToday = e.daysAway === 0;
               const isSoon = e.daysAway <= 3 && e.daysAway > 0;
+              const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(e.event)}`;
               return (
-                <tr key={i} className={`${isToday ? 'bg-cyan-500/5' : 'hover:bg-gray-800/30'} transition-colors`}>
+                <tr
+                  key={i}
+                  onClick={() => window.open(searchUrl, '_blank', 'noopener,noreferrer')}
+                  className={`cursor-pointer transition-colors ${isToday ? 'bg-cyan-500/5 hover:bg-cyan-500/10' : 'hover:bg-gray-800/50'}`}
+                >
                   <td className="px-4 py-2.5 font-mono whitespace-nowrap">
                     <div className="text-gray-100">{formatDate(e.date)}</div>
                     <div className={`text-[10px] mt-0.5 ${isToday ? 'text-cyan-400 font-semibold' : isSoon ? 'text-amber-400' : 'text-gray-500'}`}>
@@ -118,7 +123,7 @@ export default function EconomicCalendar() {
                     </div>
                   </td>
                   <td className="px-4 py-2.5">
-                    <div className="text-gray-100 leading-snug">{e.event}</div>
+                    <div className="text-gray-100 leading-snug group-hover:text-cyan-300">{e.event}</div>
                     <div className={`text-[10px] font-mono mt-0.5 ${ccy}`}>{e.currency}</div>
                   </td>
                   <td className="px-3 py-2.5 text-center">
