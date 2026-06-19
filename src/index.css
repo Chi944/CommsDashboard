@@ -72,3 +72,32 @@ body {
   50%      { opacity: 0.55; }
 }
 .animate-pulse-soft { animation: pulseSoft 2s ease-in-out infinite; }
+
+/* ---- Print / Export-to-PDF styles ---- */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #111827 !important;
+  }
+  /* Hide non-content chrome */
+  nav, footer, .no-print,
+  [data-print-hide],
+  button:not([data-print-show]) {
+    display: none !important;
+  }
+  /* Expand collapsed containers */
+  .max-h-\[80vh\], .max-h-\[calc\(100vh-12rem\)\] {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  /* Ensure cards are readable on white */
+  .rounded-xl, .bg-gray-900\/70 {
+    background: #f9fafb !important;
+    border-color: #e5e7eb !important;
+  }
+  .text-gray-100, .text-gray-50 { color: #111827 !important; }
+  .text-gray-300, .text-gray-400, .text-gray-500 { color: #6b7280 !important; }
+  a { text-decoration: none; }
+  /* Page breaks */
+  .page-break-before { page-break-before: always; }
+}
