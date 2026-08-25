@@ -5,11 +5,12 @@
 //   aiAvailable: boolean
 // }
 //
-// If ANTHROPIC_API_KEY is set as a Vercel env var, the response
-// includes a Claude-generated narrative. Otherwise it returns the
+// If GROQ_API_KEY is set as a Vercel env var, the response
+// includes a Groq-generated narrative. Otherwise it returns the
 // technical signals only (no fabricated narrative).
 
 import { findSymbol, ALLOWED_RANGES } from '../lib/symbols.js';
+import { getGroqModel } from '../lib/groq.js';
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -173,6 +174,7 @@ async function fetchHeadlines(name, limit = 5) {
 async function callLLM({ symbol, technicals, headlines }) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return null;
+  const model = getGroqModel();
 
   const headlineText = headlines.length
     ? headlines.map((h, i) => `${i + 1}. "${h.title}" — ${h.source}`).join('\n')
@@ -203,7 +205,7 @@ OUTLOOK: A qualitative directional view (constructive / cautious / neutral / mix
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
+      model,
       temperature: 0.35,
       max_tokens: 700,
       messages: [
@@ -232,7 +234,7 @@ OUTLOOK: A qualitative directional view (constructive / cautious / neutral / mix
     catalysts: sect('CATALYSTS'),
     risks:     sect('RISKS'),
     outlook:   sect('OUTLOOK'),
-    model: 'llama-3.3-70b-versatile (Groq)',
+    model: `${model} (Groq)`,
   };
 }
 

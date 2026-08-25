@@ -3,7 +3,7 @@
 Live multi-asset dashboard: ~190 stocks across all major sectors, all
 major crypto, commodities futures, macro indices, and 40+ FX
 currencies — with real-time news per asset and an optional
-**AI-generated analysis** panel powered by Claude.
+**AI-generated analysis** panel powered by Groq.
 
 **Live:** https://comms-dashboard-navy.vercel.app/
 
@@ -29,7 +29,8 @@ Add in **Vercel → Project → Settings → Environment Variables** (or `.env.l
 
 | Variable | Required for | Notes |
 | -------- | ------------ | ----- |
-| `GROQ_API_KEY` | AI analysis panel | [Groq console](https://console.groq.com/) — `llama-3.3-70b-versatile` |
+| `GROQ_API_KEY` | AI briefing and analysis | [Groq console](https://console.groq.com/) |
+| `GROQ_MODEL` | Groq model selection | Optional; defaults to `openai/gpt-oss-120b` |
 | `ALPHA_VANTAGE_API_KEY` | Commodities (v2) | [Alpha Vantage](https://www.alphavantage.co/support/#api-key) — free tier 25 req/day |
 | `EIA_API_KEY` | Energy (v2) | [EIA Open Data](https://www.eia.gov/opendata/register.php) |
 | `COINGECKO_API_KEY` | Crypto (v2) | Optional; [CoinGecko API](https://www.coingecko.com/en/api/pricing) |
