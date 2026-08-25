@@ -53,10 +53,10 @@ See [docs/commodities-v2-api-spec.md](docs/commodities-v2-api-spec.md) for archi
 | `GET /api/prices` | Batched Yahoo daily quotes and history for the full catalogue |
 | `GET /api/market/snapshot` | CoinGecko (live) + cached Alpha Vantage + EIA |
 | `GET /api/market/refresh` | Cron: refresh AV + EIA cache (Bearer `CRON_SECRET`) |
-| `GET /api/briefing` | Cached, quota-protected AI market briefing |
+| `GET /api/briefing` | Date-partitioned, quota-protected AI briefing grounded in movers, headline sentiment, and Fear & Greed |
 | `GET /api/analysis?ticker=NVDA` | Cached, quota-protected technical and AI analysis |
 
-Cron schedule: 06:00 and 18:00 UTC (`vercel.json`).
+Market-provider cron schedule: 06:00 and 18:00 UTC (`vercel.json`). The production AI smoke runs daily at 12:17 UTC, forces a fresh three-paragraph briefing, and verifies that its market date and sentiment evidence are current.
 
 ## Data trust and resilience
 
@@ -64,8 +64,9 @@ Cron schedule: 06:00 and 18:00 UTC (`vercel.json`).
 - Alpha Vantage overlays only the daily-supported WTI (`CL`) and Brent (`BZ`) series. Copper (`HG`), wheat (`ZW`), and corn (`ZC`) stay on Yahoo because Alpha Vantage publishes incompatible global-price series at slower cadences.
 - EIA Henry Hub remains a daily observation series even though EIA publishes it weekly; its observation-age allowance is 12 days to cover publication lag and holidays.
 - Yahoo symbols are fetched in 20-symbol batches, cutting the normal price refresh to 14 upstream requests for all 268 assets.
-- The UI reports `LIVE`, `DEGRADED`, or `STALE` from freshness, coverage, and provider errors. Mock fallback rows remain visible but are excluded from movers, heatmaps, and alerts.
+- The UI reports `LIVE`, `DEGRADED`, or `STALE` from the effective displayed coverage. A complete fresh Yahoo feed keeps the dashboard live when an optional provider overlay is stale; stale overlays are rejected rather than shown. Mock fallback rows remain visible but are excluded from movers, heatmaps, and alerts.
 - Provider requests time out and partial failures preserve usable or last-known-good data.
+- Briefings use a UTC market-date cache partition and preserve their true generation/input timestamps. Stale or future-dated sentiment is rejected, and every paragraph must cite validated mover and sentiment evidence before it can be cached. The Refresh button uses a stable, quota-protected no-store route to retrieve the newest shared briefing without serving an older edge-cached response.
 - AI calls use distributed semantic caching, cross-instance generation locks, atomic per-client quotas, safe client errors, structured server logs, and a scheduled forced-generation production smoke test. Vercel fails closed if its Redis guard is unavailable.
 
 ## Verify

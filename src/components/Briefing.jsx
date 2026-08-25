@@ -1,5 +1,9 @@
-import React, { useEffect, useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { readDashboardJson } from '../lib/apiClient.js';
+
+const utcDay = () => new Date().toISOString().slice(0, 10);
+const STALE_DAY_RETRY_MS = 60_000;
+const MAX_STALE_DAY_RETRY_MS = 15 * 60_000;
 
 export default function Briefing() {
   const [data, setData] = useState(null);
@@ -7,26 +11,108 @@ export default function Briefing() {
   const [err, setErr] = useState(null);
   const [open, setOpen] = useState(true);
   const [requestVersion, setRequestVersion] = useState(0);
+  const acceptedMarketDayRef = useRef(null);
+  const requestedMarketDayRef = useRef(null);
+  const staleDayRetryRef = useRef(null);
+  const staleDayRetryAttemptRef = useRef(0);
+  const staleDayRetryDateRef = useRef(null);
   const detailsId = useId();
+
+  const scheduleDailyRetry = (delayOverride = null) => {
+    if (staleDayRetryRef.current != null) return;
+    const currentDay = utcDay();
+    if (staleDayRetryDateRef.current !== currentDay) {
+      staleDayRetryDateRef.current = currentDay;
+      staleDayRetryAttemptRef.current = 0;
+    }
+    const delay = delayOverride ?? Math.min(
+      STALE_DAY_RETRY_MS * (2 ** staleDayRetryAttemptRef.current),
+      MAX_STALE_DAY_RETRY_MS,
+    );
+    staleDayRetryAttemptRef.current += 1;
+    staleDayRetryRef.current = window.setTimeout(() => {
+      staleDayRetryRef.current = null;
+      requestedMarketDayRef.current = utcDay();
+      setRequestVersion((version) => version + 1);
+    }, delay);
+  };
 
   useEffect(() => {
     let cancelled = false;
+    const requestedDay = utcDay();
+    requestedMarketDayRef.current = requestedDay;
     setLoading(true);
     setErr(null);
-    fetch('/api/briefing')
+    const url = requestVersion > 0 ? '/api/briefing?refresh=1' : '/api/briefing';
+    fetch(url)
       .then(readDashboardJson)
       .then((j) => {
         if (cancelled) return;
         setData(j);
         setLoading(false);
+        requestedMarketDayRef.current = null;
+        const currentDay = utcDay();
+        if (j?.briefing?.marketDate === currentDay) {
+          acceptedMarketDayRef.current = currentDay;
+          window.clearTimeout(staleDayRetryRef.current);
+          staleDayRetryRef.current = null;
+          staleDayRetryAttemptRef.current = 0;
+          staleDayRetryDateRef.current = currentDay;
+        } else if (j?.briefing?.marketDate) {
+          if (requestVersion === 0) scheduleDailyRetry(0);
+          else scheduleDailyRetry();
+        } else if (j?.aiStatus?.retryable === true) {
+          scheduleDailyRetry();
+        }
       })
       .catch((e) => {
         if (cancelled) return;
         setErr(String(e?.message || e));
         setLoading(false);
+        if (requestedMarketDayRef.current === requestedDay) {
+          requestedMarketDayRef.current = null;
+        }
+        if (acceptedMarketDayRef.current !== utcDay()) scheduleDailyRetry();
       });
     return () => { cancelled = true; };
   }, [requestVersion]);
+
+  useEffect(() => {
+    let dayBoundaryTimer;
+    const refreshForNewDay = () => {
+      const currentDay = utcDay();
+      if (currentDay === acceptedMarketDayRef.current
+        || currentDay === requestedMarketDayRef.current) return;
+      requestedMarketDayRef.current = currentDay;
+      setRequestVersion((version) => version + 1);
+    };
+    const scheduleDayBoundary = () => {
+      const now = new Date();
+      const nextDayMs = Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() + 1,
+        0, 0, 1,
+      );
+      dayBoundaryTimer = window.setTimeout(() => {
+        refreshForNewDay();
+        scheduleDayBoundary();
+      }, Math.max(1_000, nextDayMs - now.getTime()));
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshForNewDay();
+    };
+
+    window.addEventListener('focus', refreshForNewDay);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    scheduleDayBoundary();
+    return () => {
+      window.clearTimeout(dayBoundaryTimer);
+      window.clearTimeout(staleDayRetryRef.current);
+      window.removeEventListener('focus', refreshForNewDay);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
 
   const aiMessage = data?.aiError || data?.error?.message || data?.aiStatus?.message;
   const briefingText = typeof data?.briefing?.text === 'string'
@@ -60,7 +146,14 @@ export default function Briefing() {
         </button>
         <button
           type="button"
-          onClick={() => setRequestVersion((version) => version + 1)}
+          onClick={() => {
+            window.clearTimeout(staleDayRetryRef.current);
+            staleDayRetryRef.current = null;
+            staleDayRetryAttemptRef.current = 0;
+            staleDayRetryDateRef.current = utcDay();
+            requestedMarketDayRef.current = utcDay();
+            setRequestVersion((version) => version + 1);
+          }}
           disabled={loading}
           aria-label="Refresh market briefing"
           className="mr-4 sm:mr-5 shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900 text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50"

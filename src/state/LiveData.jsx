@@ -345,15 +345,20 @@ export function LiveDataProvider({ children }) {
     }),
     [clockTick, v2Counts, v2FetchFailed, v2FetchedAt, v2Partial],
   );
-  const dataMode = USE_MARKET_V2 ? combineDataModes(yahooDataMode, v2DataMode) : yahooDataMode;
+  const supplementalFallbackCovered = yahooDataMode === 'LIVE' && v2DataMode !== 'LIVE';
+  const dataMode = USE_MARKET_V2
+    ? combineDataModes(yahooDataMode, v2DataMode, {
+      supplementalFallbackCovered,
+    })
+    : yahooDataMode;
   const pricesLive = yahooDataMode === 'LIVE';
 
   const marketUpdatedLabel = useMemo(() => {
-    const iso = USE_MARKET_V2 ? v2FetchedAt : pricesUpdatedAt;
+    const iso = USE_MARKET_V2 && !supplementalFallbackCovered ? v2FetchedAt : pricesUpdatedAt;
     const s = secondsAgo(iso);
     if (s == null) return null;
     return `updated ${s}s ago`;
-  }, [v2FetchedAt, pricesUpdatedAt, clockTick]);
+  }, [v2FetchedAt, pricesUpdatedAt, clockTick, supplementalFallbackCovered]);
 
   const resolveTickerAssetFn = useCallback(
     (asset) => resolveTickerAsset(asset, v2ByTicker, USE_MARKET_V2),

@@ -118,7 +118,8 @@ export function dataModeFromState({
   return 'LIVE';
 }
 
-export function combineDataModes(first, second) {
+export function combineDataModes(first, second, options = {}) {
+  if (first === 'LIVE' && options.supplementalFallbackCovered) return 'LIVE';
   if (first === 'LIVE' && second === 'LIVE') return 'LIVE';
   if (first === 'STALE' && second === 'STALE') return 'STALE';
   return 'DEGRADED';

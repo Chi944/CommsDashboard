@@ -259,6 +259,9 @@ test('a parseable V2 timestamp is not trusted without validated freshness', () =
 test('combined provider health cannot report LIVE when either required feed is degraded', () => {
   assert.equal(marketDisplay.combineDataModes?.('LIVE', 'LIVE'), 'LIVE');
   assert.equal(marketDisplay.combineDataModes?.('LIVE', 'DEGRADED'), 'DEGRADED');
+  assert.equal(marketDisplay.combineDataModes?.('LIVE', 'DEGRADED', {
+    supplementalFallbackCovered: true,
+  }), 'LIVE');
   assert.equal(marketDisplay.combineDataModes?.('STALE', 'LIVE'), 'DEGRADED');
   assert.equal(marketDisplay.combineDataModes?.('STALE', 'STALE'), 'STALE');
 });
