@@ -561,12 +561,14 @@ test('uses only trusted deployment origins for internal briefing data requests',
     GROQ_API_KEY: process.env.GROQ_API_KEY,
     VERCEL_URL: process.env.VERCEL_URL,
     VERCEL_PROJECT_PRODUCTION_URL: process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    VERCEL_ENV: process.env.VERCEL_ENV,
     PORT: process.env.PORT,
   };
   const originalFetch = globalThis.fetch;
   delete process.env.GROQ_API_KEY;
   delete process.env.VERCEL_URL;
   delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  delete process.env.VERCEL_ENV;
   delete process.env.PORT;
   const targets = [];
   globalThis.fetch = async (url) => {
@@ -589,11 +591,18 @@ test('uses only trusted deployment origins for internal briefing data requests',
       'x-forwarded-proto': 'http',
     }), createResponse());
 
+    process.env.VERCEL_ENV = 'production';
+    process.env.VERCEL_URL = 'protected-deployment.vercel.app';
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = 'comms-dashboard-navy.vercel.app';
+    await briefingHandler(createRequest('203.0.113.25'), createResponse());
+
     assert.deepEqual(targets, [
       'http://127.0.0.1:3000/api/prices',
       'http://127.0.0.1:3000/api/news',
       'https://trusted-deployment.vercel.app/api/prices',
       'https://trusted-deployment.vercel.app/api/news',
+      'https://comms-dashboard-navy.vercel.app/api/prices',
+      'https://comms-dashboard-navy.vercel.app/api/news',
     ]);
   } finally {
     globalThis.fetch = originalFetch;
