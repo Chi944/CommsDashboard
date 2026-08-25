@@ -6,11 +6,14 @@ import {
 import { CURRENCY_META, CURRENCY_NO_DECIMAL } from '../../lib/symbols.js';
 import { useLocalStorage } from '../utils/useLocalStorage.js';
 import {
+  combineDataModes,
   dataModeFromState,
+  mergeYahooPriceRows,
   secondsAgo,
   resolveHeatmapAsset,
   resolveTablePrice,
   resolveTickerAsset,
+  trustedMarketRows,
 } from '../lib/marketDisplay.js';
 
 const USE_MARKET_V2 = import.meta.env.VITE_USE_LIVE_DATA === 'true';
@@ -19,6 +22,7 @@ const MARKET_V2_URL = '/api/market/snapshot';
 const PRICE_INTERVAL_MS = 60_000;
 const NEWS_INTERVAL_MS = 5 * 60_000;
 const CCY_KEY = 'comms.displayCurrency';
+const INITIAL_COMMODITIES = mergeYahooPriceRows(fallbackCommodities, { commodities: [] });
 
 const SEVERITY_RULES = [
   { tier: 'CRITICAL', keywords: ['attack', 'missile', 'strike', 'explosion', 'sink', 'casualty', 'killed', 'fire', 'crash'] },
@@ -38,14 +42,19 @@ const Ctx = createContext(null);
 export const useLiveData = () => useContext(Ctx);
 
 export function LiveDataProvider({ children }) {
-  const [commodities, setCommodities] = useState(fallbackCommodities);
+  const [commodities, setCommodities] = useState(INITIAL_COMMODITIES);
   const [intel, setIntel] = useState(fallbackIntel);
 
-  const [pricesLive, setPricesLive] = useState(false);
+  const [pricesPartial, setPricesPartial] = useState(true);
+  const [pricesFetchFailed, setPricesFetchFailed] = useState(false);
+  const [priceCounts, setPriceCounts] = useState({ received: 0, stale: 0 });
   const [v2ByTicker, setV2ByTicker] = useState({});
   const [marketVolumes, setMarketVolumes] = useState({});
   const [v2FetchedAt, setV2FetchedAt] = useState(null);
   const [v2StaleProviders, setV2StaleProviders] = useState([]);
+  const [v2Partial, setV2Partial] = useState(true);
+  const [v2FetchFailed, setV2FetchFailed] = useState(false);
+  const [v2Counts, setV2Counts] = useState({ received: 0, stale: 0 });
   const [marketRefreshing, setMarketRefreshing] = useState(false);
   const [clockTick, setClockTick] = useState(0);
   const [newsLive, setNewsLive] = useState(false);
@@ -148,19 +157,21 @@ export function LiveDataProvider({ children }) {
 
   const applyYahooPrices = useCallback((j) => {
     if (!j?.ok || !Array.isArray(j.commodities) || !j.commodities.length) return null;
-    const liveByTicker = Object.fromEntries(j.commodities.map((c) => [c.ticker, c]));
-    const merged = fallbackCommodities.map((m) =>
-      liveByTicker[m.ticker] ? { ...m, ...liveByTicker[m.ticker] } : m
-    );
+    const merged = mergeYahooPriceRows(fallbackCommodities, j);
+    const trusted = trustedMarketRows(merged);
+    const received = Number(j.counts?.received ?? j.commodities.length);
+    const stale = Number(j.counts?.stale ?? j.commodities.filter((row) => row.stale).length);
     setCommodities(merged);
     setPricesUpdatedAt(j.fetchedAt);
-    setPricesLive(true);
-    return merged;
+    setPricesPartial(Boolean(j.partial) || received < fallbackCommodities.length);
+    setPricesFetchFailed(false);
+    setPriceCounts({ received, stale });
+    return trusted;
   }, []);
 
   const runAlertEvaluation = useCallback((merged) => {
     const prev = lastPriceRef.current;
-    const next = {};
+    const next = { ...prev };
     const newlyTriggered = [];
     for (const c of merged) next[c.ticker] = c.price;
 
@@ -215,6 +226,12 @@ export function LiveDataProvider({ children }) {
     setV2ByTicker(Object.fromEntries(rows.map((c) => [c.ticker, c])));
     setV2FetchedAt(j.fetchedAt);
     setV2StaleProviders(j.staleProviders || []);
+    setV2Partial(Boolean(j.partial) || Boolean(j.staleProviders?.length));
+    setV2FetchFailed(false);
+    setV2Counts({
+      received: rows.length,
+      stale: rows.filter((row) => row.stale).length,
+    });
     if (j.marketVolumes && typeof j.marketVolumes === 'object') {
       setMarketVolumes(j.marketVolumes);
     }
@@ -225,45 +242,52 @@ export function LiveDataProvider({ children }) {
     const r = await fetch(YAHOO_PRICES_URL, { cache: 'no-store' });
     if (!r.ok) throw new Error(`yahoo ${r.status}`);
     const j = await r.json();
-    const merged = applyYahooPrices(j);
-    if (merged) runAlertEvaluation(merged);
+    const trusted = applyYahooPrices(j);
+    if (!trusted) throw new Error('Yahoo payload has no usable rows');
+    runAlertEvaluation(trusted);
     return j;
   }, [applyYahooPrices, runAlertEvaluation]);
+
+  const fetchLiveMarketFeeds = useCallback(async () => {
+    const [yahooResult, v2Result] = await Promise.allSettled([
+      fetchYahooPrices(),
+      fetchV2Snapshot(),
+    ]);
+    if (yahooResult.status === 'rejected') setPricesFetchFailed(true);
+    if (v2Result.status === 'rejected') setV2FetchFailed(true);
+  }, [fetchYahooPrices, fetchV2Snapshot]);
 
   const fetchPrices = useCallback(async () => {
     try {
       setPricesLoading(true);
       if (USE_MARKET_V2) {
-        await fetchYahooPrices();
-        try {
-          await fetchV2Snapshot();
-        } catch {
-          /* keep prior v2 snapshot */
-        }
+        await fetchLiveMarketFeeds();
       } else {
         await fetchYahooPrices();
       }
     } catch {
+      setPricesFetchFailed(true);
       /* keep last good state */
     } finally {
       setPricesLoading(false);
     }
-  }, [fetchYahooPrices, fetchV2Snapshot]);
+  }, [fetchLiveMarketFeeds, fetchYahooPrices]);
 
   const refreshMarketSnapshot = useCallback(async () => {
-    if (!USE_MARKET_V2) {
-      await fetchYahooPrices();
-      return;
-    }
     try {
       setMarketRefreshing(true);
-      await fetchV2Snapshot();
+      if (USE_MARKET_V2) {
+        await fetchLiveMarketFeeds();
+      } else {
+        await fetchYahooPrices();
+      }
     } catch {
+      setPricesFetchFailed(true);
       /* keep prior v2 snapshot */
     } finally {
       setMarketRefreshing(false);
     }
-  }, [fetchV2Snapshot, fetchYahooPrices]);
+  }, [fetchLiveMarketFeeds, fetchYahooPrices]);
 
   const fetchNews = useCallback(async () => {
     try {
@@ -298,14 +322,31 @@ export function LiveDataProvider({ children }) {
 
   const refresh = useCallback(() => { fetchPrices(); fetchNews(); }, [fetchPrices, fetchNews]);
 
-  const dataMode = useMemo(
+  const yahooDataMode = useMemo(
     () => dataModeFromState({
-      useV2: USE_MARKET_V2,
-      fetchedAt: USE_MARKET_V2 ? v2FetchedAt : pricesUpdatedAt,
-      loading: pricesLoading,
+      fetchedAt: pricesUpdatedAt,
+      hasLiveRows: priceCounts.received > priceCounts.stale,
+      liveRowCount: priceCounts.received,
+      staleRowCount: priceCounts.stale,
+      partial: pricesPartial,
+      failed: pricesFetchFailed,
     }),
-    [v2FetchedAt, pricesLoading, pricesUpdatedAt],
+    [clockTick, priceCounts, pricesFetchFailed, pricesPartial, pricesUpdatedAt],
   );
+
+  const v2DataMode = useMemo(
+    () => dataModeFromState({
+      fetchedAt: v2FetchedAt,
+      hasLiveRows: v2Counts.received > v2Counts.stale,
+      liveRowCount: v2Counts.received,
+      staleRowCount: v2Counts.stale,
+      partial: v2Partial,
+      failed: v2FetchFailed,
+    }),
+    [clockTick, v2Counts, v2FetchFailed, v2FetchedAt, v2Partial],
+  );
+  const dataMode = USE_MARKET_V2 ? combineDataModes(yahooDataMode, v2DataMode) : yahooDataMode;
+  const pricesLive = yahooDataMode === 'LIVE';
 
   const marketUpdatedLabel = useMemo(() => {
     const iso = USE_MARKET_V2 ? v2FetchedAt : pricesUpdatedAt;
@@ -438,8 +479,14 @@ export function LiveDataProvider({ children }) {
     return Math.abs(c.changePct || 0) * (c.price || 1);
   }, [marketVolumes]);
 
+  const rankingCommodities = useMemo(
+    () => trustedMarketRows(commodities),
+    [commodities],
+  );
+
   const value = {
     commodities,
+    rankingCommodities,
     intel,
     notifications,
     pricesLive,

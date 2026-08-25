@@ -4,17 +4,67 @@ import {
   isV2HeatmapCategory,
 } from '../../lib/market/symbolMaps.js';
 
-/** Overlay v2 spot fields onto a commodity row (price / change only). */
+/** Overlay a trusted V2 spot observation while retaining Yahoo session change. */
 export function overlayV2Fields(base, v2Row) {
   if (!base || !v2Row) return base;
+  const hasTrustedYahooBaseline = isTrustedMarketRow(base);
+  const observedAtMs = typeof v2Row.asOf === 'string' ? Date.parse(v2Row.asOf) : Number.NaN;
+  const hasObservationTime = Number.isFinite(observedAtMs);
+  const v2Stale = v2Row.stale !== false || !hasObservationTime;
+  if (hasTrustedYahooBaseline && v2Stale) return base;
   return {
     ...base,
     price: v2Row.price,
-    changePct: v2Row.changePct,
-    changeAbs: v2Row.changeAbs,
+    ...(!hasTrustedYahooBaseline ? { changePct: null, changeAbs: null } : {}),
+    source: v2Row.source,
+    asOf: hasObservationTime ? new Date(observedAtMs).toISOString() : null,
+    stale: v2Stale,
+    isLive: hasTrustedYahooBaseline && !v2Stale,
     marketSource: v2Row.source,
-    marketStale: Boolean(v2Row.stale),
+    marketStale: v2Stale,
   };
+}
+
+/** Merge a partial Yahoo payload without disguising catalogue fallbacks as live rows. */
+export function mergeYahooPriceRows(fallbackRows, payload) {
+  const liveRows = Array.isArray(payload?.commodities) ? payload.commodities : [];
+  const liveByTicker = new Map(liveRows.map((row) => [row.ticker, row]));
+  return fallbackRows.map((fallback) => {
+    const live = liveByTicker.get(fallback.ticker);
+    if (!live) {
+      return {
+        ...fallback,
+        source: 'mock',
+        asOf: null,
+        stale: true,
+        isLive: false,
+      };
+    }
+    return {
+      ...fallback,
+      ...live,
+      source: live.source || payload?.source || 'yahoo',
+      asOf: live.asOf || null,
+      stale: Boolean(live.stale),
+      isLive: true,
+    };
+  });
+}
+
+/** Rows safe to use for rankings, market signals, and price alerts. */
+export function isTrustedMarketRow(row) {
+  return Boolean(
+    row
+    && row.source
+    && row.source !== 'mock'
+    && row.source !== 'fallback'
+    && row.isLive !== false
+    && row.stale !== true,
+  );
+}
+
+export function trustedMarketRows(rows) {
+  return (rows || []).filter(isTrustedMarketRow);
 }
 
 /** Ticker strip: crypto only from v2. */
@@ -47,13 +97,35 @@ export function resolveTablePrice(asset, v2ByTicker, useV2) {
   return asset;
 }
 
-/** LIVE/STALE from snapshot age only (30 min), not AV cache gaps. */
-export function dataModeFromState({ useV2, fetchedAt, loading }) {
-  if (!useV2) return 'MOCK';
-  if (loading && !fetchedAt) return 'MOCK';
+/** Global market health: freshness plus coverage/provenance, for Yahoo and v2. */
+export function dataModeFromState({
+  fetchedAt,
+  hasLiveRows,
+  liveRowCount,
+  staleRowCount = 0,
+  partial = false,
+  failed = false,
+}) {
   if (!fetchedAt) return 'STALE';
-  const ageMs = Date.now() - new Date(fetchedAt).getTime();
-  return ageMs > 30 * 60 * 1000 ? 'STALE' : 'LIVE';
+  const fetchedMs = new Date(fetchedAt).getTime();
+  const ageMs = Date.now() - fetchedMs;
+  if (!Number.isFinite(fetchedMs) || ageMs > 30 * 60 * 1000) return 'STALE';
+
+  const hasRows = hasLiveRows ?? (liveRowCount == null ? true : liveRowCount > 0);
+  if (!hasRows) return 'STALE';
+  if (liveRowCount > 0 && staleRowCount >= liveRowCount) return 'STALE';
+  if (partial || failed || staleRowCount > 0) return 'DEGRADED';
+  return 'LIVE';
+}
+
+export function combineDataModes(first, second) {
+  if (first === 'LIVE' && second === 'LIVE') return 'LIVE';
+  if (first === 'STALE' && second === 'STALE') return 'STALE';
+  return 'DEGRADED';
+}
+
+export function dataModeLabel(mode) {
+  return ({ LIVE: 'live', DEGRADED: 'degraded', STALE: 'stale', MOCK: 'mock' })[mode] || 'unknown';
 }
 
 export function secondsAgo(iso) {

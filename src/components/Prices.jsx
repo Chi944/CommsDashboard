@@ -9,6 +9,7 @@ import Sparkline from './Sparkline.jsx';
 import AnalysisPanel from './AnalysisPanel.jsx';
 import AlertButton from './AlertButton.jsx';
 import { downloadCSV } from '../utils/csv.js';
+import { dataModeLabel, isTrustedMarketRow } from '../lib/marketDisplay.js';
 
 // Quick filter pills (always visible).
 const PRIMARY_CATS = ['ALL', 'TRENDING', 'WATCHLIST'];
@@ -30,7 +31,9 @@ const API_RANGE = { '1D': '1d', '7D': '5d', '30D': '1mo', '90D': '3mo', 'YTD': '
 const COMPARE_COLORS = ['#22d3ee', '#a78bfa', '#f472b6', '#fbbf24', '#34d399'];
 const STORAGE_KEY = 'comms.watchlist.v2';
 
-const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+export const fmtPctChange = (n) => (
+  Number.isFinite(n) ? `${n >= 0 ? '+' : ''}${n.toFixed(2)}%` : '—'
+);
 
 // RSI (Wilder, period 14) from an array of prices + parallel dates array.
 function computeRSI(prices, dates, period = 14) {
@@ -88,13 +91,16 @@ const tileBg = (pct) => {
 
 // ---------- Heatmap ----------
 const Heatmap = ({ items, selectedTicker, onSelect, fmt, resolveHeatmapAsset }) => {
-  if (items.length === 0) {
+  const resolvedItems = items
+    .map((item) => resolveHeatmapAsset ? resolveHeatmapAsset(item) : item)
+    .filter(isTrustedMarketRow);
+  if (resolvedItems.length === 0) {
     return <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-8 text-center text-sm text-gray-500">No items.</div>;
   }
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 xl:grid-cols-3 gap-2">
-      {items.map((c) => {
-        const display = resolveHeatmapAsset ? resolveHeatmapAsset(c) : c;
+      {resolvedItems.map((display) => {
+        const c = display;
         const up = display.changePct >= 0;
         const sel = c.ticker === selectedTicker;
         return (
@@ -236,7 +242,7 @@ const AssetNews = ({ asset }) => {
 // ---------- Main ----------
 export default function Prices({ initialTicker, onTickerConsumed } = {}) {
   const {
-    commodities: rawCommodities, pricesLive, pricesUpdatedAt, refresh,
+    commodities: rawCommodities, rankingCommodities, dataMode, pricesUpdatedAt, refresh,
     formatAssetPrice, dashboardCurrency, resolveHeatmapAsset, resolveTablePrice,
     watchlistNames, activeWatchlist, activeWatchSet,
     setActiveList, createList, toggleWatch,
@@ -246,6 +252,10 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
   const commodities = useMemo(
     () => rawCommodities.filter((c) => c.category !== 'FX'),
     [rawCommodities]
+  );
+  const rankingAssets = useMemo(
+    () => rankingCommodities.filter((c) => c.category !== 'FX' && typeof c.changePct === 'number'),
+    [rankingCommodities],
   );
 
   const [cat, setCat] = useState('ALL');
@@ -325,12 +335,12 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
     if (cat === 'ALL') return commodities;
     if (cat === 'WATCHLIST') return commodities.filter((c) => watchlist.has(c.ticker));
     if (cat === 'TRENDING') {
-      return [...commodities]
+      return [...rankingAssets]
         .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
         .slice(0, 24);
     }
     return commodities.filter((c) => c.category === cat);
-  }, [cat, query, watchlist, commodities]);
+  }, [cat, query, watchlist, commodities, rankingAssets]);
 
   const sel = useMemo(
     () => commodities.find((c) => c.ticker === selected) || commodities[0],
@@ -472,9 +482,9 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
           </h2>
           <div className="text-xs sm:text-sm text-gray-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="hidden sm:inline">{commodities.length} assets · displayed in {dashboardCurrency}</span>
-            <span className={`text-[11px] flex items-center gap-1.5 ${pricesLive ? 'text-emerald-400' : 'text-amber-400'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
-              {pricesLive ? 'live' : 'fetching'}
+            <span className={`text-[11px] flex items-center gap-1.5 ${dataMode === 'LIVE' ? 'text-emerald-400' : 'text-amber-400'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${dataMode === 'LIVE' ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
+              {dataModeLabel(dataMode)}
             </span>
             {pricesUpdatedAt && (
               <span className="text-[10px] text-gray-500 font-mono">
@@ -776,7 +786,9 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
                   </div>
                 )}
                 {filtered.map((c) => {
-                  const up = c.changePct >= 0;
+                  const display = resolveTablePrice(c);
+                  const hasSessionChange = Number.isFinite(display.changePct);
+                  const up = hasSessionChange ? display.changePct >= 0 : null;
                   const isSel = c.ticker === selected;
                   const watched = watchlist.has(c.ticker);
                   const inCompare = compareSet.has(c.ticker);
@@ -845,13 +857,16 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
                       </button>
                       <Sparkline
                         data={c.history.map((h) => h.price)}
-                        color={up ? '#22c55e' : '#ef4444'}
+                        color={up === null ? '#9ca3af' : up ? '#22c55e' : '#ef4444'}
                         width={60} height={20}
                       />
                       <div className="text-right w-24">
                         <div className="font-mono text-xs text-gray-100">{fmtTablePrice(c)}</div>
-                        <div className={`font-mono text-[10px] ${up ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {fmtPctChange(resolveTablePrice(c).changePct)}
+                        <div
+                          aria-label={`${c.ticker} session change`}
+                          className={`font-mono text-[10px] ${up === null ? 'text-gray-400' : up ? 'text-emerald-400' : 'text-red-400'}`}
+                        >
+                          {fmtPctChange(display.changePct)}
                         </div>
                       </div>
                     </div>

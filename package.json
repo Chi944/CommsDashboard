@@ -3,27 +3,36 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test",
+    "test": "npm run test:unit && npm run test:ui",
+    "test:unit": "node --test",
+    "test:ui": "vitest run test/live-data.test.jsx test/ui-accessibility.test.jsx",
+    "smoke:ai": "node scripts/smoke-ai.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@upstash/redis": "^1.38.2",
     "@vercel/analytics": "^1.6.1",
-    "@vercel/blob": "^2.4.0",
+    "@vercel/blob": "^2.8.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.12.7"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.1",
-    "autoprefixer": "^10.4.19",
-    "postcss": "^8.4.39",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.6",
+    "@vitejs/plugin-react": "^6.1.0",
+    "autoprefixer": "^10.5.4",
+    "jsdom": "^24.1.3",
+    "postcss": "^8.5.26",
     "tailwindcss": "^3.4.7",
-    "vite": "^5.3.5"
-  },
-  "optionalDependencies": {
-    "@vercel/kv": "^3.0.0"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
   }
 }

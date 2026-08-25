@@ -3,6 +3,7 @@ import React from 'react';
 /** Vercel dashboard tokens — wiki/tools/awesome-design-md.md */
 const STYLES = {
   LIVE: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400',
+  DEGRADED: 'border-amber-500/50 bg-amber-500/10 text-amber-400',
   STALE: 'border-amber-500/50 bg-amber-500/10 text-amber-400',
   MOCK: 'border-[#333] bg-[#0a0a0a] text-[#737373]',
 };
@@ -23,7 +24,7 @@ export default function DataModeBadge({
       >
         <span
           className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-            mode === 'LIVE' ? 'bg-emerald-400 animate-pulse-soft' : mode === 'STALE' ? 'bg-amber-400' : 'bg-[#525252]'
+            mode === 'LIVE' ? 'bg-emerald-400 animate-pulse-soft' : (mode === 'DEGRADED' || mode === 'STALE') ? 'bg-amber-400' : 'bg-[#525252]'
           }`}
         />
         {mode}

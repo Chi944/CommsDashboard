@@ -1,21 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
+import { readDashboardJson } from '../lib/apiClient.js';
 
 export default function Briefing() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [open, setOpen] = useState(true);
-  const [bumper, setBumper] = useState(0);
+  const [requestVersion, setRequestVersion] = useState(0);
+  const detailsId = useId();
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setErr(null);
-    fetch(`/api/briefing${bumper ? `?_=${bumper}` : ''}`)
-      .then((r) => r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`)))
+    fetch('/api/briefing')
+      .then(readDashboardJson)
       .then((j) => {
         if (cancelled) return;
-        if (!j.ok) throw new Error(j.error || 'failed');
         setData(j);
         setLoading(false);
       })
@@ -25,38 +26,46 @@ export default function Briefing() {
         setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [bumper]);
+  }, [requestVersion]);
+
+  const aiMessage = data?.aiError || data?.error?.message || data?.aiStatus?.message;
 
   return (
     <div className="rounded-xl border border-cyan-700/30 bg-gradient-to-br from-cyan-900/20 via-gray-900/80 to-gray-900/40 overflow-hidden">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between gap-3 px-4 sm:px-5 py-3 text-left hover:bg-white/5 transition-colors"
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-6 h-6 rounded-md bg-gradient-to-br from-cyan-400 to-violet-500 grid place-items-center shadow-glow shrink-0">
-            <span className="text-[10px] font-bold text-gray-950">AI</span>
-          </div>
-          <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-widest text-cyan-300/80">Market Briefing</div>
-            <div className="text-sm text-gray-100 truncate">
-              {loading ? 'Generating today\'s briefing…' : (data?.briefing ? 'Today\'s market in three paragraphs' : 'Briefing')}
+      <div className="w-full flex items-center hover:bg-white/5 transition-colors">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls={detailsId}
+          aria-label={`${open ? 'Collapse' : 'Expand'} market briefing`}
+          className="min-w-0 flex-1 flex items-center justify-between gap-3 pl-4 sm:pl-5 pr-2 py-3 text-left"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-cyan-400 to-violet-500 grid place-items-center shadow-glow shrink-0">
+              <span className="text-[10px] font-bold text-gray-950">AI</span>
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-widest text-cyan-300/80">Market Briefing</div>
+              <div className="text-sm text-gray-100 truncate">
+                {loading ? 'Generating today\'s briefing…' : (data?.briefing ? 'Today\'s market in three paragraphs' : 'Briefing')}
+              </div>
             </div>
           </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={(e) => { e.stopPropagation(); setBumper(Date.now()); }}
-            disabled={loading}
-            className="text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900 text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50"
-          >{loading ? '…' : 'refresh'}</button>
-          <span className="text-gray-500 text-base">{open ? '▾' : '▸'}</span>
-        </div>
-      </button>
+          <span aria-hidden="true" className="text-gray-500 text-base shrink-0">{open ? '▾' : '▸'}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setRequestVersion((version) => version + 1)}
+          disabled={loading}
+          aria-label="Refresh market briefing"
+          className="mr-4 sm:mr-5 shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900 text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50"
+        >{loading ? '…' : 'refresh'}</button>
+      </div>
 
       {open && (
-        <div className="border-t border-gray-800 p-4 sm:p-5 space-y-3">
-          {err && <div className="text-xs text-red-300">Failed: {err}</div>}
+        <div id={detailsId} role="region" aria-label="Market briefing details" className="border-t border-gray-800 p-4 sm:p-5 space-y-3">
+          {err && <div role="alert" className="text-xs text-red-300">Failed: {err}</div>}
 
           {data?.briefing?.text && (
             <div className="text-xs sm:text-sm text-gray-200 leading-relaxed whitespace-pre-line">
@@ -65,8 +74,8 @@ export default function Briefing() {
           )}
 
           {data && !data.briefing && data.aiAvailable && (
-            <div className="text-xs text-amber-300">
-              AI briefing unavailable: {data.aiError || 'unknown'}
+            <div role="status" aria-live="polite" className="text-xs text-amber-300">
+              AI briefing unavailable: {aiMessage || 'Please try again shortly.'}
             </div>
           )}
 
@@ -92,7 +101,7 @@ export default function Briefing() {
           )}
 
           {loading && !data && (
-            <div className="space-y-2">
+            <div role="status" aria-live="polite" aria-label="Loading market briefing" className="space-y-2">
               {[0, 1, 2].map((i) => (
                 <div key={i} className="h-3 rounded bg-gray-800/70 animate-pulse" style={{ width: `${95 - i * 5}%` }} />
               ))}

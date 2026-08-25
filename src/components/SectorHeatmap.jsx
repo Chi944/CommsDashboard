@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { useLiveData } from '../state/LiveData.jsx';
+import { isTrustedMarketRow } from '../lib/marketDisplay.js';
 
 const tileBg = (pct) => {
   const a = Math.min(0.85, Math.max(0.08, Math.abs(pct) / 5));
@@ -23,6 +24,7 @@ export default function SectorHeatmap({ onSelectAsset }) {
     for (const c of commodities) {
       const row = resolveHeatmapAsset(c);
       if (row.category === 'FX' || row.category === 'MACRO') continue;
+      if (!isTrustedMarketRow(row)) continue;
       if (typeof row.changePct !== 'number') continue;
       if (!map[row.category]) map[row.category] = [];
       map[row.category].push(row);

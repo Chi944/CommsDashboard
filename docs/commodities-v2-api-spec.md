@@ -1,9 +1,9 @@
 # Commodities Dashboard v2 — Live API Wiring (Proposal)
 
-**Status:** Spec only — no implementation in this commit  
+**Status:** Historical implementation spec — the feature is now implemented; use the root `README.md` for current operations
 **Live app:** https://comms-dashboard-navy.vercel.app/  
 **Parent context:** Vault `wiki/projects/commodities-dashboard.md`, `commodities-dashboard-v2.md`  
-**Feature flag:** `VITE_USE_LIVE_DATA=true` (mock via `mockData.js` when false)
+**Feature flag:** `VITE_USE_LIVE_DATA=true` (Yahoo baseline plus v2 overlays; Yahoo-only when false)
 
 ---
 
@@ -44,12 +44,9 @@ Base: `https://www.alphavantage.co/query`
 
 | Use case | `function` | Params | Notes |
 |----------|------------|--------|-------|
-| WTI crude | `WTI` | `interval=daily`, `outputsize=compact` | `data` array → last row = spot proxy |
-| Brent | `BRENT` | same | |
-| Natural gas (US) | `NATURAL_GAS` | same | Complement EIA series |
-| Copper | `COPPER` | same | |
-| Aluminum | `ALUMINUM` | same | |
-| Wheat / Corn / Cotton / Sugar / Coffee | `WHEAT`, `CORN`, `COTTON`, `SUGAR`, `COFFEE` | same | Add only symbols present in ticker/heatmap |
+| WTI crude (`CL`) | `WTI` | `interval=daily`, `outputsize=compact` | Wired; `data` array → latest daily spot proxy |
+| Brent (`BZ`) | `BRENT` | same | Wired |
+| Copper / wheat / corn | `COPPER`, `WHEAT`, `CORN` | monthly/quarterly/annual only | **Not wired:** global-price units and cadence do not match `HG`/`ZW`/`ZC` futures; Yahoo stays authoritative |
 | Aggregated refresh (optional) | `ALL_COMMODITIES` | `interval=monthly` | **Not** for ticker; useful for macro chart only |
 
 **Every request:** `apikey=<ALPHA_VANTAGE_API_KEY>`
@@ -68,14 +65,10 @@ Base: `https://api.eia.gov/v2/`
 | Use case | Route | Example facets / params |
 |----------|-------|-------------------------|
 | Petroleum spot / rack prices | `GET /petroleum/pri/spt/data/` | `frequency=daily`, `data[0]=value`, `sort[0][column]=period`, `sort[0][direction]=desc`, `length=2` (for % change), facets for `product`, `area` per [EIA petroleum pri docs](https://www.eia.gov/opendata/documentation.php) |
-| Natural gas summary prices | `GET /natural-gas/pri/sum/data/` | `frequency=weekly` or `monthly`, same `length=2` pattern |
+| Henry Hub spot (wired) | `GET /natural-gas/pri/fut/data/` | `frequency=daily`, `facets[series][]=RNGWHHD`, same sort and `length=2` pattern |
 | STEO / outlook (optional, INTEL) | `GET /steo/data/` | Low priority; monthly series |
 
-**Concrete series to wire first (confirm `series_id` / facets via EIA API browser once app repo is cloned):**
-
-- US retail gasoline proxy (ticker “RBOB” / “Gas” if shown)
-- US diesel / distillate if in mock ticker
-- Henry Hub natural gas ($/MMBtu) — cross-check with AV `NATURAL_GAS` for redundancy; prefer **one** canonical source per symbol in UI
+**Wired series:** `RNGWHHD`, Henry Hub natural-gas spot (`NG`, $/MMBtu). The API returns daily observations, but EIA publishes this series weekly. Keep `frequency=daily` and allow observations up to 12 days old so normal publication lag, weekends, and holidays do not create false staleness.
 
 **Pagination:** use `offset` / `length`; default page size can be large — always request `length=2` for spot + prior period only.
 
@@ -94,9 +87,9 @@ Single consumer for the React app — hides keys and enforces cache headers.
 **Cron strategy (required for Alpha Vantage free tier):**
 
 1. Vercel Cron hits `/api/market/refresh` at 06:00 and 18:00 UTC.
-2. Refresh job calls **at most 8–10** AV `function=` endpoints per run (under 25/day with headroom for manual dev).
+2. Refresh job calls exactly **2** AV `function=` endpoints per run (`WTI`, `BRENT`), or 4 requests/day.
 3. CoinGecko snapshot can run every 5 min (separate, cheaper).
-4. EIA snapshot 1×/hour or piggyback on AV cron.
+4. EIA refresh piggybacks on the twice-daily AV cron; its daily observations publish weekly.
 
 ---
 
@@ -106,7 +99,7 @@ Single consumer for the React app — hides keys and enforces cache headers.
 |----------|------------------|-------------------------------|
 | **CoinGecko** (public) | Dynamic IP throttle; often cited ~10–30 calls/min | BFF: 1 call per snapshot (batch all `ids` in one `simple/price`). Max ~288 calls/day at 5 min polling — use Demo key if throttled. |
 | **CoinGecko** (Demo API key) | ~30 calls/min | Recommended for production ticker. |
-| **Alpha Vantage** (free) | **25 requests/day**, **5 requests/minute** | **≤10 AV calls/day** via cron aggregate; **zero** per-page client calls. Dev: mock or replay `public/data/av-cache.json`. |
+| **Alpha Vantage** (free) | **25 requests/day**, **5 requests/minute** | **4 AV calls/day** via two-series cron refresh; **zero** per-page client calls. Dev: mock or replay `public/data/av-cache.json`. |
 | **EIA** | ~9,000 requests/hour sustained; burst &lt;5 req/sec | 1–3 calls per snapshot refresh; safe to poll hourly. |
 
 **Failure modes:**
@@ -125,7 +118,7 @@ Source of truth today: **`mockData.js`** (single file). Target: **`src/hooks/use
 
 | UI surface | Mock field(s) (typical) | Live source |
 |----------|-------------------------|-------------|
-| Scrolling **ticker** | `tickerItems[].price`, `change`, `changePercent` | CoinGecko (crypto ids), AV (`WTI`, `BRENT`, `COPPER`, …), EIA (gas/distillate as mapped) |
+| Scrolling **ticker** | `tickerItems[].price`, `change`, `changePercent` | CoinGecko (crypto ids), AV (`WTI`, `BRENT`), EIA (`RNGWHHD` Henry Hub spot) |
 | **Sector heatmap** | sector rows with `% change` | Derive from same snapshot where symbol maps; unmapped sectors stay mock |
 | **Top gainers / losers / most active** | sorted lists built from mock | Recompute client-side from snapshot; cap lists at symbols we actually fetch |
 | **PRICES tab** — spot label | latest point in mock series | Last point from AV `compact` or EIA `length=2` |
@@ -136,23 +129,24 @@ Source of truth today: **`mockData.js`** (single file). Target: **`src/hooks/use
 | UI surface | Reason |
 |----------|--------|
 | **Equities** in ticker (e.g. AAPL, NVDA) | Not assigned to CoinGecko/EIA; AV `GLOBAL_QUOTE` blows 25/day quota |
+| **HG / ZW / ZC spot overlay** | AV global-price cadence/units do not match the dashboard futures; Yahoo remains authoritative |
 | **PORTFOLIO** tab positions & P/L | User-specific; no API in scope |
 | **CURRENCY** tab (40+ FX pairs) | No FX provider in scope; optional later AV `CURRENCY_EXCHANGE_RATE` |
 | **Corridor cards** + **SVG map** | Requires Marine Traffic / manual admin — not in three APIs |
 | **Route cost calculator** | Freight model not in APIs |
 | **News / INTEL headlines** | Already live (RSS) per vault audit — do not regress |
-| **AI Market Briefing** | LLM-generated; separate env `ANTHROPIC_API_KEY` if automated |
+| **AI Market Briefing** | LLM-generated; separate server-only `GROQ_API_KEY` |
 | **Alerts panel** (pre-seeded) | User thresholds = Phase 2 feature |
 | **Command palette** metadata | Static |
 
 ### Feature-flag behaviour
 
 ```text
-VITE_USE_LIVE_DATA=false  → 100% mockData.js (current behaviour)
-VITE_USE_LIVE_DATA=true   → snapshot from /api/market/snapshot; per-symbol fallback to mock on missing/stale
+VITE_USE_LIVE_DATA=false  → batched Yahoo /api/prices; explicit mock fallback for missing rows
+VITE_USE_LIVE_DATA=true   → Yahoo baseline + /api/market/snapshot overlay; explicit mock fallback for missing rows
 ```
 
-Show **“LIVE” / “STALE” / “MOCK”** chip on ticker when `lastUpdated` &gt; 15 min or provider error.
+Show **“LIVE” / “DEGRADED” / “STALE”** from freshness, provider health, and symbol coverage. Mock rows never participate in rankings or alerts.
 
 ---
 
@@ -165,6 +159,8 @@ Show **“LIVE” / “STALE” / “MOCK”** chip on ticker when `lastUpdated`
 | CoinGecko Demo | `COINGECKO_API_KEY` | Optional (recommended prod) | https://www.coingecko.com/en/api/pricing |
 | — | `VITE_USE_LIVE_DATA` | Yes (build-time) | `true` / `false` |
 | — | `CRON_SECRET` | Yes if cron refresh | Random string; validate on `/api/market/refresh` |
+| Upstash Redis | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Required for production AI; optional for market-cache redundancy alone | Vercel Marketplace / Upstash |
+| Vercel Blob | `BLOB_STORE_ID` + platform OIDC | Optional | Connect a Blob store to the Vercel project; avoid long-lived read/write tokens |
 
 **Never** expose AV or EIA keys in Vite `VITE_*` client bundles — server routes only.
 
@@ -183,10 +179,10 @@ Show **“LIVE” / “STALE” / “MOCK”** chip on ticker when `lastUpdated`
 
 ## 6. Acceptance criteria
 
-- [ ] With `VITE_USE_LIVE_DATA=true`, crypto + ≥5 commodity/energy symbols show prices within 5% of provider spot (manual spot-check).
+- [ ] With `VITE_USE_LIVE_DATA=true`, crypto plus WTI, Brent, and Henry Hub show provider spot prices; HG, ZW, and ZC remain Yahoo-authoritative.
 - [ ] No Alpha Vantage calls from browser DevTools Network tab on idle page.
 - [ ] Full page reload &lt; 25 AV requests per 24h in production (cron-only).
-- [ ] `VITE_USE_LIVE_DATA=false` matches current deployed mock behaviour.
+- [ ] `VITE_USE_LIVE_DATA=false` returns a complete, fresh Yahoo baseline or explicitly reports degraded coverage.
 - [ ] API keys absent in client bundle (`grep` build output).
 
 ---
@@ -196,11 +192,11 @@ Show **“LIVE” / “STALE” / “MOCK”** chip on ticker when `lastUpdated`
 | Risk | Mitigation |
 |------|------------|
 | AV 25/day unusable for multi-symbol polling | Cron + server cache only |
+| AV global copper/grain series mismatch futures | Limit AV overlays to daily WTI/Brent; retain Yahoo for HG/ZW/ZC |
+| EIA daily Henry Hub observations publish weekly | Keep `frequency=daily`; allow 12 days of observation age |
 | Duplicate WTI/Brent from AV and EIA | Pick one canonical source per symbol in `symbolMaps` |
 | CoinGecko id drift | Central map file; unit test ids resolve |
-| No GitHub repo for comms-dashboard yet | Spec lives in this folder; link repo when created |
-
-**Open blocker:** Application source for https://comms-dashboard-navy.vercel.app/ is not in `Documents/` — need Git remote or Vercel `vercel pull` before code changes.
+| Provider symbol drift | Central symbol catalogue plus live smoke and regression tests |
 
 ---
 

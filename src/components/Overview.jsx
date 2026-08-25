@@ -5,6 +5,7 @@ import Sparkline from './Sparkline.jsx';
 import SectorHeatmap from './SectorHeatmap.jsx';
 import Briefing from './Briefing.jsx';
 import FearGreed from './FearGreed.jsx';
+import { dataModeLabel } from '../lib/marketDisplay.js';
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
 const fmtVolume = (n) => {
@@ -193,7 +194,7 @@ const HeadlinesPreview = ({ intel, newsLive }) => {
 
 export default function Overview({ onSelectAsset }) {
   const {
-    commodities, intel, pricesLive, newsLive,
+    commodities, rankingCommodities, intel, newsLive, dataMode,
     pricesUpdatedAt, refresh,
     formatAssetPrice, dashboardCurrency,
     activityScore, marketVolumes,
@@ -202,8 +203,8 @@ export default function Overview({ onSelectAsset }) {
 
   // Exclude FX from movers/headline rankings.
   const tradable = useMemo(
-    () => commodities.filter((c) => c.category !== 'FX' && typeof c.changePct === 'number'),
-    [commodities]
+    () => rankingCommodities.filter((c) => c.category !== 'FX' && typeof c.changePct === 'number'),
+    [rankingCommodities]
   );
 
   const fmt = (c) => formatAssetPrice(c);
@@ -244,9 +245,9 @@ export default function Overview({ onSelectAsset }) {
         <div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] sm:text-xs uppercase tracking-[0.22em] text-gray-500">
             <span>Live Markets · {dashboardCurrency}</span>
-            <span className={`flex items-center gap-1.5 normal-case tracking-normal text-[11px] ${pricesLive ? 'text-emerald-400' : 'text-amber-400'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
-              {pricesLive ? 'live prices' : 'fetching'}
+            <span className={`flex items-center gap-1.5 normal-case tracking-normal text-[11px] ${dataMode === 'LIVE' ? 'text-emerald-400' : 'text-amber-400'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${dataMode === 'LIVE' ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
+              {dataModeLabel(dataMode)} prices
             </span>
             {pricesUpdatedAt && (
               <span className="normal-case tracking-normal text-[10px] text-gray-500 font-mono">
