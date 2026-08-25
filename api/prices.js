@@ -1,114 +1,88 @@
 // Vercel serverless function: live prices for all tracked assets.
-// Pulls 1-month daily history from Yahoo Finance for sparklines and
-// derives current quote, today's high/low and intraday change.
+// Pulls compact daily history from Yahoo Finance's multi-symbol spark API
+// and derives the daily change from the final two valid closes.
 //
 // GET /api/prices -> { ok, fetchedAt, partial, commodities: [...] }
 
 import { SYMBOLS } from '../lib/symbols.js';
-
-const round2 = (n) => Math.round(n * 100) / 100;
-const round4 = (n) => Math.round(n * 10000) / 10000;
-
-async function fetchOne(s) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s.yahoo)}?interval=1d&range=1mo`;
-  const r = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; CommsDashboard/1.0)',
-      'Accept': 'application/json',
-    },
-  });
-  if (!r.ok) throw new Error(`${s.yahoo} -> ${r.status}`);
-  const j = await r.json();
-  const result = j?.chart?.result?.[0];
-  if (!result) throw new Error(`${s.yahoo} empty`);
-
-  const meta = result.meta || {};
-  const ts = result.timestamp || [];
-  const q = result.indicators?.quote?.[0] || {};
-  const closes = q.close || [];
-  const highs = q.high || [];
-  const lows = q.low || [];
-
-  const points = [];
-  for (let i = 0; i < ts.length; i++) {
-    if (closes[i] != null) {
-      const d = new Date(ts[i] * 1000);
-      const r2 = closes[i] < 1 ? round4(closes[i]) : round2(closes[i]);
-      points.push({ t: ts[i], date: d.toISOString().slice(5, 10), price: r2 });
-    }
-  }
-  if (points.length === 0) throw new Error(`${s.yahoo} no closes`);
-
-  const history = points.map((p, i) => ({
-    day: `D-${points.length - 1 - i}`,
-    date: p.date,
-    price: p.price,
-  }));
-
-  const last = meta.regularMarketPrice ?? points[points.length - 1].price;
-  const prev = meta.chartPreviousClose ?? meta.previousClose ?? points[points.length - 2]?.price ?? last;
-  const changeAbs = last - prev;
-  const changePct = prev ? (changeAbs / prev) * 100 : 0;
-  const todayHigh = meta.regularMarketDayHigh ?? highs[highs.length - 1] ?? last;
-  const todayLow  = meta.regularMarketDayLow  ?? lows[lows.length - 1]  ?? last;
-  const r2 = (n) => (n != null && last < 1) ? round4(n) : round2(n);
-
-  return {
-    ticker: s.ticker,
-    symbol: s.symbol,
-    name: s.name,
-    category: s.category,
-    unit: s.unit,
-    price: r2(last),
-    high: r2(todayHigh),
-    low: r2(todayLow),
-    open: meta.regularMarketOpen != null ? r2(meta.regularMarketOpen) : null,
-    prevClose: prev != null ? r2(prev) : null,
-    changeAbs: round4(changeAbs),
-    changePct: round2(changePct),
-    volume: meta.regularMarketVolume ?? null,
-    fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh != null ? r2(meta.fiftyTwoWeekHigh) : null,
-    fiftyTwoWeekLow:  meta.fiftyTwoWeekLow  != null ? r2(meta.fiftyTwoWeekLow)  : null,
-    currency: meta.currency || null,
-    exchange: meta.exchangeName || meta.fullExchangeName || null,
-    history,
-  };
-}
-
-// Worker-pool: keep N requests in flight at once.
-async function pooledSettle(arr, fn, concurrency = 10) {
-  const out = new Array(arr.length);
-  let i = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, arr.length) }, async () => {
-      while (true) {
-        const idx = i++;
-        if (idx >= arr.length) return;
-        try { out[idx] = { status: 'fulfilled', value: await fn(arr[idx]) }; }
-        catch (e) { out[idx] = { status: 'rejected', reason: e }; }
-      }
-    })
-  );
-  return out;
-}
+import { fetchYahooSparkBatches, yahooSparkRow } from '../lib/market/yahooSpark.js';
 
 export default async function handler(req, res) {
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(405).json({ ok: false, error: 'method not allowed' });
+    return;
+  }
+  if (Object.keys(req.query || {}).length > 0) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(400).json({ ok: false, error: 'unsupported query' });
+    return;
+  }
+
   try {
-    const settled = await pooledSettle(SYMBOLS, fetchOne, 28);
-    const commodities = settled
-      .filter((r) => r.status === 'fulfilled')
-      .map((r) => r.value);
+    const fetchedAt = new Date().toISOString();
+    const { bySymbol, errors: batchErrors, requestCount } = await fetchYahooSparkBatches(
+      SYMBOLS.map((symbol) => symbol.yahoo),
+    );
+    const errors = [...batchErrors];
+    const commodities = [];
+    const missingTickers = [];
+
+    for (const symbol of SYMBOLS) {
+      const result = bySymbol.get(symbol.yahoo.toUpperCase());
+      if (!result) {
+        missingTickers.push(symbol.ticker);
+        continue;
+      }
+      try {
+        commodities.push(yahooSparkRow(symbol, result, fetchedAt));
+      } catch (error) {
+        missingTickers.push(symbol.ticker);
+        errors.push(`${symbol.yahoo}: ${String(error?.message || error)}`);
+      }
+    }
+
+    if (missingTickers.length && errors.length === 0) {
+      errors.push(`Yahoo omitted ${missingTickers.length} symbols`);
+    }
+
+    const staleCount = commodities.filter((row) => row.stale).length;
+    const counts = {
+      requested: SYMBOLS.length,
+      received: commodities.length,
+      failed: SYMBOLS.length - commodities.length,
+      stale: staleCount,
+      requests: requestCount,
+    };
 
     if (commodities.length === 0) {
-      res.status(502).json({ ok: false, error: 'all upstream fetches failed' });
+      res.status(502).json({
+        ok: false,
+        error: 'all upstream fetches failed',
+        fetchedAt,
+        partial: true,
+        counts,
+        missingTickers,
+        errors,
+      });
       return;
     }
 
     res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=300');
     res.status(200).json({
       ok: true,
-      fetchedAt: new Date().toISOString(),
-      partial: commodities.length < SYMBOLS.length,
+      source: 'yahoo',
+      fetchedAt,
+      asOf: commodities
+        .map((row) => row.asOf)
+        .filter(Boolean)
+        .sort()
+        .at(-1) || null,
+      partial: counts.failed > 0 || counts.stale > 0,
+      counts,
+      missingTickers,
+      errors: errors.length ? errors : undefined,
       commodities,
     });
   } catch (e) {

@@ -1,0 +1,28 @@
+name: Production AI smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 12 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-ai-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/smoke-ai.mjs
+        env:
+          AI_SMOKE_BASE_URL: https://comms-dashboard-navy.vercel.app
+          AI_SMOKE_SECRET: ${{ secrets.AI_SMOKE_SECRET }}
+          AI_SMOKE_TIMEOUT_MS: '35000'

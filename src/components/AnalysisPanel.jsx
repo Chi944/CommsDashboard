@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { readDashboardJson } from '../lib/apiClient.js';
 
 const tierClass = (tier) => ({
   positive: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40',
@@ -19,22 +20,23 @@ const Section = ({ label, body }) => {
 };
 
 export default function AnalysisPanel({ asset }) {
-  const [data, setData] = useState(null);
+  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
-  const [bumper, setBumper] = useState(0);
+  const [requestVersion, setRequestVersion] = useState(0);
+  const data = result?.ticker === asset?.ticker ? result.payload : null;
 
   useEffect(() => {
     if (!asset) return;
+    const ticker = asset.ticker;
     let cancelled = false;
     setLoading(true);
     setErr(null);
-    fetch(`/api/analysis?ticker=${encodeURIComponent(asset.ticker)}${bumper ? `&_=${bumper}` : ''}`)
-      .then((r) => r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`)))
+    fetch(`/api/analysis?ticker=${encodeURIComponent(ticker)}`)
+      .then(readDashboardJson)
       .then((j) => {
         if (cancelled) return;
-        if (!j.ok) throw new Error(j.error || 'failed');
-        setData(j);
+        setResult({ ticker, payload: j });
         setLoading(false);
       })
       .catch((e) => {
@@ -43,7 +45,9 @@ export default function AnalysisPanel({ asset }) {
         setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [asset?.ticker, bumper]);
+  }, [asset?.ticker, requestVersion]);
+
+  const aiMessage = data?.aiError || data?.error?.message || data?.aiStatus?.message;
 
   return (
     <div className="rounded-xl border border-cyan-700/30 bg-gradient-to-br from-gray-900/95 to-gray-900/60 p-4 sm:p-5 space-y-4">
@@ -58,8 +62,10 @@ export default function AnalysisPanel({ asset }) {
           </div>
         </div>
         <button
-          onClick={() => setBumper(Date.now())}
+          type="button"
+          onClick={() => setRequestVersion((version) => version + 1)}
           disabled={loading}
+          aria-label={`Refresh ${asset?.name || asset?.ticker || 'asset'} analysis`}
           className="text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900 text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50"
         >
           {loading ? 'analysing…' : 'refresh'}
@@ -67,7 +73,7 @@ export default function AnalysisPanel({ asset }) {
       </div>
 
       {err && (
-        <div className="text-xs text-red-300 border border-red-500/30 bg-red-500/10 rounded p-2">
+        <div role="alert" className="text-xs text-red-300 border border-red-500/30 bg-red-500/10 rounded p-2">
           Failed to load analysis: {err}
         </div>
       )}
@@ -120,9 +126,9 @@ export default function AnalysisPanel({ asset }) {
       )}
 
       {/* AI error fallback */}
-      {data?.aiAvailable && data?.aiError && !data.ai && (
-        <div className="text-[11px] text-amber-300 border border-amber-700/40 bg-amber-500/5 rounded-md p-2">
-          AI narrative failed: <span className="font-mono">{data.aiError}</span>
+      {data?.aiAvailable && aiMessage && !data.ai && (
+        <div role="status" aria-live="polite" className="text-[11px] text-amber-300 border border-amber-700/40 bg-amber-500/5 rounded-md p-2">
+          AI narrative unavailable: <span className="font-mono">{aiMessage}</span>
         </div>
       )}
 
@@ -131,7 +137,7 @@ export default function AnalysisPanel({ asset }) {
       )}
 
       {loading && !data && (
-        <div className="space-y-2">
+        <div role="status" aria-live="polite" aria-label="Loading asset analysis" className="space-y-2">
           {[0, 1, 2].map((i) => (
             <div key={i} className="h-3 rounded bg-gray-800/70 animate-pulse" style={{ width: `${90 - i * 10}%` }} />
           ))}

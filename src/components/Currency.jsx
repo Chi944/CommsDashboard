@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useLiveData } from '../state/LiveData.jsx';
 import { CURRENCY_META, CURRENCY_NO_DECIMAL } from '../../lib/symbols.js';
+import { dataModeLabel } from '../lib/marketDisplay.js';
 
 const fmtAmount = (n, ccy) => {
   if (n == null || !isFinite(n)) return '—';
@@ -12,8 +13,31 @@ const fmtAmount = (n, ccy) => {
 };
 const fmtRate = (n) => n == null ? '—' : (n < 1 ? n.toFixed(4) : n.toLocaleString(undefined, { maximumFractionDigits: 4 }));
 
+const rateModeCopy = (dataMode) => {
+  if (dataMode === 'LIVE') {
+    return {
+      converter: 'Live Converter',
+      summary: 'Live rates · convert any of 40+ currencies including SGD, HKD, INR, AED, ZAR.',
+      short: 'live',
+    };
+  }
+  if (dataMode === 'DEGRADED') {
+    return {
+      converter: 'Degraded converter',
+      summary: 'Partially live rates · some conversions may use fallback data.',
+      short: 'degraded',
+    };
+  }
+  return {
+    converter: 'Fallback converter',
+    summary: 'Fallback rates · conversions may be outdated.',
+    short: 'stale',
+  };
+};
+
 const Converter = () => {
-  const { availableCurrencies, getRate } = useLiveData();
+  const { availableCurrencies, getRate, dataMode } = useLiveData();
+  const modeCopy = rateModeCopy(dataMode);
 
   const [from, setFrom] = useState('USD');
   const [to, setTo] = useState('SGD');
@@ -27,7 +51,7 @@ const Converter = () => {
     <div className="rounded-xl border border-gray-800 bg-gradient-to-br from-gray-900/90 to-gray-900/60 p-5 sm:p-6">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <div className="text-[11px] uppercase tracking-widest text-emerald-400">Live Converter</div>
+          <div className="text-[11px] uppercase tracking-widest text-emerald-400">{modeCopy.converter}</div>
           <h3 className="text-lg font-semibold text-gray-50 mt-0.5">Convert any pair</h3>
         </div>
         <span className="text-[10px] text-gray-500 font-mono">
@@ -42,11 +66,13 @@ const Converter = () => {
             <input
               type="number"
               inputMode="decimal"
+              aria-label="Amount to convert"
               value={amount}
               onChange={(e) => setAmount(Number(e.target.value) || 0)}
               className="flex-1 min-w-0 bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-md px-3 py-2 font-mono focus:outline-none focus:border-cyan-500"
             />
             <select
+              aria-label="From currency"
               value={from}
               onChange={(e) => setFrom(e.target.value)}
               className="bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-md px-2 py-2 max-w-[180px]"
@@ -60,6 +86,8 @@ const Converter = () => {
           </div>
         </div>
         <button
+          type="button"
+          aria-label="Swap currencies"
           onClick={swap}
           className="self-end h-[42px] px-3 rounded-md border border-gray-700 bg-gray-800 hover:bg-gray-700 text-gray-200"
           title="Swap"
@@ -67,10 +95,15 @@ const Converter = () => {
         <div>
           <label className="text-[10px] uppercase tracking-widest text-gray-500">Result &amp; to</label>
           <div className="mt-1 flex gap-2">
-            <div className="flex-1 min-w-0 bg-gray-950 border border-emerald-500/30 text-emerald-300 text-sm rounded-md px-3 py-2 font-mono">
+            <output
+              aria-label="Converted amount"
+              aria-live="polite"
+              className="flex-1 min-w-0 bg-gray-950 border border-emerald-500/30 text-emerald-300 text-sm rounded-md px-3 py-2 font-mono"
+            >
               {(CURRENCY_META[to]?.sym || '')}{fmtAmount(result, to)}
-            </div>
+            </output>
             <select
+              aria-label="To currency"
               value={to}
               onChange={(e) => setTo(e.target.value)}
               className="bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-md px-2 py-2 max-w-[180px]"
@@ -99,7 +132,8 @@ const Converter = () => {
 };
 
 const QuickRates = () => {
-  const { getRate, dashboardCurrency } = useLiveData();
+  const { getRate, dashboardCurrency, dataMode } = useLiveData();
+  const modeCopy = rateModeCopy(dataMode);
   const popular = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'CNY', 'INR', 'SGD', 'HKD', 'KRW'];
   const base = dashboardCurrency;
   return (
@@ -108,7 +142,7 @@ const QuickRates = () => {
         <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-100">
           Rates vs {base}
         </h3>
-        <span className="text-[10px] text-gray-500">live</span>
+        <span className="text-[10px] text-gray-500">{modeCopy.short}</span>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
         {popular.filter((c) => c !== base).map((ccy) => {
@@ -166,7 +200,8 @@ const CurrencyNews = () => {
 };
 
 export default function Currency() {
-  const { pricesLive, pricesUpdatedAt, refresh } = useLiveData();
+  const { dataMode, pricesUpdatedAt, refresh } = useLiveData();
+  const modeCopy = rateModeCopy(dataMode);
   return (
     <div className="space-y-5 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
@@ -175,10 +210,10 @@ export default function Currency() {
             Currency
           </h2>
           <div className="text-xs sm:text-sm text-gray-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span>Live rates · convert any of 40+ currencies including SGD, HKD, INR, AED, ZAR.</span>
-            <span className={`text-[11px] flex items-center gap-1.5 ${pricesLive ? 'text-emerald-400' : 'text-amber-400'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${pricesLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
-              {pricesLive ? 'live' : 'fetching'}
+            <span>{modeCopy.summary}</span>
+            <span className={`text-[11px] flex items-center gap-1.5 ${dataMode === 'LIVE' ? 'text-emerald-400' : 'text-amber-400'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${dataMode === 'LIVE' ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
+              {dataModeLabel(dataMode)}
             </span>
             {pricesUpdatedAt && (
               <span className="text-[10px] text-gray-500 font-mono">

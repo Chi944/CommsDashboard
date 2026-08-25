@@ -4,6 +4,7 @@ import { assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
 import { downloadCSV } from '../utils/csv.js';
 import CorrelationMatrix from './CorrelationMatrix.jsx';
+import { dataModeLabel } from '../lib/marketDisplay.js';
 
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
@@ -90,7 +91,7 @@ const AddRow = ({ commodities, onAdd }) => {
 export default function Portfolio({ onSelectAsset }) {
   const {
     commodities, positions, upsertPosition, removePosition,
-    formatAssetPrice, dashboardCurrency, convert, pricesLive,
+    formatAssetPrice, dashboardCurrency, convert, dataMode,
   } = useLiveData();
 
   const enriched = useMemo(() => positions.map((p) => {
@@ -153,7 +154,7 @@ export default function Portfolio({ onSelectAsset }) {
         <SummaryCard
           label="Today's change"
           value={`${formatPriceUSD(totals.dayChange, formatAssetPrice)}`}
-          sub={pricesLive ? 'live' : 'fetching'}
+          sub={dataModeLabel(dataMode)}
           accent={totals.dayChange >= 0 ? 'text-emerald-400' : 'text-red-400'}
         />
       </div>
