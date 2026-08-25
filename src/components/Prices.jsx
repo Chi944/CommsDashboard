@@ -195,21 +195,44 @@ const DetailPanel = ({ c, formatAssetPrice }) => {
 
 // ---------- Asset news ----------
 const AssetNews = ({ asset }) => {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState(null);
+  const assetKey = asset ? `${asset.ticker}:${asset.name}` : '';
+  const [newsState, setNewsState] = useState({
+    assetKey: '',
+    items: [],
+    loading: false,
+    error: null,
+  });
+  const currentState = newsState.assetKey === assetKey
+    ? newsState
+    : { items: [], loading: Boolean(asset), error: null };
+  const { items, loading, error: err } = currentState;
 
   useEffect(() => {
-    if (!asset) return;
+    if (!asset) {
+      setNewsState({ assetKey: '', items: [], loading: false, error: null });
+      return undefined;
+    }
     let cancelled = false;
-    setLoading(true);
-    setErr(null);
+    setNewsState({ assetKey, items: [], loading: true, error: null });
     fetch(`/api/asset-news?q=${encodeURIComponent(asset.name)}&limit=6`)
       .then((r) => r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`)))
-      .then((j) => { if (!cancelled) { setItems(j.ok ? j.items : []); setLoading(false); } })
-      .catch((e) => { if (!cancelled) { setErr(String(e?.message || e)); setLoading(false); } });
+      .then((j) => {
+        if (!cancelled) {
+          setNewsState({
+            assetKey,
+            items: j.ok && Array.isArray(j.items) ? j.items : [],
+            loading: false,
+            error: null,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNewsState({ assetKey, items: [], loading: false, error: true });
+        }
+      });
     return () => { cancelled = true; };
-  }, [asset?.ticker, asset?.name]);
+  }, [assetKey]);
 
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">
@@ -243,6 +266,7 @@ const AssetNews = ({ asset }) => {
 export default function Prices({ initialTicker, onTickerConsumed } = {}) {
   const {
     commodities: rawCommodities, rankingCommodities, dataMode, pricesUpdatedAt, refresh,
+    pricesLoading, newsLoading,
     formatAssetPrice, dashboardCurrency, resolveHeatmapAsset, resolveTablePrice,
     watchlistNames, activeWatchlist, activeWatchSet,
     setActiveList, createList, toggleWatch,
@@ -471,6 +495,7 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
   // Currency-aware price formatter for any commodity row.
   const fmt = (c) => formatAssetPrice(c);
   const fmtTablePrice = (c) => formatAssetPrice(resolveTablePrice(c));
+  const refreshBusy = Boolean(pricesLoading || newsLoading);
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -504,9 +529,16 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
               >{v}</button>
             ))}
           </div>
-          <button onClick={refresh}
-            className="px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white">
-            <span className="hidden sm:inline">Refresh</span><span className="sm:hidden">↻</span>
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={refreshBusy}
+            aria-busy={refreshBusy}
+            aria-label={refreshBusy ? 'Refreshing prices and news' : 'Refresh prices and news'}
+            className="px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white disabled:cursor-wait disabled:opacity-50"
+          >
+            <span className="hidden sm:inline">{refreshBusy ? 'Refreshing…' : 'Refresh'}</span>
+            <span className="sm:hidden">{refreshBusy ? '…' : '↻'}</span>
           </button>
           <button onClick={() => setCompare((v) => !v)}
             className={`px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-colors

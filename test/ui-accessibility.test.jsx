@@ -43,6 +43,14 @@ function jsonErrorFetch(payload, status = 429) {
   }));
 }
 
+function fetchResponse(payload, { ok = true, status = 200 } = {}) {
+  return {
+    ok,
+    status,
+    json: async () => payload,
+  };
+}
+
 function defaultLiveData() {
   return {
     commodities: [
@@ -73,6 +81,8 @@ function pricesLiveData(commodities, resolveHeatmapAsset = (asset) => asset) {
     rankingCommodities: commodities.filter((row) => row.source === 'yahoo' && !row.stale),
     dataMode: 'DEGRADED',
     pricesUpdatedAt: null,
+    pricesLoading: false,
+    newsLoading: false,
     refresh: vi.fn(),
     formatAssetPrice: (asset) => String(asset?.price ?? '—'),
     dashboardCurrency: 'USD',
@@ -437,6 +447,89 @@ describe('Prices heatmap', () => {
     await user.click(screen.getByRole('button', { name: /^heatmap$/i }));
 
     expect(screen.getByText('No items.')).toBeInTheDocument();
+  });
+
+  it('never renders prior-asset headlines under a newly selected asset', async () => {
+    const user = userEvent.setup();
+    const rows = [
+      { ...priceRow('CL', 'yahoo', false), name: 'WTI Crude', symbol: 'CL=F', category: 'ENERGY' },
+      { ...priceRow('NVDA', 'yahoo', false), name: 'NVIDIA', symbol: 'NVDA', category: 'TECH' },
+    ];
+    liveData.current = pricesLiveData(rows);
+    let resolveNvdaNews;
+    globalThis.fetch = vi.fn((url) => {
+      const requestUrl = String(url);
+      if (requestUrl.startsWith('/api/history')) {
+        return Promise.resolve(fetchResponse({ ok: false, points: [] }));
+      }
+      if (requestUrl.includes('/api/asset-news?q=WTI%20Crude')) {
+        return Promise.resolve(fetchResponse({
+          ok: true,
+          items: [{
+            id: 'wti-1',
+            source: 'Reuters',
+            time: '1m',
+            url: 'https://example.com/wti',
+            headline: 'WTI-specific headline',
+          }],
+        }));
+      }
+      if (requestUrl.includes('/api/asset-news?q=NVIDIA')) {
+        return new Promise((resolve) => { resolveNvdaNews = resolve; });
+      }
+      return Promise.resolve(fetchResponse({ ok: false, items: [] }));
+    });
+
+    render(<Prices />);
+    expect(await screen.findByText('WTI-specific headline')).toBeInTheDocument();
+
+    await user.click(screen.getByText('NVDA'));
+    await waitFor(() => expect(resolveNvdaNews).toEqual(expect.any(Function)));
+
+    expect(screen.getByRole('heading', { name: /news · nvidia/i })).toBeInTheDocument();
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    expect(screen.queryByText('WTI-specific headline')).not.toBeInTheDocument();
+
+    resolveNvdaNews(fetchResponse({
+      ok: true,
+      items: [{
+        id: 'nvda-1',
+        source: 'Reuters',
+        time: 'now',
+        url: 'https://example.com/nvda',
+        headline: 'NVIDIA-specific headline',
+      }],
+    }));
+    expect(await screen.findByText('NVIDIA-specific headline')).toBeInTheDocument();
+  });
+
+  it('exposes and enforces the Prices refresh busy state', async () => {
+    const user = userEvent.setup();
+    const row = priceRow('NVDA', 'yahoo', false);
+    const refresh = vi.fn();
+    liveData.current = { ...pricesLiveData([row]), refresh };
+    globalThis.fetch = jsonFetch({ ok: false, items: [] }).fake;
+
+    const { rerender } = render(<Prices />);
+    const readyButton = screen.getByRole('button', { name: /refresh prices and news/i });
+    expect(readyButton).toBeEnabled();
+    expect(readyButton).toHaveAttribute('aria-busy', 'false');
+
+    await user.click(readyButton);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    liveData.current = {
+      ...pricesLiveData([row]),
+      refresh,
+      pricesLoading: true,
+    };
+    rerender(<Prices />);
+
+    const busyButton = screen.getByRole('button', { name: /refreshing prices and news/i });
+    expect(busyButton).toBeDisabled();
+    expect(busyButton).toHaveAttribute('aria-busy', 'true');
+    await user.click(busyButton);
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 });
 
