@@ -49,8 +49,59 @@ try {
   if (typeof briefing?.briefing?.text !== 'string' || !briefing.briefing.text.trim()) {
     throw new Error('/api/briefing did not return briefing.text');
   }
+  const briefingParagraphs = briefing.briefing.text
+    .split(/\n[\t ]*\n+/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  if (briefingParagraphs.length !== 3) {
+    throw new Error('/api/briefing did not return exactly three paragraphs');
+  }
+  const evidenceParagraphs = briefing?.briefing?.paragraphs;
+  if (!Array.isArray(evidenceParagraphs)
+    || evidenceParagraphs.length !== 3
+    || evidenceParagraphs.some((paragraph, index) => (
+      paragraph?.text !== briefingParagraphs[index]
+      || !/^(gainer|loser)-\d+$/.test(paragraph?.marketEvidenceId || '')
+      || !/^sentiment-(headlines|fear-greed)$/.test(paragraph?.sentimentEvidenceId || '')
+    ))) {
+    throw new Error('/api/briefing did not return per-paragraph market and sentiment evidence');
+  }
   if (briefing?.aiStatus?.source !== 'generated') {
     throw new Error('/api/briefing aiStatus.source was not generated');
+  }
+  const headlineSentiment = briefing?.signals?.sentiment?.headline;
+  const fearGreedSentiment = briefing?.signals?.sentiment?.cryptoFearGreed;
+  const hasHeadlineSentiment = typeof headlineSentiment?.label === 'string'
+    && headlineSentiment.label.trim()
+    && Number.isFinite(headlineSentiment.sampleSize)
+    && headlineSentiment.sampleSize > 0;
+  const hasFearGreedSentiment = Number.isFinite(fearGreedSentiment?.value)
+    && typeof fearGreedSentiment?.label === 'string'
+    && fearGreedSentiment.label.trim();
+  if (!hasHeadlineSentiment && !hasFearGreedSentiment) {
+    throw new Error('/api/briefing did not return current briefing sentiment evidence');
+  }
+  const sentimentTimestamps = [
+    hasHeadlineSentiment ? headlineSentiment.updatedAt : null,
+    hasFearGreedSentiment ? fearGreedSentiment.updatedAt : null,
+  ].map((value) => Date.parse(value)).filter(Number.isFinite);
+  const hasFreshSentiment = sentimentTimestamps.some((timestamp) => {
+    const ageMs = Date.now() - timestamp;
+    return ageMs <= 72 * 60 * 60 * 1000 && ageMs >= -5 * 60 * 1000;
+  });
+  if (!hasFreshSentiment) {
+    throw new Error('/api/briefing sentiment evidence is stale or invalid');
+  }
+  const currentMarketDate = new Date().toISOString().slice(0, 10);
+  if (briefing?.briefing?.marketDate !== currentMarketDate) {
+    throw new Error('/api/briefing market date is not current');
+  }
+  const marketObservedAt = Date.parse(briefing?.briefing?.inputsAsOf?.market);
+  const marketObservationAgeMs = Date.now() - marketObservedAt;
+  if (!Number.isFinite(marketObservedAt)
+    || marketObservationAgeMs > 4 * 24 * 60 * 60 * 1000
+    || marketObservationAgeMs < -5 * 60 * 1000) {
+    throw new Error('/api/briefing market observation is stale or invalid');
   }
   if (!['trend', 'catalysts', 'risks', 'outlook'].every((field) => (
     typeof analysis?.ai?.[field] === 'string' && analysis.ai[field].trim()

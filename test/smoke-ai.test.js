@@ -11,6 +11,41 @@ const completeAnalysis = {
   risks: 'Volatility remains elevated.',
   outlook: 'Constructive with caution.',
 };
+const completeBriefingText = 'Market tone is balanced.\n\nSentiment is mixed.\n\nWatch the next session. Informational only — not financial advice.';
+const completeBriefing = {
+  ok: true,
+  briefing: {
+    text: completeBriefingText,
+    paragraphs: completeBriefingText.split('\n\n').map((text) => ({
+      text,
+      marketEvidenceId: 'gainer-1',
+      sentimentEvidenceId: 'sentiment-headlines',
+    })),
+    marketDate: new Date().toISOString().slice(0, 10),
+    generatedAt: new Date().toISOString(),
+    inputsAsOf: {
+      market: new Date().toISOString(),
+      marketFetchedAt: new Date().toISOString(),
+      news: new Date().toISOString(),
+      sentiment: new Date().toISOString(),
+    },
+  },
+  signals: {
+    sentiment: {
+      headline: {
+        label: 'mixed',
+        score: 0,
+        positive: 1,
+        negative: 1,
+        neutral: 1,
+        sampleSize: 3,
+        updatedAt: new Date().toISOString(),
+      },
+      cryptoFearGreed: { value: 27, label: 'Fear', updatedAt: new Date().toISOString() },
+    },
+  },
+  aiStatus: { state: 'ready', source: 'generated' },
+};
 
 async function withServer(responses, run) {
   const seen = [];
@@ -65,7 +100,7 @@ async function runSmoke(baseUrl, { secret = 'smoke-test-secret', timeoutMs = 500
 
 test('smoke script checks briefing and configured per-asset AI endpoints', async () => {
   await withServer({
-    '/api/briefing': { ok: true, briefing: { text: 'Market briefing' }, aiStatus: { state: 'ready', source: 'generated' } },
+    '/api/briefing': completeBriefing,
     '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
   }, async (baseUrl, seen) => {
     const result = await runSmoke(baseUrl);
@@ -98,7 +133,7 @@ test('smoke script fails when the briefing has no generated text', async () => {
 
 test('smoke script fails when per-asset AI content is absent', async () => {
   await withServer({
-    '/api/briefing': { ok: true, briefing: { text: 'Market briefing' }, aiStatus: { state: 'ready', source: 'generated' } },
+    '/api/briefing': completeBriefing,
     '/api/analysis?ticker=NVDA': { ok: true, ai: null, aiStatus: { state: 'degraded' } },
   }, async (baseUrl) => {
     const result = await runSmoke(baseUrl);
@@ -110,7 +145,7 @@ test('smoke script fails when per-asset AI content is absent', async () => {
 
 test('smoke script requires every rendered analysis section to be non-empty', async () => {
   await withServer({
-    '/api/briefing': { ok: true, briefing: { text: 'Market briefing' }, aiStatus: { state: 'ready', source: 'generated' } },
+    '/api/briefing': completeBriefing,
     '/api/analysis?ticker=NVDA': {
       ok: true,
       ai: { ...completeAnalysis, risks: '' },
@@ -126,7 +161,7 @@ test('smoke script requires every rendered analysis section to be non-empty', as
 
 test('smoke script rejects raw analysis text when rendered sections are empty', async () => {
   await withServer({
-    '/api/briefing': { ok: true, briefing: { text: 'Market briefing' }, aiStatus: { state: 'ready', source: 'generated' } },
+    '/api/briefing': completeBriefing,
     '/api/analysis?ticker=NVDA': {
       ok: true,
       ai: { raw: 'Unparsed provider output', trend: '', catalysts: '', risks: '', outlook: '' },
@@ -142,7 +177,7 @@ test('smoke script rejects raw analysis text when rendered sections are empty', 
 
 test('smoke script rejects cached AI responses instead of reporting a false generation pass', async () => {
   await withServer({
-    '/api/briefing': { ok: true, briefing: { text: 'Market briefing' }, aiStatus: { state: 'ready', source: 'cache' } },
+    '/api/briefing': { ...completeBriefing, aiStatus: { state: 'ready', source: 'cache' } },
     '/api/analysis?ticker=NVDA': { ok: true, ai: { trend: 'Constructive trend' }, aiStatus: { state: 'ready', source: 'generated' } },
   }, async (baseUrl) => {
     const result = await runSmoke(baseUrl);
@@ -161,5 +196,97 @@ test('smoke script bounds endpoint fetches with a timeout', async () => {
 
     assert.equal(result.code, 1);
     assert.match(result.stderr, /briefing.*timed out/i);
+  });
+});
+
+test('smoke script fails when a generated briefing lacks current sentiment evidence', async () => {
+  await withServer({
+    '/api/briefing': {
+      ...completeBriefing,
+      signals: {},
+    },
+    '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+  }, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /briefing.*sentiment/i);
+  });
+});
+
+test('smoke script fails when generated paragraphs are not grounded in today\'s market date', async () => {
+  await withServer({
+    '/api/briefing': {
+      ...completeBriefing,
+      briefing: { ...completeBriefing.briefing, marketDate: '1999-12-31' },
+    },
+    '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+  }, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /briefing.*market date/i);
+  });
+});
+
+test('smoke script fails when the briefing uses a stale market observation', async () => {
+  await withServer({
+    '/api/briefing': {
+      ...completeBriefing,
+      briefing: {
+        ...completeBriefing.briefing,
+        inputsAsOf: {
+          ...completeBriefing.briefing.inputsAsOf,
+          market: '1999-12-31T00:00:00.000Z',
+        },
+      },
+    },
+    '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+  }, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /briefing.*market observation/i);
+  });
+});
+
+test('smoke script rejects generic prose without per-paragraph market and sentiment evidence', async () => {
+  await withServer({
+    '/api/briefing': {
+      ...completeBriefing,
+      briefing: { ...completeBriefing.briefing, paragraphs: undefined },
+    },
+    '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+  }, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /paragraph.*evidence/i);
+  });
+});
+
+test('smoke script rejects stale sentiment evidence', async () => {
+  await withServer({
+    '/api/briefing': {
+      ...completeBriefing,
+      signals: {
+        sentiment: {
+          headline: {
+            ...completeBriefing.signals.sentiment.headline,
+            updatedAt: '1999-12-31T00:00:00.000Z',
+          },
+          cryptoFearGreed: {
+            ...completeBriefing.signals.sentiment.cryptoFearGreed,
+            updatedAt: '1999-12-31T00:00:00.000Z',
+          },
+        },
+      },
+    },
+    '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+  }, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /sentiment.*stale/i);
   });
 });

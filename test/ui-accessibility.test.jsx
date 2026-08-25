@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const liveData = vi.hoisted(() => ({ current: null }));
@@ -129,6 +129,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.useRealTimers();
   globalThis.fetch = originalFetch;
   if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver;
   else delete globalThis.ResizeObserver;
@@ -187,7 +188,7 @@ describe('AI refresh controls', () => {
     expect(disclosure).toHaveAttribute('aria-controls');
   });
 
-  it('refreshes the briefing without adding a cache-busting query parameter', async () => {
+  it('uses the stable no-store refresh route for the latest shared briefing', async () => {
     const user = userEvent.setup();
     const { fake, calls } = jsonFetch({ ok: true, aiAvailable: false });
     globalThis.fetch = fake;
@@ -197,7 +198,145 @@ describe('AI refresh controls', () => {
     await user.click(screen.getByRole('button', { name: /refresh/i }));
 
     await waitFor(() => expect(calls).toHaveLength(2));
-    expect(calls).toEqual(['/api/briefing', '/api/briefing']);
+    expect(calls).toEqual(['/api/briefing', '/api/briefing?refresh=1']);
+  });
+
+  it('checks for a new daily briefing when a long-lived tab regains focus after UTC midnight', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-01-02T23:59:30.000Z'));
+    const { fake, calls } = jsonFetch({ ok: true, aiAvailable: false });
+    globalThis.fetch = fake;
+    render(<Briefing />);
+    await act(async () => { await Promise.resolve(); });
+    expect(calls).toEqual(['/api/briefing']);
+
+    vi.setSystemTime(new Date('2030-01-03T00:00:05.000Z'));
+    await act(async () => { window.dispatchEvent(new Event('focus')); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(calls).toEqual(['/api/briefing', '/api/briefing?refresh=1']);
+  });
+
+  it('retries when the first post-midnight response still contains yesterday\'s briefing', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-01-02T23:59:30.000Z'));
+    const calls = [];
+    let responseIndex = 0;
+    globalThis.fetch = vi.fn(async (url) => {
+      calls.push(String(url));
+      responseIndex += 1;
+      const marketDate = responseIndex < 3 ? '2030-01-02' : '2030-01-03';
+      return fetchResponse({
+        ok: true,
+        briefing: {
+          text: `Briefing for ${marketDate}`,
+          marketDate,
+        },
+      });
+    });
+
+    render(<Briefing />);
+    await act(async () => { await Promise.resolve(); });
+    expect(calls).toEqual(['/api/briefing']);
+
+    vi.setSystemTime(new Date('2030-01-03T00:00:05.000Z'));
+    await act(async () => { window.dispatchEvent(new Event('focus')); });
+    await act(async () => { await Promise.resolve(); });
+    expect(calls).toEqual(['/api/briefing', '/api/briefing?refresh=1']);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(65_000); });
+    expect(calls).toEqual([
+      '/api/briefing',
+      '/api/briefing?refresh=1',
+      '/api/briefing?refresh=1',
+    ]);
+
+    await act(async () => { window.dispatchEvent(new Event('focus')); });
+    await act(async () => { await Promise.resolve(); });
+    expect(calls).toHaveLength(3);
+  });
+
+  it('retries a transient daily briefing failure and stops after recovery', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-01-03T12:00:00.000Z'));
+    const calls = [];
+    let responseIndex = 0;
+    globalThis.fetch = vi.fn(async (url) => {
+      calls.push(String(url));
+      responseIndex += 1;
+      if (responseIndex === 1) {
+        return fetchResponse({
+          ok: true,
+          aiAvailable: true,
+          briefing: null,
+          aiStatus: { state: 'degraded', retryable: true },
+        });
+      }
+      return fetchResponse({
+        ok: true,
+        aiAvailable: true,
+        briefing: {
+          text: 'Recovered current briefing',
+          marketDate: '2030-01-03',
+        },
+        aiStatus: { state: 'ready', retryable: false },
+      });
+    });
+
+    render(<Briefing />);
+    await act(async () => { await Promise.resolve(); });
+    expect(calls).toEqual(['/api/briefing']);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(calls).toEqual(['/api/briefing', '/api/briefing?refresh=1']);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(15 * 60_000); });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('recovers when a same-day manual refresh transiently loses a valid briefing', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-01-03T12:00:00.000Z'));
+    const calls = [];
+    let responseIndex = 0;
+    globalThis.fetch = vi.fn(async (url) => {
+      calls.push(String(url));
+      responseIndex += 1;
+      if (responseIndex === 2) {
+        return fetchResponse({
+          ok: true,
+          aiAvailable: true,
+          briefing: null,
+          aiStatus: { state: 'degraded', retryable: true },
+        });
+      }
+      return fetchResponse({
+        ok: true,
+        aiAvailable: true,
+        briefing: {
+          text: `Current briefing ${responseIndex}`,
+          marketDate: '2030-01-03',
+        },
+        aiStatus: { state: 'ready', retryable: false },
+      });
+    });
+
+    render(<Briefing />);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByText('Current briefing 1')).toBeInTheDocument();
+
+    await act(async () => { screen.getByRole('button', { name: /refresh market briefing/i }).click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(calls).toEqual(['/api/briefing', '/api/briefing?refresh=1']);
+    expect(screen.getByText(/AI briefing unavailable/i)).toBeInTheDocument();
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(calls).toEqual([
+      '/api/briefing',
+      '/api/briefing?refresh=1',
+      '/api/briefing?refresh=1',
+    ]);
+    expect(screen.getByText('Current briefing 3')).toBeInTheDocument();
   });
 
   it('refreshes asset analysis without adding a cache-busting query parameter', async () => {

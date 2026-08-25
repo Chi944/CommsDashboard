@@ -6,8 +6,19 @@ import * as aiRuntime from '../lib/ai/runtime.js';
 
 const DISCLAIMER = 'Informational only — not financial advice.';
 
-function validBriefing(label = 'Market') {
+function validBriefingText(label = 'Market') {
   return `${label} tone is balanced.\n\n${label} catalysts remain measured.\n\nWatch the next session. ${DISCLAIMER}`;
+}
+
+function validBriefing(label = 'Market') {
+  const paragraphs = validBriefingText(label).split('\n\n');
+  return JSON.stringify({
+    paragraphs: paragraphs.map((text) => ({
+      text,
+      marketEvidenceId: 'gainer-1',
+      sentimentEvidenceId: 'sentiment-fear-greed',
+    })),
+  });
 }
 
 function trustedPricePayload(rows = [{
@@ -24,6 +35,13 @@ function trustedPricePayload(rows = [{
 const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { 'Content-Type': 'application/json' },
+});
+
+const fearGreedResponse = () => jsonResponse({
+  ok: true,
+  value: 50,
+  label: 'Neutral',
+  updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
 });
 
 function createResponse() {
@@ -63,6 +81,8 @@ function createProviderFetch(supportedModel) {
       return jsonResponse({ ok: true, items: [] });
     }
 
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
+
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       const request = JSON.parse(options.body);
       if (request.model !== supportedModel) {
@@ -76,7 +96,7 @@ function createProviderFetch(supportedModel) {
       }
 
       return jsonResponse({
-        choices: [{ message: { content: 'Risk tone is mixed.\n\nCatalysts remain limited.\n\nWatch the next session. Informational only — not financial advice.' } }],
+        choices: [{ message: { content: validBriefing('Risk') } }],
       });
     }
 
@@ -218,9 +238,10 @@ test('uses Groq completion-token and low-reasoning parameters for GPT-OSS', asyn
       ] });
     }
     if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       providerRequest = JSON.parse(options.body);
-      return jsonResponse({ choices: [{ message: { content: 'One.\n\nTwo.\n\nThree. Informational only — not financial advice.' } }] });
+      return jsonResponse({ choices: [{ message: { content: validBriefing('Parameters') } }] });
     }
     throw new Error(`Unexpected fetch: ${target}`);
   };
@@ -228,7 +249,7 @@ test('uses Groq completion-token and low-reasoning parameters for GPT-OSS', asyn
   try {
     await briefingHandler(createRequest('203.0.113.11'), createResponse());
 
-    assert.equal(providerRequest.max_completion_tokens, 600);
+    assert.equal(providerRequest.max_completion_tokens, 900);
     assert.equal(providerRequest.max_tokens, undefined);
     assert.equal(providerRequest.reasoning_effort, 'low');
     assert.equal(providerRequest.include_reasoning, false);
@@ -255,6 +276,7 @@ test('caches generated briefings by semantic key and expires them after the TTL'
     const target = String(url);
     if (target.endsWith('/api/prices')) return jsonResponse(trustedPricePayload());
     if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       generations += 1;
       return jsonResponse({ choices: [{ message: { content: validBriefing(`Briefing ${generations}`) } }] });
@@ -269,15 +291,176 @@ test('caches generated briefings by semantic key and expires them after the TTL'
     await briefingHandler(createRequest('203.0.113.12'), cached);
 
     assert.equal(generations, 1);
-    assert.equal(cached.body.briefing.text, validBriefing('Briefing 1'));
+    assert.equal(cached.body.briefing.text, validBriefingText('Briefing 1'));
     assert.equal(cached.body.aiStatus.source, 'cache');
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     const expired = createResponse();
     await briefingHandler(createRequest('203.0.113.12'), expired);
     assert.equal(generations, 2);
-    assert.equal(expired.body.briefing.text, validBriefing('Briefing 2'));
+    assert.equal(expired.body.briefing.text, validBriefingText('Briefing 2'));
   } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
+test('generates a new briefing when the trusted market date changes before the cache TTL expires', async () => {
+  const env = {
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    GROQ_MODEL: process.env.GROQ_MODEL,
+    AI_BRIEFING_TTL_SECONDS: process.env.AI_BRIEFING_TTL_SECONDS,
+  };
+  const originalFetch = globalThis.fetch;
+  const originalDateNow = Date.now;
+  process.env.GROQ_API_KEY = 'test-key';
+  process.env.GROQ_MODEL = 'test/daily-market-model';
+  process.env.AI_BRIEFING_TTL_SECONDS = '604800';
+  let marketDate = '2030-01-02';
+  let nowMs = Date.parse('2030-01-02T16:00:00.000Z');
+  Date.now = () => nowMs;
+  let generations = 0;
+
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/prices')) {
+      return jsonResponse({
+        ...trustedPricePayload(),
+        fetchedAt: `${marketDate}T15:45:00.000Z`,
+      });
+    }
+    if (target.endsWith('/api/news')) {
+      return jsonResponse({ ok: true, fetchedAt: `${marketDate}T15:44:00.000Z`, items: [] });
+    }
+    if (target.endsWith('/api/fear-greed')) {
+      return jsonResponse({ ok: true, value: 40, label: 'Fear', updatedAt: `${marketDate}T00:00:00.000Z` });
+    }
+    if (target === 'https://api.groq.com/openai/v1/chat/completions') {
+      generations += 1;
+      return jsonResponse({ choices: [{ message: { content: validBriefing(`Day ${generations}`) } }] });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+
+  try {
+    const first = createResponse();
+    await briefingHandler(createRequest('203.0.113.42'), first);
+    marketDate = '2030-01-03';
+    nowMs = Date.parse('2030-01-03T16:00:00.000Z');
+    const nextDay = createResponse();
+    await briefingHandler(createRequest('203.0.113.42'), nextDay);
+
+    assert.equal(generations, 2);
+    assert.equal(first.body.briefing.text, validBriefingText('Day 1'));
+    assert.equal(first.body.briefing.marketDate, '2030-01-02');
+    assert.match(first.body.briefing.generatedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(first.body.generatedAt, first.body.briefing.generatedAt);
+    assert.equal(nextDay.body.briefing.text, validBriefingText('Day 2'));
+    assert.equal(nextDay.body.briefing.marketDate, '2030-01-03');
+    assert.equal(nextDay.body.generatedAt, nextDay.body.briefing.generatedAt);
+  } finally {
+    Date.now = originalDateNow;
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
+test('grounds briefing generation in explicit headline and fear-greed sentiment records', async () => {
+  const env = {
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    GROQ_MODEL: process.env.GROQ_MODEL,
+  };
+  const originalFetch = globalThis.fetch;
+  const originalDateNow = Date.now;
+  process.env.GROQ_API_KEY = 'test-key';
+  process.env.GROQ_MODEL = 'test/sentiment-grounding-model';
+  Date.now = () => Date.parse('2030-02-04T16:00:00.000Z');
+  let providerRequest;
+
+  globalThis.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.endsWith('/api/prices')) {
+      return jsonResponse({
+        ...trustedPricePayload(),
+        fetchedAt: '2030-02-04T15:45:00.000Z',
+        asOf: '2030-02-04T15:43:30.000Z',
+      });
+    }
+    if (target.endsWith('/api/news')) {
+      return jsonResponse({
+        ok: true,
+        fetchedAt: '2030-02-04T15:44:00.000Z',
+        items: [
+          { headline: 'Stocks rally after strong earnings beat', source: 'Wire A', category: 'Stocks', ts: Date.parse('2030-02-04T15:42:00.000Z') },
+          { headline: 'Oil plunges as demand fears rise', source: 'Wire B', category: 'Energy', ts: Date.parse('2030-02-04T15:41:00.000Z') },
+          { headline: 'Central bank publishes meeting calendar', source: 'Wire C', category: 'Finance', ts: Date.parse('2030-02-04T15:40:00.000Z') },
+        ],
+      });
+    }
+    if (target.endsWith('/api/fear-greed')) {
+      return jsonResponse({
+        ok: true,
+        value: 27,
+        label: 'Fear',
+        updatedAt: '2030-02-04T00:00:00.000Z',
+      });
+    }
+    if (target === 'https://api.groq.com/openai/v1/chat/completions') {
+      providerRequest = JSON.parse(options.body);
+      return jsonResponse({ choices: [{ message: { content: validBriefing('Sentiment grounded') } }] });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+
+  try {
+    const response = createResponse();
+    await briefingHandler(createRequest('203.0.113.43'), response);
+
+    assert.deepEqual(response.body.signals.sentiment, {
+      headline: {
+        label: 'mixed',
+        score: 0,
+        positive: 1,
+        negative: 1,
+        neutral: 1,
+        sampleSize: 3,
+        updatedAt: '2030-02-04T15:42:00.000Z',
+      },
+      cryptoFearGreed: {
+        value: 27,
+        label: 'Fear',
+        updatedAt: '2030-02-04T00:00:00.000Z',
+      },
+    });
+    assert.equal(response.body.briefing.inputsAsOf.market, '2030-02-04T15:43:30.000Z');
+    assert.equal(response.body.briefing.inputsAsOf.marketFetchedAt, '2030-02-04T15:45:00.000Z');
+
+    const userPrompt = providerRequest.messages.find((message) => message.role === 'user').content;
+    const jsonl = userPrompt
+      .split('BEGIN_UNTRUSTED_MARKET_DATA_JSONL\n')[1]
+      ?.split('\nEND_UNTRUSTED_MARKET_DATA_JSONL')[0];
+    const records = jsonl.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    assert.deepEqual(records.find((record) => record.recordType === 'headline_sentiment'), {
+      evidenceId: 'sentiment-headlines',
+      recordType: 'headline_sentiment',
+      label: 'mixed',
+      score: 0,
+      positive: 1,
+      negative: 1,
+      neutral: 1,
+      sampleSize: 3,
+      updatedAt: '2030-02-04T15:42:00.000Z',
+    });
+    assert.deepEqual(records.find((record) => record.recordType === 'crypto_fear_greed'), {
+      evidenceId: 'sentiment-fear-greed',
+      recordType: 'crypto_fear_greed',
+      value: 27,
+      label: 'Fear',
+      updatedAt: '2030-02-04T00:00:00.000Z',
+    });
+    assert.match(userPrompt, /ground every paragraph.*market.*sentiment/i);
+  } finally {
+    Date.now = originalDateNow;
     globalThis.fetch = originalFetch;
     restoreEnv(env);
   }
@@ -299,6 +482,7 @@ test('deduplicates concurrent briefing generations for the same semantic key', a
     const target = String(url);
     if (target.endsWith('/api/prices')) return jsonResponse(trustedPricePayload());
     if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       generations += 1;
       await providerGate;
@@ -319,8 +503,8 @@ test('deduplicates concurrent briefing generations for the same semantic key', a
     await Promise.all(requests);
 
     assert.equal(generations, 1);
-    assert.equal(first.body.briefing.text, validBriefing('Shared briefing'));
-    assert.equal(second.body.briefing.text, validBriefing('Shared briefing'));
+    assert.equal(first.body.briefing.text, validBriefingText('Shared briefing'));
+    assert.equal(second.body.briefing.text, validBriefingText('Shared briefing'));
     assert.deepEqual(new Set([first.body.aiStatus.source, second.body.aiStatus.source]), new Set(['generated', 'inflight']));
   } finally {
     globalThis.fetch = originalFetch;
@@ -345,6 +529,7 @@ test('limits uncached generations per client without charging cached reads', asy
     const target = String(url);
     if (target.endsWith('/api/prices')) return jsonResponse(trustedPricePayload());
     if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       generations += 1;
       return jsonResponse({ choices: [{ message: { content: validBriefing(`Generated ${generations}`) } }] });
@@ -401,6 +586,7 @@ test('returns a stable degraded status without exposing Groq error payloads', as
     const target = String(url);
     if (target.endsWith('/api/prices')) return jsonResponse(trustedPricePayload());
     if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       return jsonResponse({ error: { message: providerSecret, type: 'invalid_request_error', code: 'model_not_found' } }, 404);
     }
@@ -448,6 +634,7 @@ test('times out a slow Groq request and returns deterministic market signals', a
       ] });
     }
     if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       if (!options.signal) {
         await new Promise((resolve) => setTimeout(resolve, 40));
@@ -493,6 +680,7 @@ test('Groq timeout remains active while the response body text is consumed', asy
     const target = String(url);
     if (target.endsWith('/api/prices')) return jsonResponse(trustedPricePayload());
     if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       return {
         ok: true,
@@ -540,6 +728,10 @@ test('bounds internal market-data requests with abort signals', async () => {
       marketRequestSignals.push(Boolean(options.signal));
       return jsonResponse({ ok: true, items: [] });
     }
+    if (target.endsWith('/api/fear-greed')) {
+      marketRequestSignals.push(Boolean(options.signal));
+      return jsonResponse({ ok: false });
+    }
     throw new Error(`Unexpected fetch: ${target}`);
   };
 
@@ -548,7 +740,7 @@ test('bounds internal market-data requests with abort signals', async () => {
     await briefingHandler(createRequest('203.0.113.18'), response);
 
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(marketRequestSignals, [true, true]);
+    assert.deepEqual(marketRequestSignals, [true, true, true]);
     assert.match(response.headers['Cache-Control'], /^public, s-maxage=\d+/);
   } finally {
     globalThis.fetch = originalFetch;
@@ -576,6 +768,7 @@ test('uses only trusted deployment origins for internal briefing data requests',
     targets.push(target);
     if (target.endsWith('/api/prices')) return jsonResponse({ ok: true, commodities: [] });
     if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return jsonResponse({ ok: false });
     throw new Error(`Unexpected fetch: ${target}`);
   };
 
@@ -599,10 +792,13 @@ test('uses only trusted deployment origins for internal briefing data requests',
     assert.deepEqual(targets, [
       'http://127.0.0.1:3000/api/prices',
       'http://127.0.0.1:3000/api/news',
+      'http://127.0.0.1:3000/api/fear-greed',
       'https://trusted-deployment.vercel.app/api/prices',
       'https://trusted-deployment.vercel.app/api/news',
+      'https://trusted-deployment.vercel.app/api/fear-greed',
       'https://comms-dashboard-navy.vercel.app/api/prices',
       'https://comms-dashboard-navy.vercel.app/api/news',
+      'https://comms-dashboard-navy.vercel.app/api/fear-greed',
     ]);
   } finally {
     globalThis.fetch = originalFetch;
@@ -647,7 +843,7 @@ test('rejects unknown or unauthorized smoke briefing queries before upstream wor
   try {
     const unknown = createResponse();
     const unauthorizedSmoke = createResponse();
-    await briefingHandler(createRequest('203.0.113.25', { refresh: '1' }), unknown);
+    await briefingHandler(createRequest('203.0.113.25', { refresh: '2' }), unknown);
     await briefingHandler(createRequest('203.0.113.25', { aiSmoke: 'nonce' }), unauthorizedSmoke);
 
     for (const response of [unknown, unauthorizedSmoke]) {
@@ -712,7 +908,7 @@ test('does not generate a briefing when the prices input fails', async () => {
     if (target.endsWith('/api/news')) {
       return jsonResponse({
         ok: true,
-        items: [{ headline: 'Verified headline', source: 'Wire', category: 'Energy', time: 'now' }],
+        items: [{ headline: 'Verified headline', source: 'Wire', category: 'Energy', time: 'now', ts: Date.now() }],
       });
     }
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
@@ -893,9 +1089,11 @@ test('serializes and bounds untrusted briefing fields while instructing the mode
           source: sourceInjection,
           category: categoryInjection,
           time: 'now',
+          ts: Date.now(),
         }],
       });
     }
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       providerRequest = JSON.parse(options.body);
       return jsonResponse({ choices: [{ message: { content: validBriefing('Isolated') } }] });
@@ -948,6 +1146,7 @@ test('rejects an invalid three-paragraph briefing before caching it', async () =
     const target = String(url);
     if (target.endsWith('/api/prices')) return jsonResponse(trustedPricePayload());
     if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       generations += 1;
       const content = generations === 1
@@ -968,7 +1167,7 @@ test('rejects an invalid three-paragraph briefing before caching it', async () =
     assert.equal(invalid.body.aiStatus.code, 'provider_invalid_response');
     assert.equal(invalid.headers['Cache-Control'], 'no-store');
     assert.equal(recovered.body.aiStatus.source, 'generated');
-    assert.equal(recovered.body.briefing.text, validBriefing('Recovered'));
+    assert.equal(recovered.body.briefing.text, validBriefingText('Recovered'));
     assert.equal(generations, 2);
   } finally {
     globalThis.fetch = originalFetch;
@@ -993,6 +1192,7 @@ test('allows only the matching smoke secret to bypass cache and forces no-store'
     const target = String(url);
     if (target.endsWith('/api/prices')) return jsonResponse(trustedPricePayload());
     if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       generations += 1;
       return jsonResponse({ choices: [{ message: { content: validBriefing(`Smoke ${generations}`) } }] });
@@ -1024,6 +1224,328 @@ test('allows only the matching smoke secret to bypass cache and forces no-store'
     assert.equal(queryOnly.statusCode, 400);
     assert.equal(queryOnly.body.error.code, 'invalid_query_parameters');
     assert.equal(generations, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
+test('a public refresh bypasses edge caching without bypassing the shared AI cache', async () => {
+  const env = {
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    GROQ_MODEL: process.env.GROQ_MODEL,
+    AI_GENERATION_QUOTA: process.env.AI_GENERATION_QUOTA,
+  };
+  const originalFetch = globalThis.fetch;
+  const originalDateNow = Date.now;
+  process.env.GROQ_API_KEY = 'test-key';
+  process.env.GROQ_MODEL = 'test/public-refresh-model';
+  process.env.AI_GENERATION_QUOTA = '10';
+  Date.now = () => Date.parse('2030-03-05T16:00:00.000Z');
+  let generations = 0;
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/prices')) {
+      return jsonResponse({ ...trustedPricePayload(), fetchedAt: '2030-03-05T15:45:00.000Z' });
+    }
+    if (target.endsWith('/api/news')) {
+      return jsonResponse({
+        ok: true,
+        fetchedAt: '2030-03-05T15:44:00.000Z',
+        items: [{ headline: 'Stocks rally', source: 'Wire', category: 'Stocks', time: 'now' }],
+      });
+    }
+    if (target.endsWith('/api/fear-greed')) {
+      return jsonResponse({ ok: true, value: 55, label: 'Greed', updatedAt: '2030-03-05T00:00:00.000Z' });
+    }
+    if (target === 'https://api.groq.com/openai/v1/chat/completions') {
+      generations += 1;
+      return jsonResponse({ choices: [{ message: { content: validBriefing(`Refresh ${generations}`) } }] });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+
+  try {
+    const initial = createResponse();
+    const refreshed = createResponse();
+    await briefingHandler(createRequest('203.0.113.44'), initial);
+    await briefingHandler(createRequest('203.0.113.44', { refresh: '1' }), refreshed);
+
+    assert.equal(initial.body.briefing.text, validBriefingText('Refresh 1'));
+    assert.equal(refreshed.statusCode, 200);
+    assert.equal(refreshed.body.briefing.text, validBriefingText('Refresh 1'));
+    assert.equal(refreshed.body.aiStatus.source, 'cache');
+    assert.equal(refreshed.headers['Cache-Control'], 'no-store');
+    assert.equal(generations, 1);
+  } finally {
+    Date.now = originalDateNow;
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
+test('does not generate or cache a briefing without current sentiment evidence', async () => {
+  const env = {
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    GROQ_MODEL: process.env.GROQ_MODEL,
+  };
+  const originalFetch = globalThis.fetch;
+  process.env.GROQ_API_KEY = 'test-key';
+  process.env.GROQ_MODEL = 'test/no-sentiment-model';
+  let providerCalls = 0;
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/prices')) {
+      return jsonResponse({ ...trustedPricePayload(), fetchedAt: '2030-04-06T15:45:00.000Z' });
+    }
+    if (target.endsWith('/api/news')) {
+      return jsonResponse({ ok: true, fetchedAt: '2030-04-06T15:44:00.000Z', items: [] });
+    }
+    if (target.endsWith('/api/fear-greed')) return jsonResponse({ ok: false });
+    if (target === 'https://api.groq.com/openai/v1/chat/completions') {
+      providerCalls += 1;
+      return jsonResponse({ choices: [{ message: { content: validBriefing('Ungrounded') } }] });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+
+  try {
+    const response = createResponse();
+    await briefingHandler(createRequest('203.0.113.45'), response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.briefing, null);
+    assert.equal(response.body.aiStatus.code, 'upstream_market_data_unavailable');
+    assert.equal(response.body.signals.sentiment.headline.sampleSize, 0);
+    assert.equal(response.body.signals.sentiment.cryptoFearGreed, null);
+    assert.equal(providerCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
+test('rejects stale and future-dated sentiment instead of generating a daily briefing', async () => {
+  const env = {
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    GROQ_MODEL: process.env.GROQ_MODEL,
+  };
+  const originalFetch = globalThis.fetch;
+  const originalDateNow = Date.now;
+  process.env.GROQ_API_KEY = 'test-key';
+  process.env.GROQ_MODEL = 'test/stale-sentiment-model';
+  Date.now = () => Date.parse('2030-05-10T12:00:00.000Z');
+  let sentimentMode = 'stale';
+  let providerCalls = 0;
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/prices')) {
+      return jsonResponse({
+        ...trustedPricePayload(),
+        fetchedAt: '2030-05-10T12:00:00.000Z',
+        asOf: '2030-05-10T11:59:00.000Z',
+      });
+    }
+    if (target.endsWith('/api/news')) {
+      const ts = sentimentMode === 'stale'
+        ? Date.parse('2030-05-01T12:00:00.000Z')
+        : Date.parse('2030-05-10T13:00:00.000Z');
+      return jsonResponse({
+        ok: true,
+        fetchedAt: '2030-05-10T12:00:00.000Z',
+        items: [{ headline: 'Stocks rally', source: 'Wire', category: 'Stocks', ts }],
+      });
+    }
+    if (target.endsWith('/api/fear-greed')) {
+      return jsonResponse({
+        ok: true,
+        value: 45,
+        label: 'Fear',
+        updatedAt: sentimentMode === 'stale'
+          ? '2030-05-01T00:00:00.000Z'
+          : '2030-05-10T13:00:00.000Z',
+      });
+    }
+    if (target === 'https://api.groq.com/openai/v1/chat/completions') {
+      providerCalls += 1;
+      return jsonResponse({ choices: [{ message: { content: validBriefing('Invalid sentiment') } }] });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+
+  try {
+    const stale = createResponse();
+    await briefingHandler(createRequest('203.0.113.46'), stale);
+    sentimentMode = 'future';
+    const future = createResponse();
+    await briefingHandler(createRequest('203.0.113.47'), future);
+
+    for (const response of [stale, future]) {
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.body.briefing, null);
+      assert.equal(response.body.aiStatus.code, 'upstream_market_data_unavailable');
+      assert.equal(response.body.signals.sentiment.headline.sampleSize, 0);
+      assert.equal(response.body.signals.sentiment.cryptoFearGreed, null);
+    }
+    assert.equal(providerCalls, 0);
+  } finally {
+    Date.now = originalDateNow;
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
+test('accepts current sentiment when a cache-valid price response was fetched six minutes earlier', async () => {
+  const env = {
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    GROQ_MODEL: process.env.GROQ_MODEL,
+  };
+  const originalFetch = globalThis.fetch;
+  const originalDateNow = Date.now;
+  process.env.GROQ_API_KEY = 'test-key';
+  process.env.GROQ_MODEL = 'test/cache-skew-sentiment-model';
+  Date.now = () => Date.parse('2030-07-08T12:00:00.000Z');
+  let providerCalls = 0;
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/prices')) {
+      return jsonResponse({
+        ...trustedPricePayload(),
+        fetchedAt: '2030-07-08T11:54:00.000Z',
+        asOf: '2030-07-08T11:53:00.000Z',
+      });
+    }
+    if (target.endsWith('/api/news')) {
+      return jsonResponse({
+        ok: true,
+        fetchedAt: '2030-07-08T12:00:00.000Z',
+        items: [{
+          headline: 'Stocks rally on strong earnings',
+          source: 'Wire',
+          category: 'Stocks',
+          ts: Date.parse('2030-07-08T12:00:00.000Z'),
+        }],
+      });
+    }
+    if (target.endsWith('/api/fear-greed')) {
+      return jsonResponse({ ok: true, value: 30, label: 'Fear', updatedAt: '2030-07-01T00:00:00.000Z' });
+    }
+    if (target === 'https://api.groq.com/openai/v1/chat/completions') {
+      providerCalls += 1;
+      return jsonResponse({ choices: [{ message: { content: JSON.stringify({
+        paragraphs: validBriefingText('Current sentiment').split('\n\n').map((text) => ({
+          text,
+          marketEvidenceId: 'gainer-1',
+          sentimentEvidenceId: 'sentiment-headlines',
+        })),
+      }) } }] });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+
+  try {
+    const response = createResponse();
+    await briefingHandler(createRequest('203.0.113.50'), response);
+
+    assert.equal(response.body.aiStatus.state, 'ready');
+    assert.equal(response.body.signals.sentiment.headline.sampleSize, 1);
+    assert.equal(response.body.signals.sentiment.headline.updatedAt, '2030-07-08T12:00:00.000Z');
+    assert.equal(providerCalls, 1);
+  } finally {
+    Date.now = originalDateNow;
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
+test('requires structured market and sentiment evidence for every generated paragraph', async () => {
+  const env = {
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    GROQ_MODEL: process.env.GROQ_MODEL,
+  };
+  const originalFetch = globalThis.fetch;
+  const originalDateNow = Date.now;
+  process.env.GROQ_API_KEY = 'test-key';
+  process.env.GROQ_MODEL = 'openai/gpt-oss-120b';
+  Date.now = () => Date.parse('2030-06-11T12:00:00.000Z');
+  let providerRequest;
+  globalThis.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.endsWith('/api/prices')) {
+      return jsonResponse({
+        ...trustedPricePayload(),
+        fetchedAt: '2030-06-11T12:00:00.000Z',
+        asOf: '2030-06-11T11:59:00.000Z',
+      });
+    }
+    if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) {
+      return jsonResponse({ ok: true, value: 58, label: 'Greed', updatedAt: '2030-06-11T00:00:00.000Z' });
+    }
+    if (target === 'https://api.groq.com/openai/v1/chat/completions') {
+      providerRequest = JSON.parse(options.body);
+      return jsonResponse({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              paragraphs: [
+                { text: 'The tracked mover rose while sentiment remained constructive.', marketEvidenceId: 'gainer-1', sentimentEvidenceId: 'sentiment-fear-greed' },
+                { text: 'The same price action aligned with the current sentiment reading.', marketEvidenceId: 'gainer-1', sentimentEvidenceId: 'sentiment-fear-greed' },
+                { text: `Watch whether that move and sentiment persist. ${DISCLAIMER}`, marketEvidenceId: 'gainer-1', sentimentEvidenceId: 'sentiment-fear-greed' },
+              ],
+            }),
+          },
+        }],
+      });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+
+  try {
+    const response = createResponse();
+    await briefingHandler(createRequest('203.0.113.48'), response);
+
+    assert.equal(response.body.aiStatus.state, 'ready');
+    assert.equal(response.body.briefing.paragraphs.length, 3);
+    assert.ok(response.body.briefing.paragraphs.every((paragraph) => (
+      paragraph.marketEvidenceId === 'gainer-1'
+      && paragraph.sentimentEvidenceId === 'sentiment-fear-greed'
+    )));
+    assert.equal(providerRequest.response_format.type, 'json_schema');
+    assert.equal(providerRequest.response_format.json_schema.strict, true);
+  } finally {
+    Date.now = originalDateNow;
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
+test('rejects generic prose without the structured evidence contract', async () => {
+  const env = {
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    GROQ_MODEL: process.env.GROQ_MODEL,
+  };
+  const originalFetch = globalThis.fetch;
+  process.env.GROQ_API_KEY = 'test-key';
+  process.env.GROQ_MODEL = 'test/generic-briefing-model';
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/prices')) return jsonResponse(trustedPricePayload());
+    if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
+    if (target === 'https://api.groq.com/openai/v1/chat/completions') {
+      return jsonResponse({ choices: [{ message: { content: validBriefingText('Generic') } }] });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+
+  try {
+    const response = createResponse();
+    await briefingHandler(createRequest('203.0.113.49'), response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.briefing, null);
+    assert.equal(response.body.aiStatus.code, 'provider_invalid_response');
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv(env);
