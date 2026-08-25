@@ -79,10 +79,11 @@ function setResponseCacheControl(res, aiStatus, bypassCache) {
 }
 
 function trustedInternalOrigin() {
-  const deploymentUrls = [
-    process.env.VERCEL_URL,
-    process.env.VERCEL_PROJECT_PRODUCTION_URL,
-  ];
+  const productionUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  const deploymentUrl = process.env.VERCEL_URL;
+  const deploymentUrls = process.env.VERCEL_ENV === 'production'
+    ? [productionUrl, deploymentUrl]
+    : [deploymentUrl, productionUrl];
   for (const configured of deploymentUrls) {
     if (!configured) continue;
     try {
