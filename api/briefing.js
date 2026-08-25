@@ -6,6 +6,7 @@
 // is missing, returns the structured signals only.
 
 import { SYMBOLS } from '../lib/symbols.js';
+import { getGroqModel } from '../lib/groq.js';
 
 async function getJSON(url, headers = {}) {
   const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CommsDashboard/1.0)', ...headers } });
@@ -38,6 +39,7 @@ async function fetchTop(req) {
 async function callLLM({ gainers, losers, headlines }) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return null;
+  const model = getGroqModel();
 
   const fmt = (rows) => rows.map((r) => `${r.ticker} (${r.name}, ${r.category}): ${r.changePct >= 0 ? '+' : ''}${r.changePct.toFixed(2)}%`).join('\n');
   const headlineText = headlines.length
@@ -67,7 +69,7 @@ No specific price targets, no markdown headings, neutral tone, end with: "Inform
     method: 'POST',
     headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
+      model,
       temperature: 0.4,
       max_tokens: 600,
       messages: [
@@ -83,7 +85,7 @@ No specific price targets, no markdown headings, neutral tone, end with: "Inform
   const j = await r.json();
   return {
     text: j?.choices?.[0]?.message?.content || '',
-    model: 'llama-3.3-70b-versatile (Groq)',
+    model: `${model} (Groq)`,
   };
 }
 
