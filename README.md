@@ -36,7 +36,6 @@ Add in **Vercel → Project → Settings → Environment Variables** (or `.env.l
 | `AI_BRIEFING_TTL_SECONDS` / `AI_ANALYSIS_TTL_SECONDS` | Market AI result cache | Optional; defaults to 15 / 30 minutes |
 | `AI_SMART_MONEY_BRIEFING_TTL_SECONDS` | Smart Money AI result cache | Optional; defaults to 36 hours and is also partitioned by UTC market date and accepted-evidence digest |
 | `AI_SMOKE_SECRET` | Forced-generation production smoke | Required for the scheduled smoke; configure the same value as a GitHub Actions secret |
-| `ALPHA_VANTAGE_API_KEY` | WTI + Brent (v2) | [Alpha Vantage](https://www.alphavantage.co/support/#api-key) — two requests per refresh, four per day |
 | `EIA_API_KEY` | Henry Hub spot (v2) | [EIA Open Data](https://www.eia.gov/opendata/register.php) — daily observations published weekly |
 | `COINGECKO_API_KEY` | Crypto (v2) | Optional; [CoinGecko API](https://www.coingecko.com/en/api/pricing) |
 | `CRON_SECRET` | Scheduled market and Smart Money refresh | Random string; secures `/api/market/refresh` and `/api/smart-money/refresh` |
@@ -55,8 +54,8 @@ See [docs/commodities-v2-api-spec.md](docs/commodities-v2-api-spec.md) for archi
 | Route | Purpose |
 | ----- | ------- |
 | `GET /api/prices` | Batched Yahoo daily quotes and history for the full catalogue |
-| `GET /api/market/snapshot` | CoinGecko (live) + cached Alpha Vantage + EIA |
-| `GET /api/market/refresh` | Cron: refresh AV + EIA cache (Bearer `CRON_SECRET`) |
+| `GET /api/market/snapshot` | CoinGecko (live) + EIA; legacy Alpha Vantage cache rows are quarantined |
+| `GET /api/market/refresh` | Cron: refresh EIA cache and clear retired Alpha Vantage rows (Bearer `CRON_SECRET`) |
 | `GET /api/briefing` | Date-partitioned, quota-protected AI briefing grounded in movers, headline sentiment, and Fear & Greed |
 | `GET /api/analysis?ticker=NVDA` | Cached, quota-protected technical and AI analysis |
 | `GET /api/smart-money` | Latest accepted public research snapshot |
@@ -72,7 +71,7 @@ The combined market and Smart Money refresh runs at 06:00 and 18:00 UTC (`vercel
 ## Data trust and resilience
 
 - Daily change is derived from Yahoo's final two valid daily closes, not the start of a multi-day range.
-- Alpha Vantage overlays only the daily-supported WTI (`CL`) and Brent (`BZ`) series. Copper (`HG`), wheat (`ZW`), and corn (`ZC`) stay on Yahoo because Alpha Vantage publishes incompatible global-price series at slower cadences.
+- Alpha Vantage is retired from the enabled market path because its free WTI/Brent feed returned week-old EIA/FRED spot observations for instruments represented in the dashboard as current oil futures. WTI (`CL`) and Brent (`BZ`) therefore remain on the fresh Yahoo futures baseline; legacy Alpha Vantage cache rows are ignored and scheduled refresh makes no Alpha Vantage request.
 - EIA Henry Hub remains a daily observation series even though EIA publishes it weekly; its observation-age allowance is 12 days to cover publication lag and holidays.
 - Yahoo symbols are fetched in 20-symbol batches, cutting the normal price refresh to 14 upstream requests for all 268 assets.
 - The UI reports `LIVE`, `DEGRADED`, or `STALE` from the effective displayed coverage. A complete fresh Yahoo feed keeps the dashboard live when an optional provider overlay is stale; stale overlays are rejected rather than shown. Mock fallback rows remain visible but are excluded from movers, heatmaps, and alerts.

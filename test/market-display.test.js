@@ -98,12 +98,12 @@ test('stale v2 rows do not replace trusted Yahoo prices in ticker, table, or hea
     source: 'yahoo', stale: false, isLive: true,
   };
   const commodity = {
-    ticker: 'CL', category: 'ENERGY', price: 82, changePct: 1,
+    ticker: 'NG', category: 'ENERGY', price: 3.2, changePct: 1,
     source: 'yahoo', stale: false, isLive: true,
   };
   const v2ByTicker = {
     BTC: { ticker: 'BTC', price: 60_000, changePct: -10, source: 'coingecko', stale: true },
-    CL: { ticker: 'CL', price: 70, changePct: -8, source: 'eia', stale: true },
+    NG: { ticker: 'NG', price: 2.8, changePct: -8, source: 'eia', stale: true },
   };
 
   assert.strictEqual(marketDisplay.resolveTickerAsset(crypto, v2ByTicker, true), crypto);
@@ -119,7 +119,7 @@ test('V2 overlays update spot fields but preserve Yahoo session change across ma
     source: 'yahoo', asOf: yahooAsOf, stale: false, isLive: true,
   };
   const commodity = {
-    ticker: 'CL', category: 'ENERGY', price: 82, changePct: 1.25, changeAbs: 1.01,
+    ticker: 'NG', category: 'ENERGY', price: 3.2, changePct: 1.25, changeAbs: 0.04,
     source: 'yahoo', asOf: yahooAsOf, stale: false, isLive: true,
   };
   const v2ByTicker = {
@@ -127,9 +127,9 @@ test('V2 overlays update spot fields but preserve Yahoo session change across ma
       ticker: 'BTC', price: 68_000, changePct: -10, changeAbs: -7_000,
       source: 'coingecko', asOf: v2AsOf, stale: false,
     },
-    CL: {
-      ticker: 'CL', price: 83, changePct: -8, changeAbs: -6,
-      source: 'alphavantage', asOf: v2AsOf, stale: false,
+    NG: {
+      ticker: 'NG', price: 3.1, changePct: -8, changeAbs: -0.27,
+      source: 'eia', asOf: v2AsOf, stale: false,
     },
   };
 
@@ -144,14 +144,16 @@ test('V2 overlays update spot fields but preserve Yahoo session change across ma
   for (const row of [table, heatmap]) {
     assert.deepEqual(
       [row.price, row.source, row.asOf, row.changePct, row.changeAbs],
-      [83, 'alphavantage', v2AsOf, 1.25, 1.01],
+      [3.1, 'eia', v2AsOf, 1.25, 0.04],
     );
   }
 });
 
-test('unsupported Alpha Vantage global-price series leave Yahoo futures authoritative', () => {
+test('retired Alpha Vantage oil and unsupported global-price series leave Yahoo futures authoritative', () => {
   const asOf = '2026-08-25T12:00:00.000Z';
   const assets = [
+    { ticker: 'CL', category: 'ENERGY', price: 82 },
+    { ticker: 'BZ', category: 'ENERGY', price: 86 },
     { ticker: 'HG', category: 'METALS', price: 4.4 },
     { ticker: 'ZW', category: 'AGRICULTURE', price: 620 },
     { ticker: 'ZC', category: 'AGRICULTURE', price: 440 },
@@ -172,8 +174,8 @@ test('unsupported Alpha Vantage global-price series leave Yahoo futures authorit
     stale: false,
   }]));
 
-  assert.equal(isV2Commodity('CL'), true);
-  assert.equal(isV2Commodity('BZ'), true);
+  assert.equal(isV2Commodity('CL'), false);
+  assert.equal(isV2Commodity('BZ'), false);
   assert.equal(isV2Commodity('NG'), true);
 
   for (const asset of assets) {
@@ -185,7 +187,7 @@ test('unsupported Alpha Vantage global-price series leave Yahoo futures authorit
 
 test('V2-only overlays remain untrusted and omit session change across market views', () => {
   const fallbackCommodity = {
-    ticker: 'CL', category: 'ENERGY', price: 75, changePct: 0,
+    ticker: 'NG', category: 'ENERGY', price: 2.75, changePct: 0,
     source: 'mock', asOf: null, stale: true, isLive: false,
   };
   const fallbackCrypto = {
@@ -193,8 +195,8 @@ test('V2-only overlays remain untrusted and omit session change across market vi
     source: 'mock', asOf: null, stale: true, isLive: false,
   };
   const freshV2 = {
-    CL: {
-      ticker: 'CL', price: 71, changePct: -2, changeAbs: -1.5,
+    NG: {
+      ticker: 'NG', price: 3.1, changePct: -2, changeAbs: -0.06,
       source: 'eia', asOf: '2026-08-25T12:00:00.000Z', stale: false,
     },
     BTC: {
@@ -213,8 +215,8 @@ test('V2-only overlays remain untrusted and omit session change across market vi
       [row.price, row.source, row.asOf, row.changePct, row.changeAbs, row.isLive]
     )),
     [
-      [71, 'eia', '2026-08-25T12:00:00.000Z', null, null, false],
-      [71, 'eia', '2026-08-25T12:00:00.000Z', null, null, false],
+      [3.1, 'eia', '2026-08-25T12:00:00.000Z', null, null, false],
+      [3.1, 'eia', '2026-08-25T12:00:00.000Z', null, null, false],
       [68_000, 'coingecko', '2026-08-25T12:00:00.000Z', null, null, false],
     ],
   );
