@@ -4,6 +4,7 @@ import test from 'node:test';
 import { createSmartMoneyHandler } from '../api/smart-money.js';
 import { createSmartMoneyHistoryHandler } from '../api/smart-money/history.js';
 import {
+  pruneJournal,
   publishJournalGeneration,
   readAcceptedSmartMoneySnapshot,
   readJournal,
@@ -35,6 +36,42 @@ function rebindPrivateSnapshot(snapshot) {
     publicSnapshot: snapshot.publicSnapshot,
     adapterState: snapshot.adapterState,
   }, { now: new Date('2026-08-28T12:00:00.000Z') }));
+}
+
+const TEST_JOURNAL_MANIFEST = 'smart-money/v1/journal/manifest.json';
+
+async function seedAcceptedJournalSnapshot(adapter, snapshot, now) {
+  const staged = await stageJournal({
+    refreshStartedAt: snapshot.refreshStartedAt,
+    signals: snapshot.publicSnapshot.signals,
+    dailyMarks: [],
+  }, { adapter, now: new Date(now) });
+  assert.equal(staged.durableWriteSucceeded, true);
+  const published = await publishJournalGeneration({
+    refreshStartedAt: snapshot.refreshStartedAt,
+    snapshot,
+  }, { adapter, now: new Date(now) });
+  assert.equal(published.durableWriteSucceeded, true);
+}
+
+function installJournalMaintenance(adapter, { claimedAt, leaseUntil, suffix }) {
+  const manifest = adapter.inspect(TEST_JOURNAL_MANIFEST);
+  manifest.maintenance = {
+    token: `claim:00000000-0000-4000-8000-${suffix}`,
+    claimedAt,
+    leaseUntil,
+  };
+  adapter.seed(TEST_JOURNAL_MANIFEST, manifest);
+}
+
+function wireRefreshJournal(fixture, adapter, now = '2026-08-28T12:00:00.000Z') {
+  fixture.deps.appendJournal = (input) => stageJournal(input, {
+    adapter, now: new Date(now),
+  });
+  fixture.deps.publishJournalGeneration = (input) => publishJournalGeneration(input, {
+    adapter, now: new Date(now),
+  });
+  fixture.deps.pruneJournal = (input) => pruneJournal(input, { adapter });
 }
 
 test('refresh runs only the exact seven currently enabled adapters', async () => {
@@ -374,6 +411,359 @@ test('only an explicit unanimous absent durable-candidate result may start a new
   assert.equal(calls.appendJournal, 1);
   assert.equal(calls.writeSnapshot, 1);
   assert.equal(calls.publishJournal, 1);
+});
+
+test('an unexpired orphan candidate is reported pending before any provider calls', async () => {
+  const { deps, calls, previous } = createRefreshDeps({ signals: [] });
+  deps.readCandidateSnapshot = async () => ({ status: 'absent' });
+  let reconciliationInput = null;
+  deps.pruneJournal = async (input) => {
+    calls.events.push('prune');
+    reconciliationInput = structuredClone(input);
+    return {
+      durableWriteSucceeded: false,
+      partitions: [],
+      manifest: { ok: false, error: 'publication_write_failed' },
+      abandonment: { ok: false, pending: true, error: 'journal_generation_pending' },
+    };
+  };
+
+  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+
+  assert.equal(result.persisted, false);
+  assert.equal(result.errorCode, 'journal_reconciliation_pending');
+  assert.ok(Object.values(calls.fetchByAdapter).every((count) => count === 0));
+  assert.equal(calls.appendJournal, 0);
+  assert.deepEqual(reconciliationInput.abandonment, {
+    mode: 'expired',
+    through: '2026-08-28T12:00:00.000Z',
+    evidence: {
+      candidateStatus: 'absent',
+      current: {
+        refreshStartedAt: previous.refreshStartedAt,
+        snapshotDigest: previous.stateDigest,
+      },
+    },
+  });
+});
+
+test('snapshot failure rereads unanimous absence and abandons only its exact generation', async () => {
+  const { deps, calls } = createRefreshDeps({ signals: [], snapshotDurable: false });
+  let candidateReads = 0;
+  const pruneInputs = [];
+  deps.readCandidateSnapshot = async () => {
+    candidateReads += 1;
+    return { status: 'absent' };
+  };
+  deps.pruneJournal = async (input) => {
+    calls.events.push('prune');
+    pruneInputs.push(structuredClone(input));
+    return {
+      durableWriteSucceeded: true,
+      partitions: [],
+      manifest: { ok: true, error: null },
+      abandonment: input.abandonment
+        ? { ok: true, pending: false, error: null }
+        : undefined,
+    };
+  };
+
+  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+
+  assert.equal(result.persisted, false);
+  assert.equal(result.errorCode, 'snapshot_persistence_failed');
+  assert.equal(candidateReads, 2);
+  assert.deepEqual(pruneInputs.map((input) => input.abandonment?.mode), ['expired', 'exact']);
+  assert.equal(pruneInputs[1].abandonment.generation, '2026-08-28T12:00:00.000Z');
+  assert.equal(calls.publishJournal, 0);
+});
+
+test('a lost snapshot write response recovers the exact ready generation without abandonment', async () => {
+  const { deps, calls, captured } = createRefreshDeps({ signals: [] });
+  let candidateReads = 0;
+  deps.readCandidateSnapshot = async () => {
+    candidateReads += 1;
+    return candidateReads === 1
+      ? { status: 'absent' }
+      : { status: 'ready', snapshot: structuredClone(captured.writtenSnapshot) };
+  };
+  deps.writeSnapshot = async (snapshot) => {
+    calls.events.push('snapshot');
+    calls.writeSnapshot += 1;
+    captured.writtenSnapshot = structuredClone(snapshot);
+    return { snapshot: null, durableWriteSucceeded: false };
+  };
+  const pruneInputs = [];
+  deps.pruneJournal = async (input) => {
+    calls.events.push('prune');
+    pruneInputs.push(structuredClone(input));
+    return {
+      durableWriteSucceeded: true,
+      partitions: [],
+      manifest: { ok: true, error: null },
+      ...(input.abandonment ? {
+        abandonment: { ok: true, pending: false, error: null },
+      } : {}),
+    };
+  };
+
+  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+
+  assert.equal(result.persisted, true);
+  assert.equal(result.errorCode, null);
+  assert.equal(candidateReads, 2);
+  assert.equal(calls.publishJournal, 1);
+  assert.deepEqual(pruneInputs.map((input) => input.abandonment?.mode ?? null), ['expired', null]);
+});
+
+test('a unanimous ready accepted candidate binds startup abandonment before provider calls', async () => {
+  const { deps, calls, previous } = createRefreshDeps({ signals: [] });
+  deps.readCandidateSnapshot = async () => ({
+    status: 'ready', snapshot: structuredClone(previous),
+  });
+  const pruneInputs = [];
+  deps.pruneJournal = async (input) => {
+    calls.events.push('prune');
+    pruneInputs.push(structuredClone(input));
+    return {
+      durableWriteSucceeded: true,
+      partitions: [],
+      manifest: { ok: true, error: null },
+      ...(input.abandonment ? {
+        abandonment: { ok: true, pending: false, error: null },
+      } : {}),
+    };
+  };
+
+  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+
+  assert.equal(result.persisted, true);
+  const abandonmentCall = pruneInputs.find((input) => input.abandonment);
+  assert.deepEqual(abandonmentCall.abandonment.evidence, {
+    candidateStatus: 'ready',
+    current: {
+      refreshStartedAt: previous.refreshStartedAt,
+      snapshotDigest: previous.stateDigest,
+    },
+  });
+  assert.ok(calls.events.indexOf('prune') < calls.events.findIndex((event) => event.startsWith('fetch:')));
+});
+
+test('ready current candidate reclaims expired crashed maintenance before providers run', async () => {
+  const adapter = memoryJournalAdapter();
+  const fixture = createRefreshDeps({ signals: [] });
+  await seedAcceptedJournalSnapshot(
+    adapter, fixture.previous, '2026-08-28T12:00:00.000Z',
+  );
+  installJournalMaintenance(adapter, {
+    claimedAt: '2026-08-28T11:40:00.000Z',
+    leaseUntil: '2026-08-28T11:42:00.000Z',
+    suffix: '000000000101',
+  });
+  fixture.deps.readCandidateSnapshot = async () => ({
+    status: 'ready', snapshot: structuredClone(fixture.previous),
+  });
+  wireRefreshJournal(fixture, adapter);
+
+  const result = await createSmartMoneyRefresher(fixture.deps)({ trigger: 'cron' });
+
+  assert.equal(result.persisted, true);
+  assert.equal(result.errorCode, null);
+  assert.ok(ENABLED_ADAPTER_IDS.every((id) => fixture.calls.fetchByAdapter[id] === 1));
+  assert.equal(adapter.inspect(TEST_JOURNAL_MANIFEST).maintenance, null);
+});
+
+test('ready current candidate waits safely for unexpired crashed maintenance', async () => {
+  const adapter = memoryJournalAdapter();
+  const fixture = createRefreshDeps({ signals: [] });
+  await seedAcceptedJournalSnapshot(
+    adapter, fixture.previous, '2026-08-28T12:00:00.000Z',
+  );
+  installJournalMaintenance(adapter, {
+    claimedAt: '2026-08-28T11:59:00.000Z',
+    leaseUntil: '2026-08-28T12:01:00.000Z',
+    suffix: '000000000102',
+  });
+  fixture.deps.readCandidateSnapshot = async () => ({
+    status: 'ready', snapshot: structuredClone(fixture.previous),
+  });
+  wireRefreshJournal(fixture, adapter);
+
+  const result = await createSmartMoneyRefresher(fixture.deps)({ trigger: 'cron' });
+
+  assert.equal(result.persisted, false);
+  assert.equal(result.errorCode, 'journal_reconciliation_failed');
+  assert.ok(Object.values(fixture.calls.fetchByAdapter).every((count) => count === 0));
+  assert.ok(adapter.inspect(TEST_JOURNAL_MANIFEST).maintenance);
+});
+
+test('ready newer candidate reclaims expired maintenance without abandoning its staged generation', async () => {
+  const adapter = memoryJournalAdapter();
+  const baselineFixture = createRefreshDeps({ signals: [] });
+  const baseline = baselineFixture.previous;
+  await seedAcceptedJournalSnapshot(adapter, baseline, '2026-08-28T12:00:00.000Z');
+  const candidateGeneration = '2026-08-28T11:00:00.000Z';
+  const candidate = buildSmartMoneyPrivateSnapshot({
+    refreshStartedAt: candidateGeneration,
+    publicSnapshot: {
+      ...structuredClone(baseline.publicSnapshot),
+      fetchedAt: candidateGeneration,
+    },
+    adapterState: structuredClone(baseline.adapterState),
+  }, { now: new Date(candidateGeneration) });
+  const staged = await stageJournal({
+    refreshStartedAt: candidateGeneration,
+    signals: candidate.publicSnapshot.signals,
+    dailyMarks: [],
+  }, { adapter, now: new Date('2026-08-28T12:00:00.000Z') });
+  assert.equal(staged.durableWriteSucceeded, true);
+  installJournalMaintenance(adapter, {
+    claimedAt: '2026-08-28T11:40:00.000Z',
+    leaseUntil: '2026-08-28T11:42:00.000Z',
+    suffix: '000000000103',
+  });
+  const fixture = createRefreshDeps({ previous: baseline, signals: [] });
+  fixture.deps.readCandidateSnapshot = async () => ({
+    status: 'ready', snapshot: structuredClone(candidate),
+  });
+  wireRefreshJournal(fixture, adapter);
+
+  const result = await createSmartMoneyRefresher(fixture.deps)({ trigger: 'cron' });
+
+  assert.equal(result.persisted, true);
+  assert.equal(result.errorCode, null);
+  assert.ok(Object.values(fixture.calls.fetchByAdapter).every((count) => count === 0));
+  assert.equal(adapter.inspect(TEST_JOURNAL_MANIFEST).maintenance, null);
+  assert.deepEqual(await readAcceptedSmartMoneySnapshot({
+    adapter, now: new Date('2026-08-28T12:00:00.000Z'),
+  }), candidate);
+});
+
+test('ready newer candidate remains staged while crashed maintenance is unexpired', async () => {
+  const adapter = memoryJournalAdapter();
+  const baselineFixture = createRefreshDeps({ signals: [] });
+  const baseline = baselineFixture.previous;
+  await seedAcceptedJournalSnapshot(adapter, baseline, '2026-08-28T12:00:00.000Z');
+  const candidateGeneration = '2026-08-28T11:00:00.000Z';
+  const candidate = buildSmartMoneyPrivateSnapshot({
+    refreshStartedAt: candidateGeneration,
+    publicSnapshot: {
+      ...structuredClone(baseline.publicSnapshot),
+      fetchedAt: candidateGeneration,
+    },
+    adapterState: structuredClone(baseline.adapterState),
+  }, { now: new Date(candidateGeneration) });
+  await stageJournal({
+    refreshStartedAt: candidateGeneration,
+    signals: candidate.publicSnapshot.signals,
+    dailyMarks: [],
+  }, { adapter, now: new Date('2026-08-28T12:00:00.000Z') });
+  installJournalMaintenance(adapter, {
+    claimedAt: '2026-08-28T11:59:00.000Z',
+    leaseUntil: '2026-08-28T12:01:00.000Z',
+    suffix: '000000000104',
+  });
+  const fixture = createRefreshDeps({ previous: baseline, signals: [] });
+  fixture.deps.readCandidateSnapshot = async () => ({
+    status: 'ready', snapshot: structuredClone(candidate),
+  });
+  wireRefreshJournal(fixture, adapter);
+
+  const result = await createSmartMoneyRefresher(fixture.deps)({ trigger: 'cron' });
+
+  assert.equal(result.persisted, false);
+  assert.equal(result.errorCode, 'journal_publication_failed');
+  assert.ok(Object.values(fixture.calls.fetchByAdapter).every((count) => count === 0));
+  assert.ok(adapter.inspect(TEST_JOURNAL_MANIFEST).claims[candidateGeneration]);
+});
+
+test('satisfied startup abandonment proceeds when unrelated journal retention cleanup fails', async () => {
+  const { deps, calls } = createRefreshDeps({ signals: [] });
+  deps.readCandidateSnapshot = async () => ({ status: 'absent' });
+  const pruneInputs = [];
+  deps.pruneJournal = async (input) => {
+    calls.events.push('prune');
+    pruneInputs.push(structuredClone(input));
+    return {
+      durableWriteSucceeded: false,
+      partitions: [{ date: '2025-07-01', ok: false, error: 'partition_delete_failed' }],
+      manifest: { ok: true, error: null },
+      ...(input.abandonment ? {
+        abandonment: { ok: true, pending: false, error: null },
+      } : {}),
+    };
+  };
+
+  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+
+  assert.equal(pruneInputs[0].abandonment.mode, 'expired');
+  assert.ok(calls.events.indexOf('prune') < calls.events.findIndex((event) => event.startsWith('fetch:')));
+  assert.ok(ENABLED_ADAPTER_IDS.every((id) => calls.fetchByAdapter[id] === 1));
+  assert.equal(calls.appendJournal, 1);
+  assert.equal(calls.publishJournal, 1);
+  assert.equal(result.persisted, true);
+  assert.equal(result.partial, true);
+  assert.equal(result.errorCode, null);
+  assert.equal(result.warnings.includes('journal:prune_failed'), true);
+});
+
+test('failed snapshot generation is reconciled so the next refresh publishes its stable signal once', async () => {
+  const adapter = memoryJournalAdapter();
+  const seed = createRefreshDeps({ signals: [] });
+  const baseline = buildSmartMoneyPrivateSnapshot({
+    refreshStartedAt: seed.previous.refreshStartedAt,
+    publicSnapshot: { ...structuredClone(seed.previous.publicSnapshot), signals: [] },
+    adapterState: seed.previous.adapterState,
+  }, { now: new Date('2026-08-28T12:00:00.000Z') });
+  await stageJournal({
+    refreshStartedAt: baseline.refreshStartedAt, signals: [], dailyMarks: [],
+  }, { adapter, now: new Date('2026-08-28T12:00:00.000Z') });
+  await publishJournalGeneration({
+    refreshStartedAt: baseline.refreshStartedAt, snapshot: baseline,
+  }, { adapter, now: new Date('2026-08-28T12:00:00.000Z') });
+  let durableCandidate = structuredClone(baseline);
+
+  function wiredFixture(now, snapshotSucceeds) {
+    const fixture = createRefreshDeps({
+      now, previous: baseline, signals: [structuredClone(ACCEPTED_SNAPSHOT.signals[0])],
+      echoJournalSignals: true,
+    });
+    fixture.deps.readSnapshot = () => readAcceptedSmartMoneySnapshot({
+      adapter, now: new Date(now),
+    });
+    fixture.deps.readCandidateSnapshot = async () => ({
+      status: 'ready', snapshot: structuredClone(durableCandidate),
+    });
+    fixture.deps.appendJournal = (input) => stageJournal(input, {
+      adapter, now: new Date(now),
+    });
+    fixture.deps.publishJournalGeneration = (input) => publishJournalGeneration(input, {
+      adapter, now: new Date(now),
+    });
+    fixture.deps.pruneJournal = (input) => pruneJournal(input, { adapter });
+    fixture.deps.writeSnapshot = async (snapshot) => {
+      if (snapshotSucceeds) durableCandidate = structuredClone(snapshot);
+      return {
+        snapshot: snapshotSucceeds ? snapshot : null,
+        durableWriteSucceeded: snapshotSucceeds,
+      };
+    };
+    return fixture;
+  }
+
+  const first = wiredFixture('2026-08-28T12:00:00.000Z', false);
+  const failed = await createSmartMoneyRefresher(first.deps)({ trigger: 'cron' });
+  assert.equal(failed.persisted, false);
+  assert.equal(failed.errorCode, 'snapshot_persistence_failed');
+  assert.deepEqual(adapter.inspect('smart-money/v1/journal/publications.json').staged, {});
+
+  const second = wiredFixture('2026-08-28T12:13:00.000Z', true);
+  const accepted = await createSmartMoneyRefresher(second.deps)({ trigger: 'cron' });
+  assert.equal(accepted.persisted, true);
+  const history = await readJournal({
+    since: '2026-08-25T00:00:00.000Z', limit: 50,
+  }, { adapter, now: new Date('2026-08-28T12:13:00.000Z') });
+  assert.equal(history.signals.filter((row) => row.id === ACCEPTED_SNAPSHOT.signals[0].id).length, 1);
 });
 
 test('all due adapters settle synchronous failures without erasing successful siblings', async () => {
