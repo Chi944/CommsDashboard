@@ -252,6 +252,52 @@ test('accepted reads reject forged, incomplete, and internally swapped private s
   );
 });
 
+test('source ownership swaps cannot cross publication or accepted snapshot and history reads', async () => {
+  const valid = acceptedPrivateSnapshot(GENERATION, []);
+  const institutionalSwap = structuredClone(valid);
+  [institutionalSwap.adapterState.adapters[1].source,
+    institutionalSwap.adapterState.adapters[2].source] = [
+    institutionalSwap.adapterState.adapters[2].source,
+    institutionalSwap.adapterState.adapters[1].source,
+  ];
+  institutionalSwap.stateDigest = computeSmartMoneyPrivateStateDigest(institutionalSwap);
+  const foreignSecCik = structuredClone(valid);
+  foreignSecCik.adapterState.adapters[0].source.snapshot.filings[0].cik = '1050446';
+  foreignSecCik.stateDigest = computeSmartMoneyPrivateStateDigest(foreignSecCik);
+
+  for (const corrupt of [institutionalSwap, foreignSecCik]) {
+    const publicationAdapter = memoryJournalAdapter();
+    await stageJournal({
+      refreshStartedAt: GENERATION, signals: [], dailyMarks: [],
+    }, { adapter: publicationAdapter, now: new Date(GENERATION) });
+    await assert.rejects(
+      publishJournalGeneration({ refreshStartedAt: GENERATION, snapshot: corrupt }, {
+        adapter: publicationAdapter, now: new Date(GENERATION),
+      }),
+      /schema_invalid/,
+    );
+    assert.equal(
+      await readAcceptedSmartMoneySnapshot({
+        adapter: publicationAdapter, now: new Date(GENERATION),
+      }),
+      null,
+    );
+
+    const readAdapter = memoryJournalAdapter();
+    readAdapter.seed(PUBLICATIONS, acceptedPublicationRecord(corrupt));
+    await assert.rejects(
+      readAcceptedSmartMoneySnapshot({ adapter: readAdapter, now: new Date(GENERATION) }),
+      /schema_invalid/,
+    );
+    await assert.rejects(
+      readJournal({ since: '2026-08-26T00:00:00.000Z', limit: 20 }, {
+        adapter: readAdapter, now: new Date(GENERATION),
+      }),
+      /schema_invalid/,
+    );
+  }
+});
+
 test('a lost acceptance response is reread as durable without splitting snapshot and history', async () => {
   const underlying = memoryJournalAdapter();
   let loseAcceptanceResponse = true;

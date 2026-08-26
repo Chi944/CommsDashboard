@@ -17,6 +17,7 @@ import {
   normalizeSmartMoneySettledState,
   validateSmartMoneyPrivateSnapshot,
 } from '../lib/smart-money/refresh.js';
+import { computeSmartMoneyPrivateStateDigest } from '../lib/smart-money/private-snapshot.js';
 import { readDurableSmartMoneyCandidate } from '../lib/smart-money/store.js';
 import { mockRequest } from './helpers/api.js';
 import { memoryJournalAdapter } from './fixtures/smart-money/journal.js';
@@ -566,6 +567,32 @@ test('private envelope digest rejects swapped child statuses and public/private 
     /snapshot_invalid|schema_invalid/,
   );
   assert.match(previous.stateDigest, /^sha256:[a-f0-9]{64}$/);
+});
+
+test('private validation rejects recomputed institutional source swaps and foreign SEC CIK state', () => {
+  const { previous } = createRefreshDeps({ signals: [] });
+  const sourceSwap = structuredClone(previous);
+  [sourceSwap.adapterState.adapters[1].source, sourceSwap.adapterState.adapters[2].source] = [
+    sourceSwap.adapterState.adapters[2].source,
+    sourceSwap.adapterState.adapters[1].source,
+  ];
+  sourceSwap.stateDigest = computeSmartMoneyPrivateStateDigest(sourceSwap);
+  assert.throws(
+    () => validateSmartMoneyPrivateSnapshot(sourceSwap, {
+      now: new Date('2026-08-28T12:00:00.000Z'),
+    }),
+    /schema_invalid/,
+  );
+
+  const foreignSecCik = structuredClone(previous);
+  foreignSecCik.adapterState.adapters[0].source.snapshot.filings[0].cik = '1050446';
+  foreignSecCik.stateDigest = computeSmartMoneyPrivateStateDigest(foreignSecCik);
+  assert.throws(
+    () => validateSmartMoneyPrivateSnapshot(foreignSecCik, {
+      now: new Date('2026-08-28T12:00:00.000Z'),
+    }),
+    /schema_invalid/,
+  );
 });
 
 test('private envelope constructor computes its digest internally and rejects caller digest input', () => {

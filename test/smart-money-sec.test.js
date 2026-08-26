@@ -36,15 +36,32 @@ test('13F parser preserves period, filing, amendment, CUSIP, and research-only t
   });
 });
 
-test('SEC submission parser retains only supported forms and amendment semantics', () => {
+test('SEC submission parser retains only supported 13F forms and amendment semantics', () => {
   assert.deepEqual(parseSecSubmissions(SUBMISSIONS, { cik: '2045724' }).map((filing) => ({
     form: filing.form, periodEnd: filing.periodEnd, accessionNumber: filing.accessionNumber,
+    primaryDocument: filing.primaryDocument,
     isAmendment: filing.isAmendment,
   })), [
-    { form: '13F-HR', periodEnd: '2026-06-30', accessionNumber: '0002045724-26-000001', isAmendment: false },
-    { form: '13F-HR/A', periodEnd: '2026-06-30', accessionNumber: '0002045724-26-000002', isAmendment: true },
-    { form: 'SC 13D', periodEnd: '2026-06-30', accessionNumber: '0002045724-26-000003', isAmendment: false },
+    { form: '13F-HR', periodEnd: '2026-06-30', accessionNumber: '0002045724-26-000001', primaryDocument: 'xslForm13F_X02/primary_doc.xml', isAmendment: false },
+    { form: '13F-HR/A', periodEnd: '2026-06-30', accessionNumber: '0002045724-26-000002', primaryDocument: 'xslForm13F_X02/amendment.xml', isAmendment: true },
   ]);
+});
+
+test('live-shaped Schedule rows with blank report dates are ignored only after global shape validation', () => {
+  const parsed = parseSecSubmissions(SUBMISSIONS, { cik: '2045724' });
+  assert.deepEqual(parsed.map(({ form, periodEnd }) => [form, periodEnd]), [
+    ['13F-HR', '2026-06-30'],
+    ['13F-HR/A', '2026-06-30'],
+  ]);
+
+  const nonPrimitiveUnsupportedRow = structuredClone(SUBMISSIONS);
+  nonPrimitiveUnsupportedRow.filings.recent.primaryDocument[
+    nonPrimitiveUnsupportedRow.filings.recent.primaryDocument.length - 1
+  ] = { unsafe: true };
+  assert.throws(
+    () => parseSecSubmissions(nonPrimitiveUnsupportedRow, { cik: '2045724' }),
+    { code: 'schema_invalid' },
+  );
 });
 
 test('SEC submissions reject mismatched CIKs, malformed parallel arrays, and impossible calendar dates', () => {
@@ -138,16 +155,42 @@ test('SEC snapshot uses bounded transport with an identified user agent and info
   const snapshot = await fetchSecSnapshot({ cik: '2045724', userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co' }, {
     fetchProviderJson: async (url, options) => {
       jsonCalls.push({ url, options });
-      return url.includes('/submissions/') ? SUBMISSIONS : FILING_INDEX;
+      return SUBMISSIONS;
     },
-    fetchProviderText: async (url, options) => { textCalls.push({ url, options }); return INFORMATION_TABLE_XML; },
+    fetchProviderText: async (url, options) => {
+      textCalls.push({ url, options });
+      return url.endsWith('/index.json') ? JSON.stringify(FILING_INDEX) : INFORMATION_TABLE_XML;
+    },
   });
-  assert.equal(jsonCalls.length, 2);
-  assert.equal(textCalls.length, 1);
+  assert.equal(jsonCalls.length, 1);
+  assert.equal(textCalls.length, 2);
   assert.equal(snapshot.filings.length, 1);
   assert.equal(snapshot.holdings[0].ticker, null);
   assert.equal(jsonCalls[0].options.requestOptions.headers['User-Agent'], 'CommsDashboard/1.0 compliance@monitored-contact.co');
-  assert.match(textCalls[0].url, /infotable\.xml$/);
+  assert.match(textCalls[1].url, /infotable\.xml$/);
+});
+
+test('SEC archive index accepts official text/html only through bounded JSON parsing', async () => {
+  const textCalls = [];
+  const snapshot = await fetchSecSnapshot({
+    cik: '2045724', maxFilings: 1,
+    userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
+  }, {
+    fetchProviderJson: async (url) => {
+      if (!url.includes('/submissions/')) throw new Error('archive index bypassed bounded text path');
+      return SUBMISSIONS;
+    },
+    fetchProviderText: async (url, options) => {
+      textCalls.push({ url, options });
+      return url.endsWith('/index.json') ? JSON.stringify(FILING_INDEX) : INFORMATION_TABLE_XML;
+    },
+  });
+  assert.equal(snapshot.filings[0].periodEnd, '2026-06-30');
+  assert.equal(snapshot.holdings.length, 1);
+  assert.deepEqual(textCalls[0].options.acceptedContentTypes, [
+    'application/json', 'text/json', 'text/html',
+  ]);
+  assert.equal(textCalls[0].options.maxBytes, 1_000_000);
 });
 
 test('SEC snapshots bound the number of filing index and XML requests', async () => {
@@ -164,13 +207,16 @@ test('SEC snapshots bound the number of filing index and XML requests', async ()
   }, {
     fetchProviderJson: async (url) => {
       jsonRequests += 1;
-      return url.includes('/submissions/') ? submissions : FILING_INDEX;
+      return submissions;
     },
-    fetchProviderText: async () => { textRequests += 1; return INFORMATION_TABLE_XML; },
+    fetchProviderText: async (url) => {
+      textRequests += 1;
+      return url.endsWith('/index.json') ? JSON.stringify(FILING_INDEX) : INFORMATION_TABLE_XML;
+    },
   });
   assert.equal(snapshot.filings.length, 1);
-  assert.equal(jsonRequests, 2);
-  assert.equal(textRequests, 1);
+  assert.equal(jsonRequests, 1);
+  assert.equal(textRequests, 2);
 });
 
 test('SEC adapter identity rejects a CIK mismatch before transport', async () => {
@@ -215,7 +261,10 @@ test('concurrent SEC snapshots schedule every physical transport attempt, includ
       cik: '2045724', userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
     }, {
       scheduler, fetchProviderJson: transport,
-      fetchProviderText: async (_url, options) => { await options.fetchImpl('https://www.sec.gov/test', {}); return INFORMATION_TABLE_XML; },
+      fetchProviderText: async (url, options) => {
+        await options.fetchImpl('https://www.sec.gov/test', {});
+        return url.endsWith('/index.json') ? JSON.stringify(FILING_INDEX) : INFORMATION_TABLE_XML;
+      },
     })));
   } finally {
     globalThis.fetch = originalFetch;
