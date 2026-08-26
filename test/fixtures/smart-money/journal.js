@@ -1,6 +1,6 @@
 export const SIGNAL = Object.freeze({
   id: 'hyperliquid-account-details:position-1',
-  entityId: 'hyperliquid:0x0000000000000000000000000000000000000000',
+  entityId: 'hyperliquid:0x0000000000000000000000000000000000000def',
   activityId: 'activity:hyperliquid-position-1',
   kind: 'position_change',
   action: 'open',
@@ -23,7 +23,7 @@ export const SIGNAL = Object.freeze({
   observedAt: '2026-08-26T00:05:00.000Z',
   delaySeconds: 300,
   providerId: 'hyperliquid-account-details',
-  sourceUrl: 'https://app.hyperliquid.xyz/explorer/address/0x0000000000000000000000000000000000000000',
+  sourceUrl: 'https://app.hyperliquid.xyz/explorer/address/0x0000000000000000000000000000000000000def',
   sourceGrade: 'provider_reported',
   identityStatus: 'anonymous',
   confidence: 'high',

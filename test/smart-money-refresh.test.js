@@ -17,6 +17,7 @@ import {
   normalizeSmartMoneySettledState,
   validateSmartMoneyPrivateSnapshot,
 } from '../lib/smart-money/refresh.js';
+import { readDurableSmartMoneyCandidate } from '../lib/smart-money/store.js';
 import { mockRequest } from './helpers/api.js';
 import { memoryJournalAdapter } from './fixtures/smart-money/journal.js';
 import {
@@ -162,6 +163,61 @@ test('rights assertion occurs before providers, storage mutation, or publication
   assert.ok(Object.values(calls.fetchByAdapter).every((count) => count === 0));
   assert.equal(calls.appendJournal, 0);
   assert.equal(calls.writeSnapshot, 0);
+});
+
+test('ambiguous durable-candidate probes fail closed before generation C can overwrite B', async () => {
+  const generationB = {
+    refreshStartedAt: '2026-08-27T12:00:00.000Z', marker: 'recoverable-generation-b',
+  };
+  const cases = [
+    {
+      expected: 'candidate_storage_unavailable',
+      readCandidate: async () => null,
+    },
+    {
+      expected: 'candidate_storage_unavailable',
+      readCandidate: () => readDurableSmartMoneyCandidate({
+        blobConfigured: true,
+        redisConfigured: true,
+        readBlob: async () => { throw new Error('private Blob outage'); },
+        readRedis: async () => ({ data: null, error: null }),
+      }),
+    },
+    {
+      expected: 'candidate_storage_conflict',
+      readCandidate: () => readDurableSmartMoneyCandidate({
+        blobConfigured: true,
+        redisConfigured: true,
+        readBlob: async () => ({ data: generationB, error: null }),
+        readRedis: async () => ({
+          data: { ...generationB, marker: 'different-generation-b-content' }, error: null,
+        }),
+      }),
+    },
+  ];
+  for (const { expected, readCandidate } of cases) {
+    const { deps, calls } = createRefreshDeps({ signals: [] });
+    deps.readCandidateSnapshot = readCandidate;
+    const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+    assert.equal(result.persisted, false);
+    assert.equal(result.errorCode, expected);
+    assert.ok(Object.values(calls.fetchByAdapter).every((count) => count === 0));
+    assert.equal(calls.appendJournal, 0);
+    assert.equal(calls.writeSnapshot, 0);
+    assert.equal(calls.publishJournal, 0);
+  }
+});
+
+test('only an explicit unanimous absent durable-candidate result may start a new generation', async () => {
+  const { deps, calls } = createRefreshDeps({ signals: [] });
+  deps.readCandidateSnapshot = async () => ({ status: 'absent' });
+  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+  assert.equal(result.persisted, true);
+  assert.equal(result.errorCode, null);
+  assert.ok(ENABLED_ADAPTER_IDS.every((id) => calls.fetchByAdapter[id] === 1));
+  assert.equal(calls.appendJournal, 1);
+  assert.equal(calls.writeSnapshot, 1);
+  assert.equal(calls.publishJournal, 1);
 });
 
 test('all due adapters settle synchronous failures without erasing successful siblings', async () => {
@@ -405,8 +461,12 @@ test('snapshot and history share one acceptance gate across marker failure and r
   }, { adapter, now: new Date('2026-08-28T12:00:00.000Z') });
 
   let durableCandidate = null;
-  fixture.deps.readSnapshot = () => readAcceptedSmartMoneySnapshot({ adapter });
-  fixture.deps.readCandidateSnapshot = async () => structuredClone(durableCandidate);
+  fixture.deps.readSnapshot = () => readAcceptedSmartMoneySnapshot({
+    adapter, now: new Date('2026-08-28T12:00:00.000Z'),
+  });
+  fixture.deps.readCandidateSnapshot = async () => durableCandidate === null
+    ? { status: 'absent' }
+    : { status: 'ready', snapshot: structuredClone(durableCandidate) };
   fixture.deps.appendJournal = (input) => stageJournal(input, {
     adapter, now: new Date('2026-08-28T12:00:00.000Z'),
   });
@@ -423,7 +483,9 @@ test('snapshot and history share one acceptance gate across marker failure and r
   failAcceptance = true;
 
   const snapshotHandler = createSmartMoneyHandler({
-    readSnapshot: () => readAcceptedSmartMoneySnapshot({ adapter }),
+    readSnapshot: () => readAcceptedSmartMoneySnapshot({
+      adapter, now: new Date('2026-08-28T12:00:00.000Z'),
+    }),
     now: () => new Date('2026-08-28T12:00:00.000Z'),
   });
   const historyHandler = createSmartMoneyHistoryHandler({
