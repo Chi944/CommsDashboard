@@ -12,7 +12,7 @@
 import { findSymbol } from '../lib/symbols.js';
 import { getGroqModel, GroqProviderError, requestGroqCompletion } from '../lib/groq.js';
 import { fetchWithTimeout } from '../lib/market/fetch.js';
-import { parseFeed } from '../lib/feeds.js';
+import { parseGoogleNewsFeed } from '../lib/feeds.js';
 import {
   AiQuotaError,
   degradedAiStatus,
@@ -201,10 +201,8 @@ async function fetchHeadlines(name, limit = 5) {
     });
     if (!r.ok) return [];
     const xml = await r.text();
-    return parseFeed(xml, {
+    return parseGoogleNewsFeed(xml, {
       maxItems: limit,
-      allowedOrigins: ['https://news.google.com'],
-      allowExternalHttpsLinks: true,
     }).map((item) => ({
       title: item.title,
       url: item.url,
