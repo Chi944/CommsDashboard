@@ -109,7 +109,24 @@ test('a single positive mover is not described as both market strength and weakn
   const result = buildDeterministicMarketBriefing(oneSided);
   assert.doesNotMatch(result.paragraphs[0].text, /mixed/i);
   assert.equal(result.paragraphs[0].evidenceIds.length, 1);
-  assert.match(result.paragraphs[0].text, /broader downside coverage is unavailable/i);
+  assert.match(result.paragraphs[0].text, /No accepted negative mover is available/i);
+});
+
+test('model-selected positive mover is described neutrally rather than as the market leader', () => {
+  const marketContext = context({
+    evidence: [
+      { id: 'market:gainer:TOP', type: 'top_gainer', label: 'TOP +9.00%', asOf: '2030-08-12T11:59:00.000Z', source: 'yahoo', sourceUrl: null, causalEligible: false },
+      { id: 'market:gainer:LOW', type: 'top_gainer', label: 'LOW +1.00%', asOf: '2030-08-12T11:59:00.000Z', source: 'yahoo', sourceUrl: null, causalEligible: false },
+      ...context().evidence.filter((record) => ['headline', 'headline_sentiment', 'crypto_fear_greed'].includes(record.type)),
+    ],
+  });
+  const result = validateMarketBriefingCompletion({ text: JSON.stringify({ paragraphs: [
+    { id: 'market-tone', evidenceIds: ['market:gainer:LOW'] },
+    { id: 'themes-catalysts', evidenceIds: ['news:wire-1', 'sentiment:headlines'] },
+    { id: 'watchpoints', evidenceIds: ['input:coverage'] },
+  ] }) }, marketContext);
+  assert.match(result.paragraphs[0].text, /includes LOW \+1\.00%/);
+  assert.doesNotMatch(result.paragraphs[0].text, /\b(?:led|leading|top|strongest)\b/i);
 });
 
 test('evidence digest changes with accepted evidence rather than generation time', () => {
