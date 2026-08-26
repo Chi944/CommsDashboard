@@ -111,6 +111,36 @@ test('Hyperliquid ordinary helpers deny forged maintenance context while the pro
   assert.ok(peak <= 4);
 });
 
+test('Hyperliquid protected snapshot keeps account and portfolio provider envelopes', async () => {
+  const adapter = createHyperliquidProtectedMaintenanceAdapter();
+  let requests = 0;
+  const gated = await adapter.fetchSnapshot({}, {
+    fetchProviderJson: async () => { requests += 1; return LEADERBOARD; },
+  });
+  assert.deepEqual(gated, {
+    providerId: 'hyperliquid-leaderboard', performances: [], accounts: [], portfolios: [], fills: [], linkOnly: true,
+  });
+  assert.equal(requests, 0);
+
+  const snapshot = adapter.assembleSnapshot(
+    { providerId: 'hyperliquid-leaderboard', records: [{ id: 'performance-1' }], linkOnly: false },
+    [{ type: 'clearinghouseState' }, { type: 'portfolio' }],
+    [{ assetPositions: [{ position: { coin: 'BTC' } }] }, { accountValueHistory: [[1, '1000000']] }],
+  );
+  assert.deepEqual(snapshot, {
+    providerId: 'hyperliquid-leaderboard', performances: [{ id: 'performance-1' }],
+    accounts: [{
+      providerId: 'hyperliquid-info-api', records: { assetPositions: [{ position: { coin: 'BTC' } }] }, linkOnly: false,
+    }],
+    portfolios: [{
+      providerId: 'hyperliquid-info-api', records: { accountValueHistory: [[1, '1000000']] }, linkOnly: false,
+    }],
+    fills: [], linkOnly: false,
+  });
+  assert.equal(Object.hasOwn(snapshot.accounts[0], 'assetPositions'), false);
+  assert.equal(Object.hasOwn(snapshot.portfolios[0], 'accountValueHistory'), false);
+});
+
 test('Hyperliquid production fetch entries are rights-gated before every transport call', async () => {
   let requests = 0;
   const deps = { fetchProviderJson: async () => { requests += 1; return LEADERBOARD; } };
