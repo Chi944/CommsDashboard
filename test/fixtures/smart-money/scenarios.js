@@ -141,6 +141,16 @@ const ACCEPTED_STATUS = {
   cacheAgeSeconds: 0, errorCode: 'rights_gate_failed',
 };
 
+export const SIMULATION_CAPABILITY = Object.freeze({
+  schemaVersion: 1,
+  status: 'research_only',
+  reason: 'no_rights_cleared_price_source',
+  transactionsEnabled: false,
+  enabledEntryPriceSources: Object.freeze([]),
+  enabledDailyMarkSources: Object.freeze([]),
+  effectiveAt: null,
+});
+
 export const ACCEPTED_SNAPSHOT = Object.freeze({
   schemaVersion: 1,
   ok: true,
@@ -160,6 +170,7 @@ export const ACCEPTED_SNAPSHOT = Object.freeze({
   providerStatuses: [ACCEPTED_STATUS],
   warnings: ['Fixture-only future-permitted Hyperliquid output; not current live source data.'],
   sourceLinks: [{ providerId: 'hyperliquid-leaderboard', label: 'Hyperliquid leaderboard', url: 'https://stats-data.hyperliquid.xyz/Mainnet/leaderboard' }],
+  simulationCapability: SIMULATION_CAPABILITY,
 });
 
 const INSTITUTIONAL_FIXTURES = Object.freeze({
@@ -238,6 +249,7 @@ export const ACCEPTED_HISTORY = Object.freeze({
   providerStatuses: [],
   warnings: [],
   sourceLinks: [],
+  simulationCapability: SIMULATION_CAPABILITY,
 });
 
 export const ENABLED_ADAPTER_IDS = Object.freeze([

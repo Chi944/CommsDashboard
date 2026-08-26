@@ -13,12 +13,14 @@ import {
   ACCEPTED_HISTORY,
   ACCEPTED_SNAPSHOT,
   ENABLED_ADAPTER_IDS,
+  SIMULATION_CAPABILITY,
   createRefreshDeps,
 } from './fixtures/smart-money/scenarios.js';
 
 const PUBLIC_SNAPSHOT_FIELDS = [
   'schemaVersion', 'ok', 'fetchedAt', 'partial', 'entities', 'activities',
   'performances', 'signals', 'rankings', 'providerStatuses', 'warnings', 'sourceLinks',
+  'simulationCapability',
 ];
 
 function acceptedStoredSnapshot() {
@@ -75,6 +77,7 @@ test('public snapshot returns exactly the sanitized accepted envelope', async ()
   assert.equal(res.statusCode, 200);
   assert.deepEqual(Object.keys(res.body), PUBLIC_SNAPSHOT_FIELDS);
   assert.deepEqual(res.body.performances, ACCEPTED_SNAPSHOT.performances);
+  assert.deepEqual(res.body.simulationCapability, SIMULATION_CAPABILITY);
   assert.equal(JSON.stringify(res.body).includes('adapterState'), false);
   assert.equal(JSON.stringify(res.body).includes('pendingConfirmations'), false);
   assert.match(res.headers['Cache-Control'], /s-maxage/);
@@ -160,6 +163,7 @@ test('history forwards inclusive since, bounded limit, and opaque cursor and ret
   });
   assert.deepEqual(Object.keys(res.body), Object.keys(ACCEPTED_HISTORY));
   assert.deepEqual(res.body.dailyMarks, ACCEPTED_HISTORY.dailyMarks);
+  assert.deepEqual(res.body.simulationCapability, SIMULATION_CAPABILITY);
   assert.equal(res.body.nextCursor, null);
 });
 

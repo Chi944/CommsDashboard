@@ -2,15 +2,123 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
-**Goal:** Add deterministic browser-local Paper Copy simulations that reconcile public signals observed while the dashboard was closed and provably cannot prepare or place a trade.
+**Goal:** Ship a truthful research-only simulation-readiness experience now,
+while preserving a disconnected synthetic-test design for any future
+rights-cleared Paper Copy capability.
 
-**Architecture:** A pure immutable engine in lib/smart-money/paper.js applies only eligible post-opt-in signals using journaled reference prices, explicit sizing, friction, cash, collateral, and exposure rules. SmartMoneyProvider persists a versioned state and reconciles inclusive paged history; Portfolio renders a separate accessible Paper Copy panel with local reset backup, undo, export, and import.
+**Architecture:** Production exposes a server-controlled, fail-closed capability
+contract and a read-only readiness panel. It never retrieves or attaches Smart
+Money prices and has no transaction state. The legacy pure-engine design below
+is retained only as a disconnected future test seam.
 
 **Tech Stack:** JavaScript ESM, node:test, React 18, Vitest, Testing Library, localStorage, existing SmartMoneyProvider, Provider Core history API, and trusted LiveData marks.
 
 **Spec:** docs/superpowers/specs/2026-08-26-smart-money-intelligence-design.md
 
-## Global Constraints
+## Binding execution amendments (2026-08-27)
+
+These amendments supersede every conflicting interface, example, test, and UI
+instruction below. The price-source rights review found no free source that
+permits the complete production use we require: automated retrieval, durable
+400-day storage, public display, and derived simulation. Production therefore
+ships an honest research-readiness surface and performs zero Smart Money price
+retrievals, marks, or simulated transactions.
+
+### Exact production capability contract
+
+Provider Core and every accepted client fixture expose this exact public value:
+
+```js
+{
+  schemaVersion: 1,
+  status: 'research_only',
+  reason: 'no_rights_cleared_price_source',
+  transactionsEnabled: false,
+  enabledEntryPriceSources: [],
+  enabledDailyMarkSources: [],
+  effectiveAt: null,
+}
+```
+
+- Smart Money never consumes prices from LiveData, chart routes, browser state,
+  a broker/exchange/wallet, or an authenticated provider.
+- Provider refresh, history publication, browser reconciliation, focus handlers,
+  and maintenance jobs make zero Smart Money price calls and create zero entry
+  prices, daily marks, positions, transactions, cash balances, performance
+  metrics, or benchmarks.
+- Signal evidence may preserve public disclosure values that are part of the
+  source filing or public position disclosure. Such evidence is not a market
+  price and can never become a simulated fill or mark.
+- No production fallback, hidden feature flag, URL parameter, import, local
+  storage payload, or stale client state may enable transactions.
+
+### Research-only experience
+
+- The Portfolio/Intel integration is a read-only **Simulation readiness** panel,
+  not an enabled Paper Copy account. It displays the capability contract,
+  eligible-signal methodology, evidence coverage, and this exact primary copy:
+
+  > No rights-cleared free market-price source is currently enabled. Signals remain research-only; no simulated transaction was created.
+
+- Do not render a starting balance, cash/equity/performance value, position,
+  transaction, benchmark, Start/Stop/Add/Import/Export/Reset action, or a disabled
+  control that implies a simulation can presently be activated.
+- Notification and signal views may link to the readiness panel to explain why a
+  signal was not simulated. They never say an order, trade, fill, allocation, or
+  simulated transaction is ready.
+- The panel explicitly states that the dashboard does not recommend, prepare,
+  route, sign, or execute trades.
+
+### Test-only future engine seam
+
+The numerical simulation engine described below may be implemented only as a
+pure module exercised with synthetic test fixtures. It is not imported by any
+production browser or server module while the capability is `research_only`.
+If retained, its entry allocation is computed in integer cents from:
+
+```text
+N = max(0, min(0.05E, C/1.001, (0.20E-Ge)/1.0002, (E-G)/1.001))
+```
+
+where `E` is equity, `C` free cash, `Ge` entity gross exposure, and `G` total
+gross exposure immediately before the entry. Tests must cover correct long and
+short equity, reductions, closes, and reversals; entry and exit friction; and
+rounding without creating buying power.
+
+Future enablement requires a reviewed rights revision with a non-null
+`effectiveAt`, explicit permitted source IDs, immutable first-valid entry-price
+attachment at or after observation, and no pre-effective-date backfill. Rights
+and capability changes are server-controlled and cannot be imported from local
+state. Quota exhaustion, missing checkpoints, or a retention gap must stop
+reconciliation with an explicit unavailable reason; none may guess or borrow a
+price.
+
+### Amended implementation order and release gate
+
+1. Add the exact capability to canonical schema, snapshot, history/briefing
+   metadata, fixtures, and client validation.
+2. Add the read-only Simulation readiness panel and explanatory routing.
+3. Add tests proving zero Smart Money price requests/marks and no enabled paper
+   state or actions in production. Scan `.js`, `.jsx`, `.ts`, and `.tsx` source
+   and the built browser bundle.
+4. Only after those tests pass may a disconnected pure synthetic engine be
+   added. It is not a release requirement and must not weaken the production
+   boundary.
+
+The required production tests intercept every server and browser request,
+exercise refresh/history/focus/notification flows, and assert that every Smart
+Money network request is a public GET without body or credentials. They also
+assert that the runtime and built bundle contain no broker/exchange/wallet SDK,
+order DTO, order mutation, transaction preparation, reference-price attachment,
+or daily-mark path.
+
+## Inactive future-engine design
+
+Everything below this heading is non-production reference material and is not
+part of the present release unless a later rights review replaces the binding
+amendments above.
+
+### Legacy global constraints
 
 - No paper function performs fetch, storage, logging, order construction, signing, or credential handling.
 - Default starting balance is USD 100,000.

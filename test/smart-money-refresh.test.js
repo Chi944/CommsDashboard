@@ -26,6 +26,7 @@ import {
   ACCEPTED_SNAPSHOT,
   ACCEPTED_PENDING_CONFIRMATION,
   ENABLED_ADAPTER_IDS,
+  SIMULATION_CAPABILITY,
   createRefreshDeps,
 } from './fixtures/smart-money/scenarios.js';
 
@@ -433,6 +434,31 @@ test('production defaults make zero market-data calls and persist no price evide
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('research-only capability bypasses every injected price and mark hook', async () => {
+  const { deps, calls, captured } = createRefreshDeps({ echoJournalSignals: true });
+  deps.simulationCapability = structuredClone(SIMULATION_CAPABILITY);
+  let priceCalls = 0;
+  let trackedCalls = 0;
+  let markCalls = 0;
+  deps.resolveReferencePrice = async () => { priceCalls += 1; throw new Error('must not run'); };
+  deps.listTrackedTickers = async () => { trackedCalls += 1; throw new Error('must not run'); };
+  deps.resolveDailyMarks = async () => { markCalls += 1; throw new Error('must not run'); };
+
+  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+
+  assert.equal(result.persisted, true);
+  assert.deepEqual({ priceCalls, trackedCalls, markCalls }, {
+    priceCalls: 0, trackedCalls: 0, markCalls: 0,
+  });
+  assert.equal(calls.events.some((event) => event.startsWith('price:')), false);
+  assert.deepEqual(captured.journalInput.dailyMarks, []);
+  assert.ok(captured.journalInput.signals.every((signal) => (
+    signal.referencePrice === null
+    && signal.paperEligibility.eligible === false
+    && signal.paperEligibility.reason === 'research_only'
+  )));
 });
 
 test('production SEC refresh is bounded to the newest canonical 13F filing', () => {
