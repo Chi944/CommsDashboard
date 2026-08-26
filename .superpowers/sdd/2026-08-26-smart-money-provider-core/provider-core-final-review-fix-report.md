@@ -4,7 +4,7 @@
 
 - Reviewed base: `9bca944ed311902ef71a154cdc0e633998583b43`
 - Review result addressed: 1 Critical, 9 Important, 1 Minor
-- Final implementation commit: recorded after commit below
+- Final implementation commit: `f5857504f69ac9077e2eb02b5a05a0afb5b0bd8c`
 - No deployment or push is part of this repair.
 
 ## Implemented repairs
