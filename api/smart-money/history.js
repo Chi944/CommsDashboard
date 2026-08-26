@@ -1,4 +1,5 @@
 import { parseJournalCursor, readJournal } from '../../lib/smart-money/journal.js';
+import { simulationCapability } from '../../lib/smart-money/capability.js';
 
 const DAY_MS = 86_400_000;
 
@@ -51,7 +52,10 @@ export function createSmartMoneyHistoryHandler(deps = {}) {
     try {
       const history = await read(input, { now });
       res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=300');
-      res.status(200).json(history);
+      res.status(200).json({
+        ...history,
+        simulationCapability: simulationCapability(),
+      });
     } catch {
       res.setHeader('Cache-Control', 'no-store');
       res.status(503).json({
