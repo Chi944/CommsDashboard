@@ -112,8 +112,13 @@ test('AI selection cannot omit accepted investor activity or crypto coverage and
   const evidence = [
     ...buildSmartMoneyEvidence({ snapshot: SMART_MONEY_RESPONSE, marketContext: MARKET_CONTEXT, now: NOW }),
     {
-      id: 'activity:accepted-investor', type: 'investor_activity',
-      label: 'Accepted investor filing activity.', asOf: NOW.toISOString(),
+      id: 'activity:new-investor', type: 'investor_activity',
+      label: 'Newer accepted investor filing.', asOf: NOW.toISOString(),
+      source: 'SEC EDGAR', sourceUrl: 'https://www.sec.gov/', causalEligible: false,
+    },
+    {
+      id: 'activity:old-investor', type: 'investor_activity',
+      label: 'Older accepted investor filing.', asOf: '2026-08-01T00:00:00.000Z',
       source: 'SEC EDGAR', sourceUrl: 'https://www.sec.gov/', causalEligible: false,
     },
     {
@@ -124,12 +129,14 @@ test('AI selection cannot omit accepted investor activity or crypto coverage and
   ];
   const base = [
     { id: 'market-regime', evidenceIds: [evidence[0].id] },
-    { id: 'investor-disclosures', evidenceIds: ['activity:accepted-investor'] },
+    { id: 'investor-disclosures', evidenceIds: ['activity:old-investor'] },
     { id: 'crypto-paper-risk', evidenceIds: ['activity:accepted-crypto', 'capability:simulation'] },
   ];
-  assert.doesNotThrow(() => validateSmartMoneyCompletion({ text: JSON.stringify({ paragraphs: base }) }, {
+  const accepted = validateSmartMoneyCompletion({ text: JSON.stringify({ paragraphs: base }) }, {
     snapshot: SMART_MONEY_RESPONSE, marketContext: MARKET_CONTEXT, evidence, now: NOW,
-  }));
+  });
+  assert.match(accepted.paragraphs[1].text, /includes: Older accepted investor filing/);
+  assert.doesNotMatch(accepted.paragraphs[1].text, /\blatest\b/i);
   for (const paragraphs of [
     base.map((row, index) => index === 1 ? { ...row, evidenceIds: ['snapshot:coverage'] } : row),
     base.map((row, index) => index === 2 ? { ...row, evidenceIds: ['capability:simulation'] } : row),
