@@ -21,6 +21,84 @@
 - Browser notifications require explicit local opt-in, granted permission, a followed entity, a high-confidence eligible signal, and an unseen stable ID.
 - The browser never calls the protected maintenance refresh route.
 
+## Binding execution amendments (2026-08-27)
+
+These amendments supersede any conflicting task text below. They close the
+production failure that motivated this work and are release-blocking.
+
+### Existing Market Briefing is fixed before the new Smart Money Pulse
+
+- Extract the existing route into `lib/briefing/market-context.js` and
+  `lib/briefing/market-briefing.js`; `api/briefing.js` becomes a thin handler.
+- `/api/briefing` always returns a non-null briefing for every handled AI or
+  upstream failure. Its exact paragraph IDs and order are `market-tone`,
+  `themes-catalysts`, and `watchpoints`.
+- The response exposes `source: 'generated' | 'deterministic'`, current UTC
+  `marketDate`, `generatedAt`, `evidenceDigest`, resolved public `evidence`,
+  per-input `inputsAsOf`, exactly three paragraphs, and the legacy joined
+  `text` field during migration. Raw provider text and private state are never
+  returned.
+- Missing keys, retired/invalid models (including provider 404), timeouts,
+  quota, distributed-guard failure, invalid completions, and partial market or
+  sentiment input all produce an honest deterministic three-paragraph result.
+  They do not produce `briefing: null` or erase a prior valid client briefing.
+- Only validated generated results are cached. Use semantic key
+  `briefing:v5:{model}:{marketDate}:{evidenceDigest}`; deterministic fallback is
+  recomputed from current accepted evidence and is not allowed to poison the AI
+  cache.
+- Every paragraph resolves visible evidence IDs and links. Causal wording is
+  permitted only when every cited record has `causalEligible: true`; otherwise
+  use observational language. The current UTC date is never substituted for an
+  evidence record's own as-of timestamp.
+- Add an authenticated `fallbackSmoke=1` path using `x-ai-smoke-secret` that
+  forces the deterministic branch without calling Groq. Release smoke must
+  exercise both normal generation and forced fallback.
+
+### Monotonic client acceptance and request sequencing
+
+- Create shared `src/lib/dailyBriefingState.js`. Both the existing Briefing and
+  SmartMoneyProvider use request sequence IDs and accept a candidate only when
+  its `marketDate` is newer, or the same date has a newer `generatedAt`.
+  An older/slower response, `null`, malformed data, or a failed refresh can
+  never overwrite last-known-good content.
+- The existing `Briefing` renders the structured paragraphs and their evidence
+  links, retains accepted content while refreshing, distinguishes generated
+  from deterministic copy, and exposes degraded input/provider status without
+  describing the market feed as non-live.
+- Test fetch mocks are route-aware; test order must not determine which API
+  response a provider receives.
+- Smart Money health is independent of market health. A schema-valid Smart
+  Money 503 response is accepted as degraded provider data/LKG metadata, not as
+  a global network failure and never changes LiveData's market status.
+
+### Release-wide research-only and no-trading invariants
+
+- Add static and runtime coverage across `.js`, `.jsx`, `.ts`, and `.tsx` that
+  forbids order placement, transaction preparation, broker/exchange/wallet
+  SDKs, authenticated market requests, order DTOs, or browser mutations. Smart
+  Money browser calls are public GETs without bodies or credentials; the only
+  protected call remains the server-side scheduled maintenance route.
+- The experience may explain evidence, rankings, disclosures, and research
+  signals. It never recommends, sizes, prepares, or executes a trade.
+
+### Amended task order and gates
+
+1. Task 1 extracts current market/sentiment context.
+2. Before the original Task 2, implement and test the always-non-null existing
+   Market Briefing engine/route/UI and authenticated forced-fallback smoke.
+3. Original Tasks 2–5 then add Smart Money Pulse, client state, Intel hub, and
+   alerts using the same evidence/link and monotonic-acceptance rules.
+4. Task 6 must include every new Node and JSX suite plus the release-wide
+   no-trading/static bundle scan.
+
+Required experience gate:
+
+```powershell
+node --test test/briefing.test.js test/smoke-ai.test.js test/daily-briefing-state.test.js test/smart-money-briefing.test.js test/smart-money-storage.test.js test/smart-money-no-trading.test.js
+npx vitest run test/live-data.test.jsx test/ui-accessibility.test.jsx test/briefing-ui.test.jsx test/smart-money-provider.test.jsx test/smart-money-routing.test.jsx test/smart-money-ui.test.jsx
+npm run build
+```
+
 ---
 
 ### Task 1: Extract current market and sentiment evidence without changing the existing briefing
