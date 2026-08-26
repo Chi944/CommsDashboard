@@ -13,10 +13,10 @@ function validBriefingText(label = 'Market') {
 function validBriefing(label = 'Market') {
   const paragraphs = validBriefingText(label).split('\n\n');
   return JSON.stringify({
-    paragraphs: paragraphs.map((text) => ({
+    paragraphs: paragraphs.map((text, index) => ({
+      id: ['market-tone', 'themes-catalysts', 'watchpoints'][index],
       text,
-      marketEvidenceId: 'gainer-1',
-      sentimentEvidenceId: 'sentiment-fear-greed',
+      evidenceIds: ['sentiment:fear-greed'],
     })),
   });
 }
@@ -41,7 +41,7 @@ const fearGreedResponse = () => jsonResponse({
   ok: true,
   value: 50,
   label: 'Neutral',
-  updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+  updatedAt: new Date(Math.floor((Date.now() - 60 * 60 * 1000) / 60_000) * 60_000).toISOString(),
 });
 
 function createResponse() {
@@ -271,12 +271,18 @@ test('caches generated briefings by semantic key and expires them after the TTL'
   process.env.GROQ_MODEL = 'test/cache-model';
   process.env.AI_BRIEFING_TTL_SECONDS = '0.01';
   let generations = 0;
+  let sentimentValue = 50;
+  const sentimentUpdatedAt = new Date(
+    Math.floor((Date.now() - 60 * 60 * 1000) / 60_000) * 60_000,
+  ).toISOString();
 
   globalThis.fetch = async (url) => {
     const target = String(url);
     if (target.endsWith('/api/prices')) return jsonResponse(trustedPricePayload());
     if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
-    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
+    if (target.endsWith('/api/fear-greed')) return jsonResponse({
+      ok: true, value: sentimentValue, label: 'Neutral', updatedAt: sentimentUpdatedAt,
+    });
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       generations += 1;
       return jsonResponse({ choices: [{ message: { content: validBriefing(`Briefing ${generations}`) } }] });
@@ -294,11 +300,18 @@ test('caches generated briefings by semantic key and expires them after the TTL'
     assert.equal(cached.body.briefing.text, validBriefingText('Briefing 1'));
     assert.equal(cached.body.aiStatus.source, 'cache');
 
+    sentimentValue = 51;
+    const changedEvidence = createResponse();
+    await briefingHandler(createRequest('203.0.113.12'), changedEvidence);
+    assert.equal(generations, 2);
+    assert.equal(changedEvidence.body.aiStatus.source, 'generated');
+    assert.notEqual(changedEvidence.body.evidenceDigest, first.body.evidenceDigest);
+
     await new Promise((resolve) => setTimeout(resolve, 20));
     const expired = createResponse();
     await briefingHandler(createRequest('203.0.113.12'), expired);
-    assert.equal(generations, 2);
-    assert.equal(expired.body.briefing.text, validBriefingText('Briefing 2'));
+    assert.equal(generations, 3);
+    assert.equal(expired.body.briefing.text, validBriefingText('Briefing 3'));
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv(env);
@@ -441,24 +454,22 @@ test('grounds briefing generation in explicit headline and fear-greed sentiment 
       ?.split('\nEND_UNTRUSTED_MARKET_DATA_JSONL')[0];
     const records = jsonl.split('\n').filter(Boolean).map((line) => JSON.parse(line));
     assert.deepEqual(records.find((record) => record.recordType === 'headline_sentiment'), {
-      evidenceId: 'sentiment-headlines',
+      evidenceId: 'sentiment:headlines',
       recordType: 'headline_sentiment',
-      label: 'mixed',
-      score: 0,
-      positive: 1,
-      negative: 1,
-      neutral: 1,
-      sampleSize: 3,
-      updatedAt: '2030-02-04T15:42:00.000Z',
+      label: 'mixed headline tone (3 items)',
+      asOf: '2030-02-04T15:42:00.000Z',
+      source: 'Dashboard headline sample',
+      causalEligible: false,
     });
     assert.deepEqual(records.find((record) => record.recordType === 'crypto_fear_greed'), {
-      evidenceId: 'sentiment-fear-greed',
+      evidenceId: 'sentiment:fear-greed',
       recordType: 'crypto_fear_greed',
-      value: 27,
-      label: 'Fear',
-      updatedAt: '2030-02-04T00:00:00.000Z',
+      label: '27 · Fear',
+      asOf: '2030-02-04T00:00:00.000Z',
+      source: 'Alternative.me Fear & Greed',
+      causalEligible: false,
     });
-    assert.match(userPrompt, /ground every paragraph.*market.*sentiment/i);
+    assert.match(userPrompt, /every evidence ID.*directly support/i);
   } finally {
     Date.now = originalDateNow;
     globalThis.fetch = originalFetch;
@@ -557,13 +568,10 @@ test('limits uncached generations per client without charging cached reads', asy
     assert.equal(cached.statusCode, 200);
     assert.equal(secondGeneration.statusCode, 200);
     assert.equal(generations, 2);
-    assert.equal(limited.statusCode, 429);
+    assert.equal(limited.statusCode, 200);
     assert.equal(limited.headers['Retry-After'], '60');
-    assert.deepEqual(limited.body.error, {
-      code: 'ai_generation_quota_exceeded',
-      message: 'AI generation limit reached for this client. Try again shortly.',
-      retryable: true,
-    });
+    assert.equal(limited.body.briefing.source, 'deterministic');
+    assert.equal(limited.body.briefing.paragraphs.length, 3);
     assert.equal(limited.body.aiStatus.state, 'rate_limited');
     assert.equal(limited.headers['Cache-Control'], 'no-store');
   } finally {
@@ -599,7 +607,8 @@ test('returns a stable degraded status without exposing Groq error payloads', as
 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body.ok, true);
-    assert.equal(response.body.briefing, null);
+    assert.equal(response.body.briefing.source, 'deterministic');
+    assert.equal(response.body.briefing.paragraphs.length, 3);
     assert.deepEqual(response.body.aiStatus, {
       state: 'degraded',
       code: 'provider_configuration_error',
@@ -656,7 +665,7 @@ test('times out a slow Groq request and returns deterministic market signals', a
     await briefingHandler(createRequest('203.0.113.17'), response);
 
     assert.equal(response.statusCode, 200);
-    assert.equal(response.body.briefing, null);
+    assert.equal(response.body.briefing.source, 'deterministic');
     assert.equal(response.body.aiStatus.code, 'provider_unavailable');
     assert.equal(response.body.signals.gainers[0].ticker, 'SAFE');
   } finally {
@@ -701,7 +710,7 @@ test('Groq timeout remains active while the response body text is consumed', asy
 
     assert.equal(outcome, 'completed');
     assert.equal(response.statusCode, 200);
-    assert.equal(response.body.briefing, null);
+    assert.equal(response.body.briefing.source, 'deterministic');
     assert.equal(response.body.aiStatus.code, 'provider_unavailable');
     assert.equal(response.body.signals.gainers[0].ticker, 'LIVE');
   } finally {
@@ -741,7 +750,7 @@ test('bounds internal market-data requests with abort signals', async () => {
 
     assert.equal(response.statusCode, 200);
     assert.deepEqual(marketRequestSignals, [true, true, true]);
-    assert.match(response.headers['Cache-Control'], /^public, s-maxage=\d+/);
+    assert.equal(response.headers['Cache-Control'], 'no-store');
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv(env);
@@ -923,7 +932,7 @@ test('does not generate a briefing when the prices input fails', async () => {
     await briefingHandler(createRequest('203.0.113.26'), response);
 
     assert.equal(response.statusCode, 200);
-    assert.equal(response.body.briefing, null);
+    assert.equal(response.body.briefing.source, 'deterministic');
     assert.equal(response.body.aiStatus.code, 'upstream_market_data_unavailable');
     assert.equal(response.body.aiStatus.state, 'degraded');
     assert.equal(response.headers['Cache-Control'], 'no-store');
@@ -970,7 +979,7 @@ test('does not generate a briefing without at least one trusted mover', async ()
     const response = createResponse();
     await briefingHandler(createRequest('203.0.113.27'), response);
 
-    assert.equal(response.body.briefing, null);
+    assert.equal(response.body.briefing.source, 'deterministic');
     assert.equal(response.body.aiStatus.code, 'upstream_market_data_unavailable');
     assert.equal(response.headers['Cache-Control'], 'no-store');
     assert.deepEqual(response.body.signals.gainers, []);
@@ -1007,7 +1016,7 @@ test('does not generate a briefing when news loading fails but preserves trusted
     const response = createResponse();
     await briefingHandler(createRequest('203.0.113.28'), response);
 
-    assert.equal(response.body.briefing, null);
+    assert.equal(response.body.briefing.source, 'deterministic');
     assert.equal(response.body.aiStatus.code, 'upstream_market_data_unavailable');
     assert.equal(response.headers['Cache-Control'], 'no-store');
     assert.equal(response.body.signals.gainers[0].ticker, 'LIVE');
@@ -1119,14 +1128,12 @@ test('serializes and bounds untrusted briefing fields while instructing the mode
     const records = jsonl.split('\n').filter(Boolean).map((line) => JSON.parse(line));
     const headline = records.find((record) => record.recordType === 'headline');
     const mover = records.find((record) => record.recordType === 'top_gainer');
-    assert.match(headline.headline, /IGNORE ALL PREVIOUS INSTRUCTIONS/);
-    assert.equal(headline.headline.includes('\n'), false);
+    assert.match(headline.label, /IGNORE ALL PREVIOUS INSTRUCTIONS/);
+    assert.equal(headline.label.includes('\n'), false);
     assert.equal(headline.source.includes('\n'), false);
-    assert.equal(headline.category.includes('\n'), false);
-    assert.ok(headline.headline.length <= 280);
-    assert.ok(headline.source.length <= 80);
-    assert.ok(headline.category.length <= 64);
-    assert.ok(mover.category.length <= 64);
+    assert.ok(headline.label.length <= 320);
+    assert.ok(headline.source.length <= 96);
+    assert.match(mover.label, /^LIVE /);
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv(env);
@@ -1163,7 +1170,7 @@ test('rejects an invalid three-paragraph briefing before caching it', async () =
     await briefingHandler(createRequest('203.0.113.21'), invalid);
     await briefingHandler(createRequest('203.0.113.21'), recovered);
 
-    assert.equal(invalid.body.briefing, null);
+    assert.equal(invalid.body.briefing.source, 'deterministic');
     assert.equal(invalid.body.aiStatus.code, 'provider_invalid_response');
     assert.equal(invalid.headers['Cache-Control'], 'no-store');
     assert.equal(recovered.body.aiStatus.source, 'generated');
@@ -1314,7 +1321,7 @@ test('does not generate or cache a briefing without current sentiment evidence',
     await briefingHandler(createRequest('203.0.113.45'), response);
 
     assert.equal(response.statusCode, 200);
-    assert.equal(response.body.briefing, null);
+    assert.equal(response.body.briefing.source, 'deterministic');
     assert.equal(response.body.aiStatus.code, 'upstream_market_data_unavailable');
     assert.equal(response.body.signals.sentiment.headline.sampleSize, 0);
     assert.equal(response.body.signals.sentiment.cryptoFearGreed, null);
@@ -1382,7 +1389,7 @@ test('rejects stale and future-dated sentiment instead of generating a daily bri
 
     for (const response of [stale, future]) {
       assert.equal(response.statusCode, 200);
-      assert.equal(response.body.briefing, null);
+      assert.equal(response.body.briefing.source, 'deterministic');
       assert.equal(response.body.aiStatus.code, 'upstream_market_data_unavailable');
       assert.equal(response.body.signals.sentiment.headline.sampleSize, 0);
       assert.equal(response.body.signals.sentiment.cryptoFearGreed, null);
@@ -1433,10 +1440,10 @@ test('accepts current sentiment when a cache-valid price response was fetched si
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       providerCalls += 1;
       return jsonResponse({ choices: [{ message: { content: JSON.stringify({
-        paragraphs: validBriefingText('Current sentiment').split('\n\n').map((text) => ({
+        paragraphs: validBriefingText('Current sentiment').split('\n\n').map((text, index) => ({
+          id: ['market-tone', 'themes-catalysts', 'watchpoints'][index],
           text,
-          marketEvidenceId: 'gainer-1',
-          sentimentEvidenceId: 'sentiment-headlines',
+          evidenceIds: ['sentiment:headlines'],
         })),
       }) } }] });
     }
@@ -1489,9 +1496,9 @@ test('requires structured market and sentiment evidence for every generated para
           message: {
             content: JSON.stringify({
               paragraphs: [
-                { text: 'The tracked mover rose while sentiment remained constructive.', marketEvidenceId: 'gainer-1', sentimentEvidenceId: 'sentiment-fear-greed' },
-                { text: 'The same price action aligned with the current sentiment reading.', marketEvidenceId: 'gainer-1', sentimentEvidenceId: 'sentiment-fear-greed' },
-                { text: `Watch whether that move and sentiment persist. ${DISCLAIMER}`, marketEvidenceId: 'gainer-1', sentimentEvidenceId: 'sentiment-fear-greed' },
+                { id: 'market-tone', text: 'The tracked mover rose while sentiment remained constructive.', evidenceIds: ['market:gainer:LIVE', 'sentiment:fear-greed'] },
+                { id: 'themes-catalysts', text: 'The same price observation aligns with the current sentiment reading.', evidenceIds: ['market:gainer:LIVE', 'sentiment:fear-greed'] },
+                { id: 'watchpoints', text: `The next update will show whether those observations persist. ${DISCLAIMER}`, evidenceIds: ['market:gainer:LIVE', 'sentiment:fear-greed'] },
               ],
             }),
           },
@@ -1507,12 +1514,23 @@ test('requires structured market and sentiment evidence for every generated para
 
     assert.equal(response.body.aiStatus.state, 'ready');
     assert.equal(response.body.briefing.paragraphs.length, 3);
+    assert.deepEqual(response.body.briefing.paragraphs.map((paragraph) => paragraph.id), [
+      'market-tone', 'themes-catalysts', 'watchpoints',
+    ]);
     assert.ok(response.body.briefing.paragraphs.every((paragraph) => (
-      paragraph.marketEvidenceId === 'gainer-1'
-      && paragraph.sentimentEvidenceId === 'sentiment-fear-greed'
+      paragraph.evidenceIds.includes('market:gainer:LIVE')
+      && paragraph.evidenceIds.includes('sentiment:fear-greed')
     )));
     assert.equal(providerRequest.response_format.type, 'json_schema');
     assert.equal(providerRequest.response_format.json_schema.strict, true);
+    assert.equal(
+      providerRequest.response_format.json_schema.schema.properties.paragraphs.prefixItems,
+      undefined,
+    );
+    assert.deepEqual(
+      providerRequest.response_format.json_schema.schema.properties.paragraphs.items.properties.id.enum,
+      ['market-tone', 'themes-catalysts', 'watchpoints'],
+    );
   } finally {
     Date.now = originalDateNow;
     globalThis.fetch = originalFetch;
@@ -1544,7 +1562,7 @@ test('rejects generic prose without the structured evidence contract', async () 
     await briefingHandler(createRequest('203.0.113.49'), response);
 
     assert.equal(response.statusCode, 200);
-    assert.equal(response.body.briefing, null);
+    assert.equal(response.body.briefing.source, 'deterministic');
     assert.equal(response.body.aiStatus.code, 'provider_invalid_response');
   } finally {
     globalThis.fetch = originalFetch;
@@ -1724,6 +1742,154 @@ test('fails closed in Vercel when distributed Redis credentials are missing', as
     }), (error) => error?.code === 'distributed_guard_unavailable');
     assert.equal(generated, false);
   } finally {
+    restoreEnv(env);
+  }
+});
+
+test('returns a current deterministic three-paragraph briefing when the API key is missing', async () => {
+  const env = { GROQ_API_KEY: process.env.GROQ_API_KEY };
+  const originalFetch = globalThis.fetch;
+  const originalDateNow = Date.now;
+  delete process.env.GROQ_API_KEY;
+  Date.now = () => Date.parse('2031-01-07T12:00:00.000Z');
+  let groqCalls = 0;
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/prices')) return jsonResponse({
+      ...trustedPricePayload(),
+      asOf: '2031-01-07T11:59:00.000Z',
+      fetchedAt: '2031-01-07T12:00:00.000Z',
+    });
+    if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return jsonResponse({
+      ok: true, value: 42, label: 'Fear', updatedAt: '2031-01-07T00:00:00.000Z',
+    });
+    if (target === 'https://api.groq.com/openai/v1/chat/completions') groqCalls += 1;
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+
+  try {
+    const response = createResponse();
+    await briefingHandler(createRequest('203.0.113.60'), response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.source, 'deterministic');
+    assert.equal(response.body.briefing.source, 'deterministic');
+    assert.equal(response.body.briefing.marketDate, '2031-01-07');
+    assert.deepEqual(
+      response.body.briefing.paragraphs.map((paragraph) => paragraph.id),
+      ['market-tone', 'themes-catalysts', 'watchpoints'],
+    );
+    assert.equal(response.body.briefing.text, response.body.briefing.paragraphs.map((row) => row.text).join('\n\n'));
+    assert.match(response.body.briefing.evidenceDigest, /^[a-f0-9]{64}$/);
+    assert.ok(response.body.briefing.evidence.some((record) => record.sourceUrl?.startsWith('https://')));
+    assert.equal(groqCalls, 0);
+  } finally {
+    Date.now = originalDateNow;
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
+test('authenticated fallback smoke forces deterministic output without calling Groq', async () => {
+  const env = {
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    AI_SMOKE_SECRET: process.env.AI_SMOKE_SECRET,
+  };
+  const originalFetch = globalThis.fetch;
+  process.env.GROQ_API_KEY = 'test-key';
+  process.env.AI_SMOKE_SECRET = 'fallback-smoke-secret';
+  let groqCalls = 0;
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/prices')) return jsonResponse(trustedPricePayload());
+    if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
+    if (target === 'https://api.groq.com/openai/v1/chat/completions') {
+      groqCalls += 1;
+      return jsonResponse({ choices: [{ message: { content: validBriefing('Must not run') } }] });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+
+  try {
+    const response = createResponse();
+    await briefingHandler(createRequest('203.0.113.61', { fallbackSmoke: '1' }, {
+      'x-ai-smoke-secret': 'fallback-smoke-secret',
+    }), response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.briefing.source, 'deterministic');
+    assert.equal(response.headers['Cache-Control'], 'no-store');
+    assert.equal(groqCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
+test('returns deterministic briefing when every market-context request fails', async () => {
+  const env = { GROQ_API_KEY: process.env.GROQ_API_KEY };
+  const originalFetch = globalThis.fetch;
+  process.env.GROQ_API_KEY = 'test-key';
+  globalThis.fetch = async (url) => {
+    if (String(url) === 'https://api.groq.com/openai/v1/chat/completions') {
+      throw new Error('Groq must not be called without accepted context');
+    }
+    throw new Error('controlled upstream outage');
+  };
+
+  try {
+    const response = createResponse();
+    await briefingHandler(createRequest('203.0.113.62'), response);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.briefing.source, 'deterministic');
+    assert.equal(response.body.briefing.paragraphs.length, 3);
+    assert.match(response.body.briefing.paragraphs[0].text, /unavailable/i);
+    assert.deepEqual(response.body.briefing.inputsAsOf, {
+      market: null, marketFetchedAt: null, news: null, newsFetchedAt: null, sentiment: null,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
+test('does not cache invalid provider output and recovers with a generated briefing', async () => {
+  const env = {
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    GROQ_MODEL: process.env.GROQ_MODEL,
+  };
+  const originalFetch = globalThis.fetch;
+  process.env.GROQ_API_KEY = 'test-key';
+  process.env.GROQ_MODEL = 'test/v5-invalid-cache-model';
+  let groqCalls = 0;
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/prices')) return jsonResponse(trustedPricePayload());
+    if (target.endsWith('/api/news')) return jsonResponse({ ok: true, items: [] });
+    if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
+    if (target === 'https://api.groq.com/openai/v1/chat/completions') {
+      groqCalls += 1;
+      return jsonResponse({ choices: [{ message: { content: groqCalls === 1 ? '{"paragraphs":[]}' : validBriefing('Recovered') } }] });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+
+  try {
+    const first = createResponse();
+    const second = createResponse();
+    await briefingHandler(createRequest('203.0.113.63'), first);
+    await briefingHandler(createRequest('203.0.113.63'), second);
+
+    assert.equal(first.body.briefing.source, 'deterministic');
+    assert.equal(first.body.aiStatus.code, 'provider_invalid_response');
+    assert.equal(second.body.briefing.source, 'generated');
+    assert.equal(second.body.aiStatus.source, 'generated');
+    assert.equal(groqCalls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
     restoreEnv(env);
   }
 });
