@@ -315,6 +315,58 @@ test('protected refresh sanitizes thrown failures', async () => {
   assert.equal(JSON.stringify(res.body).includes('raw-secret'), false);
 });
 
+test('public Smart Money responses never serialize the configured SEC contact', async () => {
+  const originalUserAgent = process.env.SEC_USER_AGENT;
+  const canaryEmail = 'private-owner@monitored-contact.co';
+  process.env.SEC_USER_AGENT = `CommsDashboard/1.0 ${canaryEmail}`;
+
+  try {
+    const stored = acceptedStoredSnapshot();
+    const snapshot = createSmartMoneyHandler({ readSnapshot: async () => stored });
+    const health = createSmartMoneyHealthHandler({
+      readSnapshot: async () => ({
+        snapshot: stored,
+        diagnostics: {
+          blob: true,
+          redis: true,
+          blobError: null,
+          redisError: null,
+          selectedSource: 'blob',
+        },
+      }),
+      now: () => new Date('2026-08-26T12:00:00.000Z'),
+    });
+    const refresh = createSmartMoneyRefreshHandler({
+      cronSecret: 'private-refresh-secret',
+      refreshSmartMoney: async () => ({
+        persisted: true,
+        partial: false,
+        providerStatuses: [],
+        signalsAccepted: [],
+        warnings: [],
+        errorCode: null,
+      }),
+    });
+    const snapshotResponse = mockRequest('/api/smart-money?refresh=1');
+    const healthResponse = mockRequest('/api/smart-money/health');
+    const refreshResponse = mockRequest('/api/smart-money/refresh', {
+      authorization: 'Bearer private-refresh-secret',
+    });
+
+    await snapshot(snapshotResponse.req, snapshotResponse.res);
+    await health(healthResponse.req, healthResponse.res);
+    await refresh(refreshResponse.req, refreshResponse.res);
+
+    assert.equal(healthResponse.res.body.configuration.secUserAgent, 'configured');
+    for (const response of [snapshotResponse.res, healthResponse.res, refreshResponse.res]) {
+      assert.equal(JSON.stringify(response.body).includes(canaryEmail), false);
+    }
+  } finally {
+    if (originalUserAgent === undefined) delete process.env.SEC_USER_AGENT;
+    else process.env.SEC_USER_AGENT = originalUserAgent;
+  }
+});
+
 test('health exposes exact enabled children, deterministic rollups, deployment, rights, and configuration', () => {
   const snapshot = storedWithStatuses(enabledStatuses());
   const health = buildSmartMoneyHealth({

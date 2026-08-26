@@ -746,6 +746,51 @@ test('scheduled market refresh runs market and Smart Money services and reports 
   });
 });
 
+test('market refresh marks success, authorization, method, and failure responses no-store', async () => {
+  const successHandler = refreshModule.createRefreshHandler({
+    cronSecret: 'server-secret',
+    refreshMarket: async () => ({ persisted: true, partial: false, errorCode: null }),
+    refreshSmartMoney: async () => ({ persisted: true, partial: false, errorCode: null }),
+  });
+  const postFailureHandler = refreshModule.createRefreshHandler({
+    cronSecret: 'server-secret',
+    readProviderCache: async () => { throw new Error('private cache failure'); },
+  });
+  const success = createResponse();
+  const unauthorized = createResponse();
+  const unsupportedMethod = createResponse();
+  const getFailure = createResponse();
+  const postFailure = createResponse();
+
+  await successHandler({
+    method: 'GET', headers: { authorization: 'Bearer server-secret' }, query: {},
+  }, success);
+  await successHandler({ method: 'GET', headers: {}, query: {} }, unauthorized);
+  await successHandler({ method: 'DELETE', headers: {}, query: {} }, unsupportedMethod);
+  await refreshModule.createRefreshHandler({
+    cronSecret: 'server-secret',
+    refreshMarket: async () => { throw new Error('private market failure'); },
+    refreshSmartMoney: async () => { throw new Error('private Smart Money failure'); },
+  })({ method: 'GET', headers: { authorization: 'Bearer server-secret' }, query: {} }, getFailure);
+  await postFailureHandler({
+    method: 'POST', headers: { authorization: 'Bearer server-secret' }, query: {},
+  }, postFailure);
+
+  assert.deepEqual(
+    [success, unauthorized, unsupportedMethod, getFailure, postFailure].map((response) => ({
+      statusCode: response.statusCode,
+      cacheControl: response.headers['Cache-Control'],
+    })),
+    [
+      { statusCode: 200, cacheControl: 'no-store' },
+      { statusCode: 401, cacheControl: 'no-store' },
+      { statusCode: 405, cacheControl: 'no-store' },
+      { statusCode: 503, cacheControl: 'no-store' },
+      { statusCode: 500, cacheControl: 'no-store' },
+    ],
+  );
+});
+
 test('scheduled refresh treats a fulfilled partial subsystem as a retryable failure', async () => {
   const cases = [
     {
