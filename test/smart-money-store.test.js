@@ -32,18 +32,36 @@ test('candidate recovery requires exact agreement from every configured durable 
     memory: snapshot('2026-08-26T03:00:00.000Z', 'memory-only'),
     readBlob: async () => ({ data: structuredClone(candidate), error: null }),
     readRedis: async () => ({ data: structuredClone(candidate), error: null }),
-  }), candidate);
-  assert.equal(await readDurableSmartMoneyCandidate({
+  }), { status: 'ready', snapshot: candidate });
+  assert.deepEqual(await readDurableSmartMoneyCandidate({
     blobConfigured: true,
     redisConfigured: true,
     readBlob: async () => ({ data: structuredClone(candidate), error: null }),
     readRedis: async () => ({
       data: snapshot('2026-08-26T02:00:00.000Z', 'conflict'), error: null,
     }),
-  }), null);
-  assert.equal(await readDurableSmartMoneyCandidate({
+  }), { status: 'conflict' });
+  assert.deepEqual(await readDurableSmartMoneyCandidate({
+    blobConfigured: true,
+    redisConfigured: true,
+    readBlob: async () => { throw new Error('private Blob error'); },
+    readRedis: async () => ({ data: null, error: null }),
+  }), { status: 'unavailable' });
+  assert.deepEqual(await readDurableSmartMoneyCandidate({
+    blobConfigured: true,
+    redisConfigured: true,
+    readBlob: async () => ({ data: structuredClone(candidate), error: null }),
+    readRedis: async () => ({ data: null, error: null }),
+  }), { status: 'conflict' });
+  assert.deepEqual(await readDurableSmartMoneyCandidate({
+    blobConfigured: true,
+    redisConfigured: true,
+    readBlob: async () => ({ data: null, error: null }),
+    readRedis: async () => ({ data: null, error: null }),
+  }), { status: 'absent' });
+  assert.deepEqual(await readDurableSmartMoneyCandidate({
     blobConfigured: false, redisConfigured: false, memory: candidate,
-  }), null);
+  }), { status: 'unavailable' });
 });
 
 test('equal snapshot generations preserve the first accepted candidate', () => {

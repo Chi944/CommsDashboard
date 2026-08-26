@@ -111,9 +111,10 @@ no production Task 8 module existed at this point.
   and is preserved on LKG failure; retrieval freshness remains independently
   based on `retrievedAt`.
 - Publication metadata uses schema version 2. Successful publication removes
-  the generation from staging; pruning compacts expired accepted IDs and
-  removes abandoned staging after a seven-day retry grace while retaining
-  in-grace retry work and the current accepted generation.
+  the generation from staging. Pruning compacts expired accepted IDs and
+  reconciled/superseded stages at or behind the current accepted generation,
+  but never age-prunes an unresolved stage newer than current; that exact
+  generation remains recoverable through a prolonged publication outage.
 
 ## Review fix round 1 TDD evidence
 
@@ -229,3 +230,58 @@ filing selection, the minimized SEC fixtures and focused tests, and this
 report. Production still has exactly seven enabled SEC adapters, makes zero
 Yahoo/Polymarket/Hyperliquid requests, and contains no trading, order, wallet,
 credential, deposit, withdrawal, signing, or allocation-execution path.
+
+## Review fix round 3 TDD evidence
+
+All round-3 regressions were written before production changes. The combined
+RED command was:
+
+```text
+node --test test/smart-money-store.test.js test/smart-money-journal.test.js test/smart-money-refresh.test.js
+```
+
+It exited `1`: 54 tests were discovered, 49 passed, and 5 failed. The journal
+suite failed to load because the dependency-neutral private-snapshot module did
+not yet exist. Refresh accepted ambiguous candidate results or tried to parse
+the new typed absence as a snapshot, and durable storage still returned either
+a raw snapshot or ambiguous `null`.
+
+After implementation, the same targeted set reached 82/82. The complete
+Provider Core focused command then reached 240/240. New regressions prove:
+
+- Blob/Redis read error/absence and cross-store disagreement produce typed,
+  safe retryable failures before provider fetch, journal staging, snapshot
+  write, or publication; only explicit clean absence starts a new generation.
+- An exact ready candidate is finalized before any new provider work, so a
+  recoverable generation B cannot be overwritten by generation C.
+- An unresolved stage newer than current survives more than seven days and is
+  still exactly publishable, while accepted/superseded metadata at or behind
+  current is compacted.
+- Final publication and accepted reads reject forged digests, incomplete
+  envelopes, and internally swapped public/private child state.
+
+The canonical complete private-envelope validator and SHA-256 digest builder
+now live in `lib/smart-money/private-snapshot.js`, which has no storage,
+journal, refresh, or API dependency. Refresh construction/previous-state reads,
+journal publication CAS, journal staging CAS reads, history acceptance reads,
+and public accepted-snapshot reads all use that same validation boundary.
+
+No live SEC probe was repeated in round 3 because no SEC transport or parser
+code changed. The Provider Core SEC fixture suite still parses all six cited
+official filing profiles.
+
+## Review fix round 3 final verification
+
+- Provider Core focused command: exit `0`; 240 tests, 240 passed, 0 failed.
+- `npm test`: exit `0`; 364 Node unit tests plus 33 UI tests, 397 total, all
+  passed (2/2 UI test files).
+- `npm run build`: exit `0`; Vite transformed 623 modules and completed the
+  production build.
+- `git diff --check`: exit `0`; no whitespace errors. Git emitted only the
+  repository's expected LF-to-CRLF working-copy notices.
+
+Round-3 changed scope is limited to the typed durable-candidate read contract,
+refresh recovery gate, shared private-envelope validation/digest module,
+journal acceptance/pruning boundaries, fully valid journal fixtures, focused
+regressions, and this report. The exact seven enabled SEC adapters and all
+zero-network/no-trading boundaries are unchanged. No known concerns remain.
