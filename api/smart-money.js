@@ -1,5 +1,5 @@
 import { validateSmartMoneyPrivateSnapshot } from '../lib/smart-money/refresh.js';
-import { readSmartMoneySnapshot } from '../lib/smart-money/store.js';
+import { readAcceptedSmartMoneySnapshot } from '../lib/smart-money/journal.js';
 
 const UNAVAILABLE = Object.freeze({
   ok: false,
@@ -21,7 +21,7 @@ function unavailable(res) {
 }
 
 export function createSmartMoneyHandler(deps = {}) {
-  const readSnapshot = deps.readSnapshot || readSmartMoneySnapshot;
+  const readSnapshot = deps.readSnapshot || readAcceptedSmartMoneySnapshot;
   return async function smartMoneyHandler(req, res) {
     if (req.method !== 'GET') {
       res.setHeader('Allow', 'GET');
@@ -37,7 +37,8 @@ export function createSmartMoneyHandler(deps = {}) {
     try {
       const stored = await readSnapshot();
       if (stored === null) return unavailable(res);
-      const accepted = validateSmartMoneyPrivateSnapshot(stored).publicSnapshot;
+      const now = typeof deps.now === 'function' ? deps.now() : new Date();
+      const accepted = validateSmartMoneyPrivateSnapshot(stored, { now }).publicSnapshot;
       res.setHeader('Cache-Control', req.query?.refresh === '1'
         ? 'no-store'
         : 's-maxage=60, stale-while-revalidate=300');

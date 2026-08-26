@@ -44,7 +44,7 @@ function enabledStatuses() {
     status: index === 2 ? 'stale' : index === 3 ? 'unavailable' : 'live',
     lastAttemptAt: '2026-08-26T11:00:00.000Z',
     lastSuccessAt: index === 3 ? null : '2026-08-26T11:00:00.000Z',
-    sourceAsOf: null,
+    sourceAsOf: id === 'sec-edgar' ? '2026-06-30T00:00:00.000Z' : null,
     retrievedAt: '2026-08-26T11:00:00.000Z',
     freshnessBasis: 'retrieval_time',
     recordCount: 1,
@@ -306,6 +306,7 @@ test('health exposes exact enabled children, deterministic rollups, deployment, 
   assert.ok(health.providerStatuses.every((row) => row.retrievedAt === '2026-08-26T11:00:00.000Z'));
   assert.ok(health.providerStatuses.every((row) => row.freshnessBasis === 'retrieval_time'));
   assert.ok(health.providerStatuses.every((row) => Number.isInteger(row.cacheAgeSeconds)));
+  assert.equal(health.providerStatuses[0].sourceAsOf, '2026-06-30T00:00:00.000Z');
   assert.deepEqual(health.providerStatuses.map((row) => row.state), [
     'fresh', 'fresh', 'fresh', 'unavailable', 'fresh', 'fresh', 'fresh',
   ]);

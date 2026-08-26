@@ -79,9 +79,23 @@ export function institutionalInlineXbrl(providerId, mutations = {}) {
   const irrelevantTargetValue = ['institutional-fbtc', 'institutional-bitb'].includes(providerId)
     ? fact({ concept: profile.valueConcept, contextRef: 'wrong-dimension-target', unitRef: 'usd-unit', scale: profile.valueScale, value: '999,999' }) : '';
   const nestedTeslaQuantity = `<ix:nonFraction name="${profile.quantityConcept}" contextRef="${targetId}" unitRef="btc-unit" scale="0"><ix:nonFraction name="${profile.quantityConcept}" contextRef="${comparisonId}" unitRef="btc-unit" scale="0">${mutations.quantity ?? profile.quantity}</ix:nonFraction></ix:nonFraction>`;
-  const body = providerId === 'institutional-tesla'
-    ? `<p>The majority of our digital assets were comprised of Bitcoin ${nestedTeslaQuantity}${duplicateQuantity}${ambiguousTargetQuantity}</p>`
-    : `<h2>${profile.anchors[0].toLowerCase()}</h2><table><tr><th>${profile.anchors.slice(1).join(' / ')}</th></tr><tr><td>Bitcoin ${quantity} ${comparisonQuantity} ${duplicateQuantity} ${ambiguousTargetQuantity}</td><td>${value} ${comparisonValue} ${irrelevantTargetValue}</td></tr></table>`;
+  const targetQuantity = providerId === 'institutional-tesla' ? nestedTeslaQuantity : quantity;
+  const inContainerQuantity = mutations.relocateQuantity ? '' : targetQuantity;
+  const inContainerValue = mutations.relocateValue ? '' : value;
+  let container;
+  if (providerId === 'institutional-tesla') {
+    container = `<span>As of June 30, 2026 and December 31, 2025, the majority of our digital assets were comprised of ${inContainerQuantity}${duplicateQuantity}${ambiguousTargetQuantity} units of Bitcoin held at an acquisition cost of $386 million.</span>`;
+  } else if (providerId === 'institutional-strategy') {
+    container = `<table><tr><th>(in thousands, except number of bitcoins)</th><th>June 30, 2026</th><th>December 31, 2025</th></tr><tr><td>Approximate number of bitcoins held</td><td>${inContainerQuantity}${duplicateQuantity}${ambiguousTargetQuantity}</td><td>${comparisonQuantity}</td></tr><tr><td>Digital asset cost basis</td><td>$63,939,306</td><td>$50,435,331</td></tr><tr><td>Digital asset fair value</td><td>${inContainerValue}</td><td>${comparisonValue}</td></tr></table>`;
+  } else if (providerId === 'institutional-ibit') {
+    container = `<h2>iShares Bitcoin Trust ETF Schedules of Investments (Unaudited)</h2><table><tr><th>Description</th><th>Quantity</th><th>Cost</th><th>Fair Value</th></tr><tr><td>Bitcoin</td><td>${inContainerQuantity}${duplicateQuantity}${ambiguousTargetQuantity}</td><td>$61,003,144,500</td><td>$43,395,920,710</td></tr><tr><td>Total Investments – 100.02%</td><td></td><td></td><td>43,395,920,710</td></tr></table><table><tr><th>June 30, 2026</th><th>December 31, 2025</th></tr><tr><td>Investment in bitcoin, at fair value</td><td>${inContainerValue}</td><td>${comparisonValue}</td></tr><tr><td>Total Assets</td><td>43,446,422,539</td></tr><tr><td>Total Liabilities</td><td>60,410,414</td></tr></table>${comparisonQuantity}`;
+  } else if (providerId === 'institutional-fbtc') {
+    container = `<table><tr><th>(Amounts in 000’s of US$, except for quantity of bitcoin and percentages)</th></tr><tr><th>Investments (a)</th><th>Quantity of Bitcoin</th><th>Cost</th><th>Fair Value</th><th>Percentage of Net Assets</th></tr><tr><td>Investment in bitcoin Global Bitcoin</td><td>${inContainerQuantity}${duplicateQuantity}${ambiguousTargetQuantity}</td><td>9,748,371</td><td>${inContainerValue}${irrelevantTargetValue}</td><td>100.02%</td></tr></table>${comparisonQuantity}${comparisonValue}`;
+  } else {
+    container = `<h2>Fair Value of Bitcoin</h2><table><tr><th>Quantity of bitcoin</th><th>Fair Value (amounts in thousands)</th></tr><tr><td>Ending balance as of June 30, 2026</td><td>${inContainerQuantity}${duplicateQuantity}${ambiguousTargetQuantity}</td><td>${inContainerValue}</td></tr></table>${comparisonQuantity}${comparisonValue}${irrelevantTargetValue}`;
+  }
+  const relocated = `${mutations.relocateQuantity ? `<div>Relocated comparison note ${targetQuantity}</div>` : ''}${mutations.relocateValue ? `<div>Relocated balance-sheet value ${value}</div>` : ''}`;
+  const body = `${profile.anchors.map((anchor) => `<span>${anchor}</span>`).join('')}${container}${relocated}`;
   const sourceUrl = `https://www.sec.gov/Archives/edgar/data/${profile.cik}/${profile.accessionNumber.replace(/-/g, '')}/${profile.primaryDocument}`;
   return `<!doctype html><html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"><head><link rel="canonical" href="${sourceUrl}"></head><body><ix:header><ix:resources>${resources}</ix:resources></ix:header><a href="${sourceUrl}">SEC filing source</a>${body}</body></html>`;
 }
