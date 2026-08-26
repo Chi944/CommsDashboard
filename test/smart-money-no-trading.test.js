@@ -52,11 +52,11 @@ test('every Smart Money library and API module exposes no trading or credential 
   const roots = [
     path.resolve('lib/smart-money'),
     path.resolve('api/smart-money'),
+    path.resolve('server/smart-money'),
   ];
   const files = [
-    ...await javascriptFiles(roots[0]),
     path.resolve('api/smart-money.js'),
-    ...await javascriptFiles(roots[1]),
+    ...(await Promise.all(roots.map(javascriptFiles))).flat(),
   ];
   assert.ok(files.some((file) => file.endsWith(`${path.sep}refresh.js`)));
   for (const file of files) {
@@ -76,6 +76,7 @@ test('all production JS, JSX, TS, and TSX surfaces contain no execution path or 
   const roots = [
     path.resolve('lib/smart-money'),
     path.resolve('api/smart-money'),
+    path.resolve('server/smart-money'),
     path.resolve('src/state'),
     path.resolve('src/lib'),
     path.resolve('src/components/smart-money'),

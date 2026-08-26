@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createSmartMoneyHandler } from '../api/smart-money.js';
-import { createSmartMoneyHealthHandler } from '../api/smart-money/health.js';
-import { createSmartMoneyHistoryHandler } from '../api/smart-money/history.js';
-import { createSmartMoneyRefreshHandler } from '../api/smart-money/refresh.js';
+import { createSmartMoneyHealthHandler } from '../server/smart-money/health.js';
+import { createSmartMoneyHistoryHandler } from '../server/smart-money/history.js';
+import { createSmartMoneyRefreshHandler } from '../server/smart-money/refresh.js';
 import { buildSmartMoneyHealth } from '../lib/smart-money/health.js';
 import { buildSmartMoneyPrivateSnapshot } from '../lib/smart-money/refresh.js';
 import { SOURCE_RIGHTS } from '../lib/smart-money/rights.js';

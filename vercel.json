@@ -7,6 +7,9 @@
   "functions": {
     "api/market/refresh.js": {
       "maxDuration": 120
+    },
+    "api/smart-money/[route].js": {
+      "maxDuration": 120
     }
   },
   "crons": [
@@ -20,6 +23,8 @@
     }
   ],
   "rewrites": [
+    { "source": "/api/smart-money/:route", "destination": "/api/smart-money/[route]" },
+    { "source": "/api/smart-money/:route/", "destination": "/api/smart-money/[route]" },
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/" }
   ]

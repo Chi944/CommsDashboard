@@ -63,6 +63,8 @@ See [docs/commodities-v2-api-spec.md](docs/commodities-v2-api-spec.md) for archi
 | `GET /api/smart-money/health` | Exact health for all seven enabled SEC-backed adapters and both durable stores |
 | `GET /api/smart-money/refresh` | Protected Smart Money-only refresh (Bearer `CRON_SECRET`) |
 
+The four Smart Money sub-routes share one dynamic Vercel Function; their public URLs and request contracts remain independent. The dispatcher requires Vercel's normalized `route` value to match the URL pathname, rejects duplicate or mismatched values, and strips that routing metadata before endpoint query validation. An explicit same-value `route` query is indistinguishable from Vercel's injected metadata and is therefore handled as metadata.
+
 The combined market and Smart Money refresh runs at 06:00 and 18:00 UTC (`vercel.json`). The production AI smoke runs daily at 12:17 UTC, forces both generated briefings, validates current evidence, and requires all seven enabled Smart Money providers to be fresh.
 
 ## Data trust and resilience

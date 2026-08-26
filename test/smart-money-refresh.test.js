@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createSmartMoneyHandler } from '../api/smart-money.js';
-import { createSmartMoneyHistoryHandler } from '../api/smart-money/history.js';
+import { createSmartMoneyHistoryHandler } from '../server/smart-money/history.js';
 import {
   pruneJournal,
   publishJournalGeneration,
