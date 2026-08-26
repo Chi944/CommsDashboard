@@ -24,7 +24,7 @@ jobs:
         id: checked-out-main
         shell: bash
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: node scripts/smoke-ai.mjs
