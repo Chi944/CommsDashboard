@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createSmartMoneyBriefingHandler } from '../api/smart-money/briefing.js';
+import { createSmartMoneyBriefingHandler } from '../server/smart-money/briefing.js';
 import {
   SMART_MONEY_PARAGRAPH_IDS,
   buildDeterministicSmartMoneyBriefing,

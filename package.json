@@ -12,6 +12,7 @@
     "test": "npm run build && npm run test:unit && npm run test:ui",
     "test:unit": "node --test",
     "test:ui": "vitest run test/live-data.test.jsx test/ui-accessibility.test.jsx test/briefing-ui.test.jsx test/smart-money-provider.test.jsx test/smart-money-ui.test.jsx",
+    "verify:vercel-routes": "node scripts/verify-vercel-routes.mjs",
     "smoke:ai": "node scripts/smoke-ai.mjs",
     "preview": "vite preview"
   },
