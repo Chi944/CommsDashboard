@@ -1,0 +1,9 @@
+{
+  "directory": {
+    "item": [
+      {"name": "primary.xml"},
+      {"name": "infotable.xml"},
+      {"name": "complete-submission.txt"}
+    ]
+  }
+}
