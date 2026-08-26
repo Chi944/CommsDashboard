@@ -6,3 +6,4 @@ dist
 !.env.example
 .vite
 .vercel
+.worktrees/
