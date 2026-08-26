@@ -30,7 +30,11 @@ test('one failed ETF remains visible beside successful institutional adapters', 
   const result = await fetchInstitutionalDisclosures(configs, {
     fetchOne: async (config) => {
       if (config.id === 'institutional-fbtc') throw Object.assign(new Error('private details'), { code: 'timeout' });
-      return { records: [{ entityId: config.entityId, amount: 1 }], retrievedAt: NOW };
+      return {
+        providerId: config.id,
+        records: [normalizeFundDisclosure(fixture('ibit'), ALL_CONFIGS[2], { now: () => new Date(NOW) })],
+        retrievedAt: NOW,
+      };
     },
     now: () => new Date(NOW),
   });
@@ -120,7 +124,7 @@ test('BTC amounts may be fractional but never unsafe or negative', () => {
 test('fulfilled empty results are typed empty_dataset and raw failure detail never leaks', async () => {
   const result = await fetchInstitutionalDisclosures(ALL_CONFIGS.slice(0, 2), {
     fetchOne: async (config) => {
-      if (config.id === 'institutional-strategy') return { records: [], retrievedAt: NOW };
+      if (config.id === 'institutional-strategy') return { providerId: config.id, records: [], retrievedAt: NOW };
       throw new Error('raw filing body: secret');
     },
     now: () => new Date(NOW),
@@ -143,4 +147,95 @@ test('a concrete adapter rejects mismatched entity, CIK, and rights bindings bef
     fetchRaw: async () => { called = true; return fixture('strategy'); },
   }), { code: 'configuration_missing' });
   assert.equal(called, false);
+});
+
+test('plural fetching isolates synchronous child throws and rejects a mismatched child before retrieval', async () => {
+  const called = [];
+  const result = await fetchInstitutionalDisclosures([
+    ALL_CONFIGS[0],
+    { ...ALL_CONFIGS[1], entityId: 'strategy' },
+    ALL_CONFIGS[2],
+  ], {
+    fetchOne(config) {
+      called.push(config.id);
+      if (config.id === 'institutional-ibit') throw new Error('untrusted sync detail');
+      return { providerId: config.id, records: [normalizeTreasuryDisclosure(fixture('strategy'), ALL_CONFIGS[0], { now: () => new Date(NOW) })], retrievedAt: NOW };
+    },
+    now: () => new Date(NOW),
+  });
+  assert.deepEqual(called, ['institutional-strategy', 'institutional-ibit']);
+  assert.deepEqual(result.statuses.map((row) => [row.id, row.status, row.errorCode]), [
+    ['institutional-strategy', 'live', undefined],
+    ['institutional-tesla', 'unavailable', 'configuration_missing'],
+    ['institutional-ibit', 'unavailable', 'provider_unavailable'],
+  ]);
+});
+
+test('a filing accession and archive directory must bind exactly to the configured CIK', () => {
+  const crossFiler = fixture('strategy');
+  crossFiler.accessionNumber = '0001318605-26-000101';
+  assert.throws(() => normalizeTreasuryDisclosure(crossFiler, ALL_CONFIGS[0], { now: () => new Date(NOW) }), { code: 'schema_invalid' });
+
+  const crossDirectory = fixture('strategy');
+  crossDirectory.sourceUrl = 'https://www.sec.gov/Archives/edgar/data/1050446/000131860526000101/strategy-20260630.htm';
+  assert.throws(() => normalizeTreasuryDisclosure(crossDirectory, ALL_CONFIGS[0], { now: () => new Date(NOW) }), { code: 'schema_invalid' });
+});
+
+test('filing dates require an exact calendar or canonical ISO timestamp', () => {
+  const trailing = fixture('strategy');
+  trailing.filingDate = '2026-08-05 trailing filing text';
+  assert.throws(() => normalizeTreasuryDisclosure(trailing, ALL_CONFIGS[0], { now: () => new Date(NOW) }), { code: 'schema_invalid' });
+});
+
+test('holding comparison ignores refreshed metadata, property order, and unknown fields', () => {
+  const previous = {
+    btcAmount: 100, reportedValueUsd: 10_000_000, retrievedAt: '2026-08-01T00:00:00.000Z',
+    filingBody: 'not retained', arbitrary: 'old',
+  };
+  const current = {
+    arbitrary: 'new', reportedValueUsd: 10_000_000, btcAmount: 100,
+    retrievedAt: '2026-08-26T00:00:00.000Z', sourceUrl: 'https://www.sec.gov/changed-link',
+  };
+  assert.equal(compareInstitutionalHoldings(previous, current).classification, 'unchanged');
+});
+
+test('plural rollup rejects malformed child records without hiding valid siblings', async () => {
+  const valid = normalizeTreasuryDisclosure(fixture('strategy'), ALL_CONFIGS[0], { now: () => new Date(NOW) });
+  const rawBody = { ...normalizeFundDisclosure(fixture('ibit'), ALL_CONFIGS[2], { now: () => new Date(NOW) }), filingBody: 'raw filing text' };
+  const result = await fetchInstitutionalDisclosures(ALL_CONFIGS.slice(0, 4), {
+    fetchOne: async (config) => ({
+      providerId: config.id === 'institutional-fbtc' ? 'institutional-ibit' : config.id,
+      records: config.id === 'institutional-strategy'
+        ? [valid]
+        : config.id === 'institutional-tesla'
+          ? [{ ...valid, providerId: 'institutional-tesla' }]
+          : config.id === 'institutional-ibit'
+            ? [rawBody]
+            : [],
+      retrievedAt: NOW,
+    }),
+    now: () => new Date(NOW),
+  });
+  assert.deepEqual(result.statuses.map((row) => [row.id, row.status, row.errorCode]), [
+    ['institutional-strategy', 'live', undefined],
+    ['institutional-tesla', 'unavailable', 'schema_invalid'],
+    ['institutional-ibit', 'unavailable', 'schema_invalid'],
+    ['institutional-fbtc', 'unavailable', 'schema_invalid'],
+  ]);
+  assert.deepEqual(result.records.map((record) => record.id), [valid.id]);
+});
+
+test('plural rollup rejects duplicate stable record IDs', async () => {
+  const valid = normalizeFundDisclosure(fixture('ibit'), ALL_CONFIGS[2], { now: () => new Date(NOW) });
+  const result = await fetchInstitutionalDisclosures([ALL_CONFIGS[2]], {
+    fetchOne: async () => ({ providerId: 'institutional-ibit', records: [valid, { ...valid }], retrievedAt: NOW }),
+    now: () => new Date(NOW),
+  });
+  assert.deepEqual(result, {
+    records: [],
+    statuses: [{
+      id: 'institutional-ibit', group: 'institutional', status: 'unavailable', recordCount: 0,
+      errorCode: 'schema_invalid', retrievedAt: NOW,
+    }],
+  });
 });
