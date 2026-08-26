@@ -186,6 +186,7 @@ export default function Intel({
   return (
     <div className="space-y-5 sm:space-y-6">
       <SegmentedTabs
+        idPrefix="intel-view"
         label="Intel view"
         value={activeView}
         onChange={(nextView) => onViewChange?.(nextView)}
@@ -194,13 +195,19 @@ export default function Intel({
           { id: 'smart-money', label: 'Smart Money' },
         ]}
       />
-      {activeView === 'smart-money' ? (
-        <SmartMoneyView
-          recordId={recordId}
-          onRecordChange={onRecordChange}
-          onOpenPrices={onOpenPrices}
-        />
-      ) : <NewsFeed />}
+      <div
+        id={`intel-view-panel-${activeView}`}
+        role="tabpanel"
+        aria-labelledby={`intel-view-tab-${activeView}`}
+      >
+        {activeView === 'smart-money' ? (
+          <SmartMoneyView
+            recordId={recordId}
+            onRecordChange={onRecordChange}
+            onOpenPrices={onOpenPrices}
+          />
+        ) : <NewsFeed />}
+      </div>
     </div>
   );
 }
