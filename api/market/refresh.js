@@ -1,8 +1,10 @@
-// GET /api/market/refresh — cron / manual AV + EIA cache warm.
+// GET /api/market/refresh — cron / manual provider-cache maintenance.
+// EIA remains enabled; retired Alpha Vantage rows are cleared without a request.
 // Requires Authorization: Bearer <CRON_SECRET>.
 
 import { fetchAlphaVantageCommodities } from '../../lib/market/providers/alphavantage.js';
 import { fetchEiaEnergy } from '../../lib/market/providers/eia.js';
+import { isAlphaVantageEnabled } from '../../lib/market/providerPolicy.js';
 import { readProviderCache, writeProviderCache } from '../../lib/market/store.js';
 import { AV_TICKERS, EIA_TICKERS } from '../../lib/market/symbolMaps.js';
 import { refreshSmartMoney as refreshSmartMoneyService } from '../../lib/smart-money/refresh.js';
@@ -87,18 +89,23 @@ export async function refreshMarketProviders(dependencies = {}) {
   const readCache = dependencies.readProviderCache || readProviderCache;
   const writeCache = dependencies.writeProviderCache || writeProviderCache;
   const now = dependencies.now || (() => new Date());
+  const alphaVantageEnabled = isAlphaVantageEnabled(dependencies);
 
   // This generation timestamp is captured before any upstream work so a
   // slower, older invocation cannot outrank a later-started refresh.
   const refreshStartedAt = now().toISOString();
   const prev = await readCache();
-  const av = await fetchAv();
+  const av = alphaVantageEnabled
+    ? await fetchAv()
+    : { rows: [], errors: [], fetchedAt: refreshStartedAt };
   const eia = await fetchEia();
-  const nextAv = keepLastKnownGood(
-    supportedProviderRows(av, AV_TICKERS),
-    supportedProviderRows(prev?.alphavantage, AV_TICKERS),
-    'alphavantage',
-  );
+  const nextAv = alphaVantageEnabled
+    ? keepLastKnownGood(
+      supportedProviderRows(av, AV_TICKERS),
+      supportedProviderRows(prev?.alphavantage, AV_TICKERS),
+      'alphavantage',
+    )
+    : av;
   const nextEia = keepLastKnownGood(
     supportedProviderRows(eia, EIA_TICKERS),
     supportedProviderRows(prev?.eia, EIA_TICKERS),
@@ -124,7 +131,12 @@ export async function refreshMarketProviders(dependencies = {}) {
 
   const writeResult = await writeCache(payload);
   const persistence = durableWriteState(writeResult);
-  const providerDegraded = Boolean(nextAv.errors?.length || nextEia.errors?.length);
+  const providerDegraded = Boolean(
+    nextAv.errors?.length
+    || nextEia.errors?.length
+    || nextAv.rows?.some((row) => row.stale === true)
+    || nextEia.rows?.some((row) => row.stale === true)
+  );
   const partial = persistence.degraded || providerDegraded;
   return {
     ok: persistence.durable && !partial,

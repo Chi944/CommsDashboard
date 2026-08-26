@@ -5,6 +5,8 @@
 **Parent context:** Vault `wiki/projects/commodities-dashboard.md`, `commodities-dashboard-v2.md`  
 **Feature flag:** `VITE_USE_LIVE_DATA=true` (Yahoo baseline plus v2 overlays; Yahoo-only when false)
 
+> **Production correction (2026-08-27):** Alpha Vantage is no longer an enabled live overlay. Its free WTI/Brent endpoint returned delayed EIA/FRED spot observations while the dashboard instruments are current Yahoo oil futures. Production ignores legacy Alpha Vantage cache rows, makes zero Alpha Vantage refresh calls, and keeps `CL`/`BZ` Yahoo-authoritative. Alpha Vantage sections below are retained only as historical design context; no Alpha Vantage key is required.
+
 ---
 
 ## Executive summary

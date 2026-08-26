@@ -47,7 +47,7 @@ function v2Payload(price = 77) {
     partial: false,
     staleProviders: [],
     commodities: [{
-      ticker: 'CL',
+      ticker: 'NG',
       price,
       changePct: 1,
       changeAbs: 1,
@@ -82,11 +82,14 @@ function degradedV2Payload() {
 function MarketState() {
   const data = useLiveData();
   const crude = data.commodities.find((row) => row.ticker === 'CL');
-  const resolved = data.resolveTablePrice(crude);
+  const naturalGas = data.commodities.find((row) => row.ticker === 'NG');
+  const resolvedCrude = data.resolveTablePrice(crude);
+  const resolvedNaturalGas = data.resolveTablePrice(naturalGas);
   return (
     <>
       <output aria-label="market mode">{data.dataMode}</output>
-      <output aria-label="crude price">{resolved?.price}</output>
+      <output aria-label="crude price">{resolvedCrude?.price}</output>
+      <output aria-label="natural gas price">{resolvedNaturalGas?.price}</output>
       <output aria-label="market updated">{data.marketUpdatedLabel}</output>
       <button type="button" onClick={data.refreshMarketSnapshot}>Refresh market</button>
     </>
@@ -125,7 +128,7 @@ describe('LiveData market fetch isolation', () => {
     expect(screen.getByRole('status', { name: /market updated/i })).toHaveTextContent(/updated [0-9]s ago/i);
   });
 
-  it('keeps a healthy V2 snapshot when the initial Yahoo request fails', async () => {
+  it('keeps the healthy EIA natural-gas row without replacing Yahoo-authoritative oil when Yahoo fails', async () => {
     const calls = [];
     globalThis.fetch = vi.fn(async (url) => {
       calls.push(String(url));
@@ -138,7 +141,8 @@ describe('LiveData market fetch isolation', () => {
 
     await waitFor(() => expect(calls).toContain('/api/market/snapshot'));
     expect(screen.getByRole('status', { name: /market mode/i })).toHaveTextContent('DEGRADED');
-    expect(screen.getByRole('status', { name: /crude price/i })).toHaveTextContent('77');
+    expect(screen.getByRole('status', { name: /crude price/i })).toHaveTextContent('80');
+    expect(screen.getByRole('status', { name: /natural gas price/i })).toHaveTextContent('77');
   });
 
   it('manual refresh attempts both feeds and records a Yahoo-only failure', async () => {
@@ -165,7 +169,8 @@ describe('LiveData market fetch isolation', () => {
     await waitFor(() => expect(calls.filter((url) => url === '/api/prices')).toHaveLength(2));
     await waitFor(() => expect(screen.getByRole('status', { name: /market mode/i })).toHaveTextContent('DEGRADED'));
     expect(calls.filter((url) => url === '/api/market/snapshot')).toHaveLength(2);
-    expect(screen.getByRole('status', { name: /crude price/i })).toHaveTextContent('78');
+    expect(screen.getByRole('status', { name: /crude price/i })).toHaveTextContent('82');
+    expect(screen.getByRole('status', { name: /natural gas price/i })).toHaveTextContent('78');
   });
 
   it('manual refresh stays LIVE when a V2-only failure is covered by fresh Yahoo rows', async () => {

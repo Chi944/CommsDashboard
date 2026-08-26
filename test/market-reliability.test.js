@@ -670,6 +670,7 @@ test('market refresh returns a retryable degraded response when no durable write
   assert.equal(typeof refreshModule.createRefreshHandler, 'function');
   const handler = refreshModule.createRefreshHandler({
     cronSecret: 'server-secret',
+    alphaVantageEnabled: true,
     readProviderCache: async () => null,
     fetchAlphaVantageCommodities: async () => ({
       rows: [{ ticker: 'CL', source: 'alphavantage' }],
@@ -883,6 +884,7 @@ test('market refresh marks configured write failures partial even when another d
   assert.equal(typeof refreshModule.createRefreshHandler, 'function');
   const handler = refreshModule.createRefreshHandler({
     cronSecret: 'server-secret',
+    alphaVantageEnabled: true,
     readProviderCache: async () => null,
     fetchAlphaVantageCommodities: async () => ({ rows: [], errors: [], fetchedAt: null }),
     fetchEiaEnergy: async () => ({ rows: [], errors: [], fetchedAt: null }),
@@ -938,6 +940,7 @@ test('an older overlapping refresh cannot overwrite a later-started durable gene
   };
   const handler = refreshModule.createRefreshHandler({
     cronSecret: 'server-secret',
+    alphaVantageEnabled: true,
     now: () => new Date(clockMs),
     readProviderCache: async () => null,
     fetchAlphaVantageCommodities: async () => {
@@ -1007,6 +1010,7 @@ test('market refresh merges missing tickers from last-known-good rows after a pa
   let written;
   const handler = refreshModule.createRefreshHandler({
     cronSecret: 'server-secret',
+    alphaVantageEnabled: true,
     readProviderCache: async () => ({
       alphavantage: {
         rows: [
@@ -1177,6 +1181,187 @@ test('market snapshot rejects unsupported queries and methods before cache or pr
   assert.equal(fanoutCalls, 0);
 });
 
+test('market snapshot quarantines Alpha Vantage by default instead of serving stale overlays', async () => {
+  const now = new Date('2026-08-26T20:00:00.000Z');
+  let avCacheReads = 0;
+  let mergeOptions = null;
+  const handler = snapshotModule.createSnapshotHandler({
+    now: () => now,
+    fallbackCommodities: [],
+    readProviderCache: async () => ({
+      cache: {
+        alphavantage: {
+          rows: [{
+            ticker: 'CL', source: 'alphavantage', stale: true,
+            asOf: '2026-08-18T00:00:00.000Z',
+          }],
+          fetchedAt: now.toISOString(),
+          errors: [],
+        },
+        eia: {
+          rows: [{
+            ticker: 'NG', source: 'eia', stale: false,
+            asOf: '2026-08-25T00:00:00.000Z',
+          }],
+          fetchedAt: now.toISOString(),
+          errors: [],
+        },
+      },
+      diagnostics: {
+        blob: true,
+        blobHit: true,
+        blobError: null,
+        redis: true,
+        redisHit: true,
+        redisError: null,
+        kv: false,
+        memoryHit: false,
+        selectedSource: 'redis',
+        durableHit: true,
+        readDegraded: false,
+      },
+    }),
+    avRowsFromCache: () => {
+      avCacheReads += 1;
+      return {
+        rows: [{
+          ticker: 'CL', source: 'alphavantage', stale: true,
+          asOf: '2026-08-18T00:00:00.000Z',
+        }],
+        stale: true,
+      };
+    },
+    eiaRowsFromCache: () => ({
+      rows: [{
+        ticker: 'NG', source: 'eia', stale: false,
+        asOf: '2026-08-25T00:00:00.000Z',
+      }],
+      stale: false,
+    }),
+    fetchCoinGeckoPrices: async () => ({
+      rows: [{ ticker: 'BTC', source: 'coingecko', stale: false }],
+      errors: [],
+    }),
+    fetchCoinGeckoVolumes: async () => ({ volumes: {}, errors: [] }),
+    fetchEiaEnergy: async () => {
+      throw new Error('fresh EIA cache should avoid a live request');
+    },
+    mergeMarketSnapshot: (liveRows, _fallbackRows, options) => {
+      mergeOptions = options;
+      return {
+        commodities: liveRows,
+        meta: {
+          liveSymbolCount: liveRows.length,
+          liveTickers: ['BTC', 'NG'],
+          sources: { coingecko: 1, alphavantage: 0, eia: 1 },
+          staleProviders: [],
+        },
+      };
+    },
+  });
+  const response = createResponse();
+
+  await handler({ method: 'GET', query: {} }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(avCacheReads, 0);
+  assert.deepEqual(mergeOptions, { disabledTickers: ['CL', 'BZ'] });
+  assert.equal(response.body.partial, false);
+  assert.deepEqual(response.body.disabledProviders, ['alphavantage']);
+  assert.equal(response.body.providers.alphavantage, 0);
+  assert.equal(response.body.staleProviders.includes('alphavantage'), false);
+  assert.equal(response.body.commodities.some((row) => row.source === 'alphavantage'), false);
+});
+
+test('market refresh does not call or retain Alpha Vantage unless explicitly enabled', async () => {
+  const now = new Date('2026-08-26T20:00:00.000Z');
+  let avCalls = 0;
+  let written = null;
+  const handler = refreshModule.createRefreshHandler({
+    cronSecret: 'server-secret',
+    now: () => now,
+    readProviderCache: async () => ({
+      alphavantage: {
+        rows: [{
+          ticker: 'CL', source: 'alphavantage', stale: true,
+          asOf: '2026-08-18T00:00:00.000Z',
+        }],
+        fetchedAt: now.toISOString(),
+        errors: [],
+      },
+      eia: { rows: [], fetchedAt: null, errors: [] },
+    }),
+    fetchAlphaVantageCommodities: async () => {
+      avCalls += 1;
+      return {
+        rows: [{ ticker: 'CL', source: 'alphavantage', stale: false }],
+        errors: [],
+        fetchedAt: now.toISOString(),
+      };
+    },
+    fetchEiaEnergy: async () => ({
+      rows: [{
+        ticker: 'NG', source: 'eia', stale: false,
+        asOf: '2026-08-25T00:00:00.000Z',
+      }],
+      errors: [],
+      fetchedAt: now.toISOString(),
+    }),
+    writeProviderCache: async (payload) => {
+      written = payload;
+      return {
+        blobWrite: { configured: true, ok: true, error: null },
+        redisWrite: { configured: true, ok: true, error: null },
+      };
+    },
+  });
+  const response = createResponse();
+
+  await handler({
+    method: 'POST', query: {},
+    headers: { authorization: 'Bearer server-secret' },
+  }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(response.body.partial, false);
+  assert.equal(avCalls, 0);
+  assert.deepEqual(written.alphavantage.rows, []);
+  assert.deepEqual(written.alphavantage.errors, []);
+});
+
+test('market refresh is degraded when a fetched provider observation is already stale', async () => {
+  const now = new Date('2026-08-26T20:00:00.000Z');
+  const handler = refreshModule.createRefreshHandler({
+    cronSecret: 'server-secret',
+    now: () => now,
+    readProviderCache: async () => null,
+    fetchEiaEnergy: async () => ({
+      rows: [{
+        ticker: 'NG', source: 'eia', stale: true,
+        asOf: '2026-08-01T00:00:00.000Z',
+      }],
+      errors: [],
+      fetchedAt: now.toISOString(),
+    }),
+    writeProviderCache: async () => ({
+      blobWrite: { configured: true, ok: true, error: null },
+      redisWrite: { configured: true, ok: true, error: null },
+    }),
+  });
+  const response = createResponse();
+
+  await handler({
+    method: 'POST', query: {},
+    headers: { authorization: 'Bearer server-secret' },
+  }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.persisted, true);
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.partial, true);
+});
+
 test('market snapshot exposes Redis read diagnostics and CoinGecko observation staleness', async () => {
   assert.equal(typeof snapshotModule.createSnapshotHandler, 'function');
   const fetchedAt = '2026-08-25T12:00:00.000Z';
@@ -1282,9 +1467,9 @@ test('market snapshot counts unique live ticker coverage when deciding partial s
     mergeMarketSnapshot: () => ({
       commodities: [],
       meta: {
-        liveSymbolCount: 4,
-        liveTickers: ['BTC', 'CL', 'NG'],
-        sources: { coingecko: 2, alphavantage: 1, eia: 1 },
+        liveSymbolCount: 3,
+        liveTickers: ['BTC', 'NG'],
+        sources: { coingecko: 2, alphavantage: 0, eia: 1 },
         staleProviders: [],
       },
     }),
@@ -1294,7 +1479,7 @@ test('market snapshot counts unique live ticker coverage when deciding partial s
   await handler({ method: 'GET' }, response);
 
   assert.equal(response.statusCode, 200);
-  assert.equal(response.body.liveSymbolCount, 3);
+  assert.equal(response.body.liveSymbolCount, 2);
   assert.equal(response.body.partial, false);
 });
 
@@ -1479,7 +1664,7 @@ test('market snapshot retains the stale cached EIA row when a live retry fails',
   assert.equal(response.body.partial, true);
 });
 
-test('market snapshot reports unavailable empty providers as missing rather than stale', async () => {
+test('market snapshot reports unavailable enabled providers as missing rather than stale', async () => {
   const now = new Date('2026-08-25T15:00:00.000Z');
   const handler = snapshotModule.createSnapshotHandler({
     now: () => now,
@@ -1527,7 +1712,7 @@ test('market snapshot reports unavailable empty providers as missing rather than
   assert.equal(response.body.partial, true);
   assert.equal(response.body.staleProviders.includes('alphavantage'), false);
   assert.equal(response.body.staleProviders.includes('eia'), false);
-  assert.ok(response.body.errors.some((error) => error.includes('alphavantage')));
+  assert.deepEqual(response.body.disabledProviders, ['alphavantage']);
   assert.ok(response.body.errors.some((error) => error.includes('eia')));
 });
 
@@ -1584,8 +1769,8 @@ test('market snapshot clears cached EIA degradation after a complete live recove
       commodities: liveRows,
       meta: {
         liveSymbolCount: liveRows.length,
-        liveTickers: ['BTC', 'CL', 'NG'],
-        sources: { coingecko: 1, alphavantage: 1, eia: 1 },
+        liveTickers: ['BTC', 'NG'],
+        sources: { coingecko: 1, alphavantage: 0, eia: 1 },
         staleProviders: [],
       },
     }),
@@ -1651,6 +1836,7 @@ test('market refresh preserves last-known-good provider rows when refreshes are 
   let stored;
   const handler = refreshModule.createRefreshHandler({
     cronSecret: 'server-secret',
+    alphaVantageEnabled: true,
     now: () => new Date('2026-08-25T12:00:00.000Z'),
     readProviderCache: async () => previous,
     fetchAlphaVantageCommodities: async () => ({

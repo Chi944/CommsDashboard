@@ -1,5 +1,5 @@
 // GET /api/market/snapshot
-// CoinGecko (live) + Alpha Vantage (cached, cron-only) + EIA (live or cached).
+// CoinGecko (live) + EIA (live or cached); legacy Alpha Vantage is quarantined.
 // Response shape matches /api/prices for drop-in use.
 
 import { commodities as fallbackCommodities } from '../../src/data/mockData.js';
@@ -7,8 +7,10 @@ import { fetchCoinGeckoPrices } from '../../lib/market/providers/coingecko.js';
 import { fetchCoinGeckoVolumes } from '../../lib/market/providers/coingecko-volumes.js';
 import { avRowsFromCache } from '../../lib/market/providers/alphavantage.js';
 import { fetchEiaEnergy, eiaRowsFromCache } from '../../lib/market/providers/eia.js';
+import { isAlphaVantageEnabled } from '../../lib/market/providerPolicy.js';
 import { getStorageDiagnostics, readProviderCache } from '../../lib/market/store.js';
 import { mergeMarketSnapshot } from '../../lib/market/merge.js';
+import { AV_TICKERS } from '../../lib/market/symbolMaps.js';
 
 export function createSnapshotHandler(dependencies = {}) {
   const readCache = dependencies.readProviderCache || readProviderCache;
@@ -23,6 +25,7 @@ export function createSnapshotHandler(dependencies = {}) {
     ? dependencies.fallbackCommodities
     : fallbackCommodities;
   const now = dependencies.now || (() => new Date());
+  const alphaVantageEnabled = isAlphaVantageEnabled(dependencies);
 
   return async function handler(req, res) {
     if (req.method !== 'GET') {
@@ -62,11 +65,13 @@ export function createSnapshotHandler(dependencies = {}) {
       const cgVol = cgVolResult.status === 'fulfilled'
         ? cgVolResult.value
         : { volumes: {}, errors: ['coingecko volumes request_failed'] };
-      const avCached = rowsFromAvCache(cache, nowMs);
+      const avCached = alphaVantageEnabled
+        ? rowsFromAvCache(cache, nowMs)
+        : { rows: [], stale: false };
       const eiaCached = rowsFromEiaCache(cache, nowMs);
 
       errors.push(...(cg.errors || []), ...(cgVol.errors || []));
-      if (cache?.alphavantage?.errors?.length) {
+      if (alphaVantageEnabled && cache?.alphavantage?.errors?.length) {
         errors.push('alphavantage: cached refresh degraded');
       }
 
@@ -96,7 +101,7 @@ export function createSnapshotHandler(dependencies = {}) {
       }
 
       const avRows = avCached.rows;
-      if (!avRows.length) {
+      if (alphaVantageEnabled && !avRows.length) {
         errors.push('alphavantage: no cache — run /api/market/refresh cron');
       }
 
@@ -106,13 +111,16 @@ export function createSnapshotHandler(dependencies = {}) {
         ...eiaRows,
       ];
 
-      const { commodities, meta } = mergeSnapshot(liveRows, fallbackRows);
+      const { commodities, meta } = mergeSnapshot(liveRows, fallbackRows, {
+        disabledTickers: alphaVantageEnabled ? [] : AV_TICKERS,
+      });
       const coveredTickers = new Set(liveRows.map((row) => row.ticker));
       const liveSymbolCount = meta.liveTickers.filter((ticker) => coveredTickers.has(ticker)).length;
 
       const staleProviders = [...new Set([
         ...(cg.rows.some((row) => row.stale) ? ['coingecko'] : []),
-        ...(avRows.length > 0 && avCached.stale ? ['alphavantage'] : []),
+        ...(alphaVantageEnabled && avRows.length > 0 && avCached.stale
+          ? ['alphavantage'] : []),
         ...(eiaRows.length > 0 && eiaStale ? ['eia'] : []),
         ...meta.staleProviders,
       ])];
@@ -150,6 +158,7 @@ export function createSnapshotHandler(dependencies = {}) {
         },
         liveSymbolCount,
         staleProviders,
+        disabledProviders: alphaVantageEnabled ? [] : ['alphavantage'],
         marketVolumes: cgVol.volumes || {},
         errors: errors.length ? errors : undefined,
       });
