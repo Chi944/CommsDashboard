@@ -11,15 +11,15 @@ function validBriefingText(label = 'Market') {
 }
 
 function validBriefing(label = 'Market', {
-  marketId = 'market:gainer:LIVE',
-  themeId = 'sentiment:fear-greed',
+  marketIds = ['market:gainer:LIVE'],
+  themeIds = ['sentiment:fear-greed'],
 } = {}) {
   void label;
   return JSON.stringify({
     paragraphs: [
-      { id: 'market-tone', evidenceIds: [marketId] },
-      { id: 'themes-catalysts', evidenceIds: [themeId] },
-      { id: 'watchpoints', evidenceIds: ['input:coverage', marketId, themeId] },
+      { id: 'market-tone', evidenceIds: marketIds },
+      { id: 'themes-catalysts', evidenceIds: themeIds },
+      { id: 'watchpoints', evidenceIds: ['input:coverage', ...marketIds, ...themeIds].slice(0, 4) },
     ],
   });
 }
@@ -99,7 +99,9 @@ function createProviderFetch(supportedModel) {
       }
 
       return jsonResponse({
-        choices: [{ message: { content: validBriefing('Risk', { marketId: 'market:gainer:GAIN' }) } }],
+        choices: [{ message: { content: validBriefing('Risk', {
+          marketIds: ['market:gainer:GAIN', 'market:loser:LOSS'],
+        }) } }],
       });
     }
 
@@ -244,7 +246,9 @@ test('uses Groq completion-token and low-reasoning parameters for GPT-OSS', asyn
     if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       providerRequest = JSON.parse(options.body);
-      return jsonResponse({ choices: [{ message: { content: validBriefing('Parameters', { marketId: 'market:gainer:GAIN' }) } }] });
+      return jsonResponse({ choices: [{ message: { content: validBriefing('Parameters', {
+        marketIds: ['market:gainer:GAIN'],
+      }) } }] });
     }
     throw new Error(`Unexpected fetch: ${target}`);
   };
@@ -423,7 +427,9 @@ test('grounds briefing generation in explicit headline and fear-greed sentiment 
     }
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       providerRequest = JSON.parse(options.body);
-      return jsonResponse({ choices: [{ message: { content: validBriefing('Sentiment grounded') } }] });
+      return jsonResponse({ choices: [{ message: { content: validBriefing('Sentiment grounded', {
+        themeIds: ['news:headline-1', 'sentiment:fear-greed'],
+      }) } }] });
     }
     throw new Error(`Unexpected fetch: ${target}`);
   };
@@ -1269,7 +1275,9 @@ test('a public refresh bypasses edge caching without bypassing the shared AI cac
     }
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       generations += 1;
-      return jsonResponse({ choices: [{ message: { content: validBriefing(`Refresh ${generations}`) } }] });
+      return jsonResponse({ choices: [{ message: { content: validBriefing(`Refresh ${generations}`, {
+        themeIds: ['sentiment:fear-greed'],
+      }) } }] });
     }
     throw new Error(`Unexpected fetch: ${target}`);
   };
@@ -1442,7 +1450,7 @@ test('accepts current sentiment when a cache-valid price response was fetched si
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       providerCalls += 1;
       return jsonResponse({ choices: [{ message: { content: validBriefing(
-        'Current sentiment', { themeId: 'sentiment:headlines' },
+        'Current sentiment', { themeIds: ['news:headline-1', 'sentiment:headlines'] },
       ) } }] });
     }
     throw new Error(`Unexpected fetch: ${target}`);

@@ -177,4 +177,18 @@ test('generated completion is evidence selection only and uses server-controlled
     () => validateMarketBriefingCompletion(noCoverage, marketContext),
     (error) => error instanceof GroqProviderError && error.code === 'provider_invalid_response',
   );
+
+  for (const [paragraphIndex, evidenceIds] of [
+    [0, ['market:gainer:GAIN']],
+    [1, ['news:wire-1']],
+  ]) {
+    const incomplete = structuredClone(completion);
+    const incompletePayload = JSON.parse(incomplete.text);
+    incompletePayload.paragraphs[paragraphIndex].evidenceIds = evidenceIds;
+    incomplete.text = JSON.stringify(incompletePayload);
+    assert.throws(
+      () => validateMarketBriefingCompletion(incomplete, marketContext),
+      (error) => error instanceof GroqProviderError && error.code === 'provider_invalid_response',
+    );
+  }
 });
