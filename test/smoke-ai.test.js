@@ -160,10 +160,12 @@ async function runSmoke(baseUrl, {
       timeout: 3_000,
       env: {
         ...process.env,
+        NODE_ENV: 'test',
         AI_SMOKE_BASE_URL: baseUrl,
         AI_SMOKE_TICKER: 'NVDA',
         AI_SMOKE_SECRET: secret,
         AI_SMOKE_TIMEOUT_MS: String(timeoutMs),
+        AI_SMOKE_TEST_WINDOW_GAP_MS: '0',
         AI_SMOKE_EXPECTED_COMMIT_SHA: expectedCommitSha,
         AI_SMOKE_EXPECTED_DEPLOYMENT_ENVIRONMENT: expectedDeploymentEnvironment,
       },

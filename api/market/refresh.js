@@ -201,6 +201,7 @@ export function createRefreshHandler(dependencies = {}) {
   const refreshSmartMoney = dependencies.refreshSmartMoney || refreshSmartMoneyService;
 
   return async function handler(req, res) {
+    res.setHeader('Cache-Control', 'no-store');
     if (req.method !== 'GET' && req.method !== 'POST') {
       res.status(405).json({ ok: false, error: 'method not allowed' });
       return;

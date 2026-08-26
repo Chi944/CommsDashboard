@@ -1,3 +1,5 @@
+import { AI_SMOKE_WINDOW_GAP_MS, runForcedAiSmokeRequests } from '../lib/ai/smoke-schedule.js';
+
 const baseUrl = (process.env.AI_SMOKE_BASE_URL || process.argv[2] || 'https://comms-dashboard-navy.vercel.app').replace(/\/$/, '');
 const ticker = (process.env.AI_SMOKE_TICKER || process.argv[3] || 'NVDA').trim().toUpperCase();
 const smokeSecret = process.env.AI_SMOKE_SECRET;
@@ -9,6 +11,11 @@ const configuredTimeout = Number(process.env.AI_SMOKE_TIMEOUT_MS);
 const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
   ? configuredTimeout
   : 10_000;
+const configuredTestGap = Number(process.env.AI_SMOKE_TEST_WINDOW_GAP_MS);
+const windowGapMs = process.env.NODE_ENV === 'test'
+  && Number.isFinite(configuredTestGap) && configuredTestGap >= 0
+  ? configuredTestGap
+  : AI_SMOKE_WINDOW_GAP_MS;
 const smokeNonce = `${Date.now().toString(36)}-${process.pid}`;
 
 async function fetchJson(path) {
@@ -45,12 +52,13 @@ async function fetchJson(path) {
 try {
   if (!smokeSecret) throw new Error('AI_SMOKE_SECRET is required');
 
-  const [briefing, analysis, smartMoneyBriefing, smartMoneyHealth] = await Promise.all([
-    fetchJson(`/api/briefing?aiSmoke=${encodeURIComponent(smokeNonce)}`),
-    fetchJson(`/api/analysis?ticker=${encodeURIComponent(ticker)}&aiSmoke=${encodeURIComponent(smokeNonce)}`),
-    fetchJson('/api/smart-money/briefing?aiSmoke=1'),
-    fetchJson('/api/smart-money/health'),
-  ]);
+  const { briefing, analysis, smartMoneyBriefing, smartMoneyHealth } = await runForcedAiSmokeRequests({
+    requestBriefing: () => fetchJson(`/api/briefing?aiSmoke=${encodeURIComponent(smokeNonce)}`),
+    requestAnalysis: () => fetchJson(`/api/analysis?ticker=${encodeURIComponent(ticker)}&aiSmoke=${encodeURIComponent(smokeNonce)}`),
+    requestSmartMoneyBriefing: () => fetchJson('/api/smart-money/briefing?aiSmoke=1'),
+    requestSmartMoneyHealth: () => fetchJson('/api/smart-money/health'),
+    windowGapMs,
+  });
 
   if (typeof briefing?.briefing?.text !== 'string' || !briefing.briefing.text.trim()) {
     throw new Error('/api/briefing did not return briefing.text');

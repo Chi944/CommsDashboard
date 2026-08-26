@@ -8,6 +8,7 @@ import {
   buildMarketBriefingEvidence,
   buildMarketBriefingPrompt,
   digestMarketBriefingEvidence,
+  selectMarketBriefingGenerationEvidence,
   validateMarketBriefingCompletion,
 } from '../lib/briefing/market-briefing.js';
 
@@ -64,6 +65,11 @@ test('market evidence-selection prompt mirrors every conditional completeness ru
   assert.match(prompt, /must include at least one recordType headline when any headline record is supplied/i);
   assert.match(prompt, /at least one recordType headline_sentiment or crypto_fear_greed when any such sentiment record is supplied/i);
   assert.match(prompt, /watchpoints must include input:coverage/i);
+});
+
+test('market evidence-selection prompt states the schema count and uniqueness boundary', () => {
+  const prompt = buildMarketBriefingPrompt(context());
+  assert.match(prompt, /each object must select between one and four unique evidence IDs/i);
 });
 
 test('deterministic briefing always returns the exact three paragraph contract with resolved evidence', () => {
@@ -219,4 +225,43 @@ test('generated completion is evidence selection only and uses server-controlled
       (error) => error instanceof GroqProviderError && error.code === 'provider_invalid_response',
     );
   }
+});
+
+test('market generation candidates retain the full audit and reject an unoffered evidence ID', () => {
+  const marketContext = context({
+    evidence: [
+      ...context().evidence,
+      { id: 'market:gainer:LOW', type: 'top_gainer', label: 'LOW +0.50%', asOf: '2030-08-12T11:58:00.000Z', source: 'yahoo', sourceUrl: null, causalEligible: false },
+    ],
+  });
+  const evidence = buildMarketBriefingEvidence(marketContext);
+  const generationEvidence = selectMarketBriefingGenerationEvidence(evidence);
+  const ids = new Set(generationEvidence.map((record) => record.id));
+  const completion = {
+    text: JSON.stringify({ paragraphs: [
+      { id: 'market-tone', evidenceIds: ['market:gainer:GAIN', 'market:loser:LOSS'] },
+      { id: 'themes-catalysts', evidenceIds: ['news:wire-1', 'sentiment:headlines'] },
+      { id: 'watchpoints', evidenceIds: ['input:coverage'] },
+    ] }),
+  };
+
+  assert.equal(ids.has('market:gainer:LOW'), false);
+  const result = validateMarketBriefingCompletion(completion, marketContext, {
+    evidence,
+    generationEvidence,
+  });
+  assert.deepEqual(result.evidence, evidence);
+  assert.equal(result.evidenceDigest, digestMarketBriefingEvidence(marketContext, evidence));
+
+  const outsideCandidate = structuredClone(completion);
+  const outsidePayload = JSON.parse(outsideCandidate.text);
+  outsidePayload.paragraphs[0].evidenceIds = ['market:gainer:LOW', 'market:loser:LOSS'];
+  outsideCandidate.text = JSON.stringify(outsidePayload);
+  assert.throws(
+    () => validateMarketBriefingCompletion(outsideCandidate, marketContext, {
+      evidence,
+      generationEvidence,
+    }),
+    (error) => error instanceof GroqProviderError && error.code === 'provider_invalid_response',
+  );
 });

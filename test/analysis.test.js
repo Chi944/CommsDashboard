@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import analysisHandler from '../api/analysis.js';
+import analysisHandler, { buildAnalysisGroqRequest } from '../api/analysis.js';
 
 const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -41,6 +41,36 @@ function restoreEnv(snapshot) {
     else process.env[name] = value;
   }
 }
+
+test('analysis request builder preserves missing technicals instead of fabricating zero values', () => {
+  const request = buildAnalysisGroqRequest({
+    symbol: { name: 'Test Asset', ticker: 'TEST', category: 'Equity' },
+    technicals: {
+      last: null,
+      return_1m: undefined,
+      return_3m: '',
+      return_6m: '   ',
+      sma20: null,
+      sma50: undefined,
+      above_sma20: null,
+      above_sma50: undefined,
+      rsi14: null,
+      vol_annual: null,
+      fiftyTwoWeekLow: null,
+      fiftyTwoWeekHigh: null,
+      range_pct: null,
+    },
+    headlines: [],
+  });
+  const prompt = request.messages.find(({ role }) => role === 'user').content;
+
+  assert.match(prompt, /Current price: unavailable/);
+  assert.match(prompt, /Returns: 1-month unavailable%, 3-month unavailable%, 6-month unavailable%/);
+  assert.match(prompt, /Moving averages: 20-day unavailable, 50-day unavailable \(price unavailable 20-day, unavailable 50-day\)/);
+  assert.match(prompt, /RSI\(14\): unavailable/);
+  assert.match(prompt, /Annualised volatility: unavailable%/);
+  assert.doesNotMatch(prompt, /(?:Current price|Returns|Moving averages|RSI\(14\)|Annualised volatility|52-week range):[^\n]*\b0(?:\.0+)?\b/);
+});
 
 function createAnalysisFetch({ onGeneration, providerResponse, rssXml } = {}) {
   const closes = Array.from({ length: 70 }, (_, index) => 100 + index);

@@ -225,7 +225,7 @@ test('uses the configured Groq model without a code change', async () => {
   }
 });
 
-test('uses Groq completion-token and low-reasoning parameters for GPT-OSS', async () => {
+test('reserves the full GPT-OSS completion budget for strict market evidence selection', async () => {
   const env = {
     GROQ_API_KEY: process.env.GROQ_API_KEY,
     GROQ_MODEL: process.env.GROQ_MODEL,
@@ -256,7 +256,7 @@ test('uses Groq completion-token and low-reasoning parameters for GPT-OSS', asyn
   try {
     await briefingHandler(createRequest('203.0.113.11'), createResponse());
 
-    assert.equal(providerRequest.max_completion_tokens, 350);
+    assert.equal(providerRequest.max_completion_tokens, 1024);
     assert.equal(providerRequest.max_tokens, undefined);
     assert.equal(providerRequest.reasoning_effort, 'low');
     assert.equal(providerRequest.include_reasoning, false);

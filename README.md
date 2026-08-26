@@ -46,6 +46,8 @@ Add in **Vercel → Project → Settings → Environment Variables** (or `.env.l
 | `BLOB_STORE_ID` | Provider-cache and Smart Money journal persistence | Required with Redis for production Smart Money health; connect the project with OIDC rather than a long-lived read/write token |
 | `SEC_USER_AGENT` | Seven enabled Smart Money adapters | Required monitored contact, for example `CommsDashboard/1.0 ops@example.com`; placeholder or unmonitored contacts are rejected before any SEC request |
 
+`SEC_USER_AGENT` must be a sensitive, Production-only, server-side value owned by the deployer. Only bearer-protected scheduled maintenance sends it to the SEC; site visitors and public refresh controls cannot read, supply, or trigger it. Anyone deploying a separate instance must configure a monitored contact they control.
+
 See [docs/commodities-v2-api-spec.md](docs/commodities-v2-api-spec.md) for architecture and rate limits.
 
 ## v2 market API routes
