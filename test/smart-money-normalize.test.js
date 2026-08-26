@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { assertSafeArray } from '../lib/smart-money/contracts.js';
 import { listEntities } from '../lib/smart-money/entities.js';
 import { normalizeHyperliquidLeaderboard } from '../lib/smart-money/hyperliquid.js';
 import {
@@ -44,6 +45,16 @@ const BASE_ACTIVITY = {
   delaySeconds: 3_888_000, summary: 'A new official filing was observed.', caveats: ['Delayed disclosure.'], freshness: 'fresh',
 };
 
+function adapterPerformance({ providerId = 'hyperliquid-leaderboard', venue = 'hyperliquid', category } = {}) {
+  const wallet = '0x0000000000000000000000000000000000000def';
+  return {
+    ...BASE_PERFORMANCE,
+    id: `${venue}:${wallet}:month:2026-08-26`, entityId: `${venue}:${wallet}`,
+    providerId, venue, wallet, displayName: '0x0000…0def', rank: 1,
+    ...(category === undefined ? {} : { category }),
+  };
+}
+
 function statusAt(ageMs, overrides = {}) {
   const timestamp = new Date(NOW.getTime() - ageMs).toISOString();
   return {
@@ -65,6 +76,11 @@ test('Task 1 entities normalize to the exact schemaVersion 1 directory shape', (
   assert.equal(normalized.identity.verifiedAt, '2026-08-26T00:00:00.000Z');
   assert.deepEqual(normalized.evidenceCoverage, ['official-profile-link-only']);
   assert.equal(Object.hasOwn(normalized, 'followed'), false);
+});
+
+test('normalizers use a real default clock and reject an explicitly invalid clock', () => {
+  assert.equal(normalizeEntity(listEntities()[0]).id, 'leopold-aschenbrenner');
+  assert.throws(() => normalizeEntity(listEntities()[0], { now: 'not-a-clock' }), /schema_invalid/);
 });
 
 test('dynamic venue entities must use crypto-traders and canonical provider scope', () => {
@@ -125,6 +141,7 @@ test('freshness group mapping recognizes every configured provider family', () =
     assert.equal(getProviderFreshnessPolicy(id), PROVIDER_FRESHNESS_POLICIES.official);
   }
   assert.equal(getProviderFreshnessPolicy('unknown-provider'), null);
+  assert.equal(getProviderFreshnessPolicy('institutional-fake'), null);
 });
 
 test('cache TTL controls due fetch and stale threshold alone controls live versus stale', () => {
@@ -149,6 +166,12 @@ test('provider statuses reject invalid enums, future timestamps, and recompute f
   assert.equal(input.status, 'live');
   assert.throws(() => normalizeProviderStatus({ ...input, status: 'degraded' }, PROVIDER_FRESHNESS_POLICIES.polymarket, { now: NOW }), /schema_invalid/);
   assert.throws(() => normalizeProviderStatus({ ...input, retrievedAt: '2026-08-26T12:05:00.001Z' }, PROVIDER_FRESHNESS_POLICIES.polymarket, { now: NOW }), /schema_invalid/);
+  assert.throws(() => normalizeProviderStatus({
+    ...input, id: 'institutional-fake', group: 'institutional',
+  }, PROVIDER_FRESHNESS_POLICIES.official, { now: NOW }), /schema_invalid/);
+  assert.throws(() => normalizeActivity({
+    ...ACCEPTED_SNAPSHOT.activities[0], providerId: 'institutional-fake', entityId: 'strategy',
+  }, { now: NOW }), /schema_invalid/);
 });
 
 test('deduplication is stable, rejects duplicate IDs, and never mutates records', () => {
@@ -158,6 +181,26 @@ test('deduplication is stable, rejects duplicate IDs, and never mutates records'
   assert.deepEqual(records, before);
   assert.throws(() => dedupeByStableId([{ id: 'a' }, { id: 'a' }]), /duplicate_id/);
   assert.throws(() => dedupeByStableId([{ id: '__proto__' }]), /schema_invalid/);
+  const inherited = Object.assign(Object.create({ injected: true }), { id: 'safe' });
+  assert.throws(() => dedupeByStableId([inherited]), /schema_invalid/);
+  const accessor = {};
+  Object.defineProperty(accessor, 'id', { enumerable: true, get: () => 'accessor' });
+  assert.throws(() => dedupeByStableId([accessor]), /schema_invalid/);
+});
+
+test('safe arrays reject holes, symbols, custom properties, and noncanonical index descriptors', () => {
+  const sparse = [];
+  sparse[1] = 'value';
+  assert.throws(() => assertSafeArray(sparse), /schema_invalid/);
+  const symbol = ['value'];
+  symbol[Symbol('unsafe')] = true;
+  assert.throws(() => assertSafeArray(symbol), /schema_invalid/);
+  const custom = ['value'];
+  custom.extra = true;
+  assert.throws(() => assertSafeArray(custom), /schema_invalid/);
+  const noncanonical = [];
+  Object.defineProperty(noncanonical, '0', { value: 'value', enumerable: true });
+  assert.throws(() => assertSafeArray(noncanonical), /schema_invalid/);
 });
 
 test('adapter snapshot publishes separate canonical arrays and rejects duplicate or mismatched records', () => {
@@ -187,6 +230,42 @@ test('Task 4 venue envelopes create anonymous crypto-trader entities and strip a
   assert.equal(Object.hasOwn(normalized.performances[0], 'wallet'), false);
   assert.equal(Object.hasOwn(normalized.performances[0], 'rank'), false);
   assert.equal(normalized.providerStatuses[0].status, 'live');
+});
+
+test('venue envelopes bind every inner performance to the exact envelope provider and venue', () => {
+  assert.throws(() => normalizeAdapterSnapshot({
+    providerId: 'hyperliquid-leaderboard', performances: [adapterPerformance({
+      providerId: 'polymarket-leaderboard', venue: 'polymarket', category: 'crypto',
+    })], accounts: [], portfolios: [], fills: [], linkOnly: false,
+  }, { now: NOW, entities: listEntities() }), /schema_invalid/);
+
+  let accessorRead = false;
+  const hostile = adapterPerformance();
+  Object.defineProperty(hostile, 'providerId', {
+    enumerable: true,
+    get() {
+      accessorRead = true;
+      return 'hyperliquid-leaderboard';
+    },
+  });
+  assert.throws(() => normalizeAdapterSnapshot({
+    providerId: 'hyperliquid-leaderboard', performances: [hostile],
+    accounts: [], portfolios: [], fills: [], linkOnly: false,
+  }, { now: NOW, entities: listEntities() }), /schema_invalid/);
+  assert.equal(accessorRead, false);
+});
+
+test('Polymarket adapter projection rejects non-CRYPTO category rows before stripping metadata', () => {
+  assert.throws(() => normalizeAdapterSnapshot({
+    providerId: 'polymarket-leaderboard', performances: [adapterPerformance({
+      providerId: 'polymarket-leaderboard', venue: 'polymarket', category: 'politics',
+    })], positions: [], closedPositions: [], linkOnly: false,
+  }, { now: NOW, entities: listEntities() }), /schema_invalid/);
+  assert.throws(() => normalizeAdapterSnapshot({
+    providerId: 'polymarket-leaderboard', performances: [adapterPerformance({
+      providerId: 'polymarket-leaderboard', venue: 'polymarket', category: { unsafe: true },
+    })], positions: [], closedPositions: [], linkOnly: false,
+  }, { now: NOW, entities: listEntities() }), /schema_invalid/);
 });
 
 test('dormant link-only venue envelopes normalize as unavailable without claiming live data', () => {
@@ -276,4 +355,37 @@ test('accepted snapshot and ranking envelopes enforce the exact schemaVersion 1 
     ...ACCEPTED_SNAPSHOT,
     activities: [{ ...ACCEPTED_SNAPSHOT.activities[0], entityId: 'hyperliquid:0x0000000000000000000000000000000000000aaa' }],
   }, { now: NOW }), /schema_invalid/);
+});
+
+test('accepted ranking buckets reject cross-venue, orphan, and missing-window rows', () => {
+  const crossVenue = structuredClone(ACCEPTED_SNAPSHOT);
+  crossVenue.rankings.crypto.polymarket.month = [crossVenue.performances[0]];
+  assert.throws(() => validateAcceptedSnapshot(crossVenue, { now: NOW }), /schema_invalid/);
+
+  const orphan = structuredClone(ACCEPTED_SNAPSHOT);
+  orphan.rankings.crypto.hyperliquid.month = [structuredClone(orphan.rankings.crypto.hyperliquid.month[0])];
+  orphan.rankings.crypto.hyperliquid.month[0].id = `${orphan.rankings.crypto.hyperliquid.month[0].id}:orphan`;
+  assert.throws(() => validateAcceptedSnapshot(orphan, { now: NOW }), /schema_invalid/);
+
+  const missingWindow = structuredClone(ACCEPTED_SNAPSHOT);
+  missingWindow.performances[0].windows.month = null;
+  missingWindow.rankings.crypto.hyperliquid.month[0].windows.month = null;
+  assert.throws(() => validateAcceptedSnapshot(missingWindow, { now: NOW }), /schema_invalid/);
+});
+
+test('accepted signals must match their activity asset and canonical timing', () => {
+  for (const mutate of [
+    (snapshot) => { snapshot.activities[0].asset.ticker = 'ETH'; },
+    (snapshot) => { snapshot.activities[0].asset.providerSymbol = 'XBT'; },
+    (snapshot) => { snapshot.activities[0].asset.assetClass = 'other'; },
+    (snapshot) => {
+      snapshot.activities[0].effectiveAt = '2026-08-26T10:00:00.000Z';
+      snapshot.activities[0].observedAt = '2026-08-26T10:00:00.000Z';
+      snapshot.activities[0].retrievedAt = '2026-08-26T10:00:00.000Z';
+    },
+  ]) {
+    const snapshot = structuredClone(ACCEPTED_SNAPSHOT);
+    mutate(snapshot);
+    assert.throws(() => validateAcceptedSnapshot(snapshot, { now: NOW }), /schema_invalid/);
+  }
 });

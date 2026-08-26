@@ -15,7 +15,7 @@ import {
   THRESHOLD_VERSION,
   deriveSignals,
 } from '../lib/smart-money/signals.js';
-import { validateSignal } from '../lib/smart-money/contracts.js';
+import { TRUSTED_REFERENCE_PRICE_SOURCES, validateSignal } from '../lib/smart-money/contracts.js';
 import { FIRST_CHANGE, SECOND_CHANGE, UNMAPPED_13F_CHANGE } from './fixtures/smart-money/scenarios.js';
 
 test('materiality constants are the named smart-money-v1 contract', () => {
@@ -27,6 +27,37 @@ test('materiality constants are the named smart-money-v1 contract', () => {
     POLYMARKET_MIN_PNL_CHANGE_PCT, POLYMARKET_MIN_VOLUME_CHANGE_USD,
     INSTITUTIONAL_MIN_VALUE_CHANGE_USD, INSTITUTIONAL_MIN_HOLDING_CHANGE_PCT,
   ], [1_000_000, 10, 100_000, 1, 10, 25_000, 10, 100_000, 10_000_000, 1]);
+});
+
+test('deriveSignals requires an explicit finite trusted nowMs and rejects self-authorized future observations', () => {
+  assert.throws(() => deriveSignals({ changes: [], pendingConfirmations: [] }), /schema_invalid/);
+  assert.throws(() => deriveSignals({ changes: [], pendingConfirmations: [], nowMs: Number.NaN }), /schema_invalid/);
+  assert.throws(() => deriveSignals({ changes: [], pendingConfirmations: [], nowMs: Infinity }), /schema_invalid/);
+  const future = structuredClone(FIRST_CHANGE);
+  future.changes[0].effectiveAt = '2026-08-26T10:05:00.001Z';
+  future.changes[0].observedAt = '2026-08-26T10:05:00.001Z';
+  future.changes[0].retrievedAt = '2026-08-26T10:05:00.001Z';
+  assert.throws(() => deriveSignals(future), /schema_invalid/);
+});
+
+test('deriveSignals deeply rejects sparse or hostile changes and duplicate pending confirmation keys', () => {
+  const sparse = structuredClone(FIRST_CHANGE);
+  sparse.changes = [];
+  sparse.changes[1] = FIRST_CHANGE.changes[0];
+  assert.throws(() => deriveSignals(sparse), /schema_invalid/);
+  const hostile = structuredClone(FIRST_CHANGE);
+  hostile.changes = [Object.assign(Object.create({ injected: true }), hostile.changes[0])];
+  assert.throws(() => deriveSignals(hostile), /schema_invalid/);
+  const unknown = structuredClone(FIRST_CHANGE);
+  unknown.changes[0].executionOrder = 'market';
+  assert.throws(() => deriveSignals(unknown), /schema_invalid/);
+
+  const pending = deriveSignals(FIRST_CHANGE).pendingConfirmations[0];
+  const duplicate = { ...pending, id: `${pending.id}:duplicate`, observationId: 'different-observation' };
+  assert.throws(() => deriveSignals({ ...SECOND_CHANGE, pendingConfirmations: [pending, duplicate] }), /schema_invalid/);
+  const pendingAccessor = { ...pending };
+  Object.defineProperty(pendingAccessor, 'candidateNotionalUsd', { enumerable: true, get: () => 350_000 });
+  assert.throws(() => deriveSignals({ ...SECOND_CHANGE, pendingConfirmations: [pendingAccessor] }), /schema_invalid/);
 });
 
 test('same Hyperliquid candidate confirms on two consecutive accepted hourly snapshots', () => {
@@ -56,6 +87,8 @@ test('pending confirmation cannot confirm through replay, mismatch, nonconsecuti
   const skipped = structuredClone(SECOND_CHANGE);
   skipped.changes[0].observedAt = '2026-08-26T12:00:00.000Z';
   skipped.changes[0].retrievedAt = '2026-08-26T12:00:00.000Z';
+  skipped.changes[0].referencePrice.asOf = '2026-08-26T12:00:00.000Z';
+  skipped.changes[0].referencePrice.retrievedAt = '2026-08-26T12:00:00.000Z';
   skipped.nowMs = Date.parse(skipped.changes[0].observedAt);
   assert.equal(deriveSignals({ ...skipped, pendingConfirmations: pending }).signals.length, 0);
   for (const patch of [{ freshness: 'stale' }, { lastKnownGood: true }]) {
@@ -123,14 +156,21 @@ test('Polymarket and institutional materiality honor their exact source-scoped e
   const polymarket = {
     ...UNMAPPED_13F_CHANGE.changes[0], id: 'poly:1', sourceStableId: 'poly:1',
     providerId: 'polymarket-leaderboard', entityId: 'polymarket:0x0000000000000000000000000000000000000abc',
-    kind: 'rank_change', classification: undefined,
+    kind: 'rank_change',
     asset: { ticker: null, name: 'Crypto leaderboard', providerSymbol: 'CRYPTO', assetClass: 'prediction-market', supported: false },
     previousRank: 20, currentRank: 10,
   };
-  assert.equal(deriveSignals({ changes: [polymarket] }).signals.length, 1);
-  assert.equal(deriveSignals({ changes: [{ ...polymarket, currentRank: 11 }] }).signals.length, 0);
-  assert.equal(deriveSignals({ changes: [{ ...polymarket, previousRank: undefined, currentRank: undefined, previousPnl30dUsd: 100_000, currentPnl30dUsd: 125_000 }] }).signals.length, 1);
-  assert.equal(deriveSignals({ changes: [{ ...polymarket, previousRank: undefined, currentRank: undefined, previousVolume30dUsd: 1_000_000, currentVolume30dUsd: 1_100_000 }] }).signals.length, 1);
+  delete polymarket.classification;
+  assert.equal(deriveSignals({ changes: [polymarket], pendingConfirmations: [], nowMs: Date.parse(polymarket.observedAt) }).signals.length, 1);
+  assert.equal(deriveSignals({ changes: [{ ...polymarket, currentRank: 11 }], pendingConfirmations: [], nowMs: Date.parse(polymarket.observedAt) }).signals.length, 0);
+  const pnlChange = { ...polymarket, previousPnl30dUsd: 100_000, currentPnl30dUsd: 125_000 };
+  delete pnlChange.previousRank;
+  delete pnlChange.currentRank;
+  assert.equal(deriveSignals({ changes: [pnlChange], pendingConfirmations: [], nowMs: Date.parse(polymarket.observedAt) }).signals.length, 1);
+  const volumeChange = { ...polymarket, previousVolume30dUsd: 1_000_000, currentVolume30dUsd: 1_100_000 };
+  delete volumeChange.previousRank;
+  delete volumeChange.currentRank;
+  assert.equal(deriveSignals({ changes: [volumeChange], pendingConfirmations: [], nowMs: Date.parse(polymarket.observedAt) }).signals.length, 1);
 
   const institutional = {
     ...UNMAPPED_13F_CHANGE.changes[0], id: 'institutional:edge', sourceStableId: 'institutional:edge',
@@ -138,8 +178,18 @@ test('Polymarket and institutional materiality honor their exact source-scoped e
     previousValueUsd: 100_000_000, currentValueUsd: 110_000_000,
     asset: { ticker: 'BTC', name: 'Bitcoin', providerSymbol: 'BTC', assetClass: 'crypto', supported: true },
   };
-  assert.equal(deriveSignals({ changes: [institutional] }).signals.length, 1);
-  assert.equal(deriveSignals({ changes: [{ ...institutional, currentValueUsd: 109_999_999 }] }).signals.length, 0);
+  assert.equal(deriveSignals({ changes: [institutional], pendingConfirmations: [], nowMs: Date.parse(institutional.observedAt) }).signals.length, 1);
+  assert.equal(deriveSignals({ changes: [{ ...institutional, currentValueUsd: 109_999_999 }], pendingConfirmations: [], nowMs: Date.parse(institutional.observedAt) }).signals.length, 0);
+});
+
+test('unknown institutional providers are rejected before materiality evaluation', () => {
+  const fake = {
+    ...UNMAPPED_13F_CHANGE.changes[0], providerId: 'institutional-fake', entityId: 'strategy',
+    id: 'institutional-fake:1', sourceStableId: 'institutional-fake:1', classification: 'new',
+  };
+  assert.throws(() => deriveSignals({
+    changes: [fake], pendingConfirmations: [], nowMs: Date.parse(fake.observedAt),
+  }), /schema_invalid/);
 });
 
 test('large transfers and institutional disclosure balance changes are observations, not trades', () => {
@@ -147,7 +197,7 @@ test('large transfers and institutional disclosure balance changes are observati
     { ...UNMAPPED_13F_CHANGE.changes[0], id: 'transfer:1', providerId: 'official-publication-oaktree', entityId: 'oaktree-capital', kind: 'transfer', asset: { ticker: 'BTC', name: 'Bitcoin', providerSymbol: 'BTC', assetClass: 'crypto', supported: true } },
     { ...UNMAPPED_13F_CHANGE.changes[0], id: 'institutional:1', providerId: 'institutional-strategy', entityId: 'strategy', kind: 'holding_change', classification: 'changed', reportedValueUsd: 20_000_000, previousValueUsd: 100_000_000, currentValueUsd: 120_000_000, asset: { ticker: 'BTC', name: 'Bitcoin', providerSymbol: 'BTC', assetClass: 'crypto', supported: true } },
   ]) {
-    const result = deriveSignals({ changes: [change], nowMs: Date.parse(change.observedAt) });
+    const result = deriveSignals({ changes: [change], pendingConfirmations: [], nowMs: Date.parse(change.observedAt) });
     assert.equal(result.signals[0].action, 'observe');
     assert.equal(result.signals[0].positionChange, null);
     assert.equal(result.signals[0].paperEligibility.eligible, false);
@@ -167,11 +217,51 @@ test('signal validator rejects pollution, invalid enums, arithmetic, ticker mism
   assert.throws(() => validateSignal({ ...signal, referencePrice: { ...signal.referencePrice, ticker: 'ETH' } }, { now: new Date(signal.observedAt) }), /schema_invalid/);
   assert.throws(() => validateSignal({ ...signal, observedAt: '2026-08-26T11:05:00.001Z' }, { now: new Date('2026-08-26T11:00:00.000Z') }), /schema_invalid/);
   assert.throws(() => validateSignal({ ...signal, entityId: 'polymarket:0xabc' }, { now: new Date(signal.observedAt) }), /schema_invalid/);
+  assert.throws(() => validateSignal({
+    ...signal, providerId: 'institutional-fake', entityId: 'strategy',
+  }, { now: new Date(signal.observedAt) }), /schema_invalid/);
   assert.throws(() => validateSignal({ ...signal, delaySeconds: 1 }, { now: new Date(signal.observedAt) }), /schema_invalid/);
   const accessor = { ...signal };
   Object.defineProperty(accessor, 'action', { enumerable: true, get: () => 'open' });
   assert.throws(() => validateSignal(accessor, { now: new Date(signal.observedAt) }), /schema_invalid/);
   assert.throws(() => validateSignal({ ...signal, action: 'observe', positionChange: null }, { now: new Date(signal.observedAt) }), /schema_invalid/);
+});
+
+test('stale signals are valid only as ineligible research or history context', () => {
+  const pending = deriveSignals(FIRST_CHANGE).pendingConfirmations;
+  const signal = deriveSignals({ ...SECOND_CHANGE, pendingConfirmations: pending }).signals[0];
+  assert.throws(() => validateSignal({ ...signal, freshness: 'stale' }, { now: new Date(signal.observedAt) }), /schema_invalid/);
+  const stale = {
+    ...signal,
+    freshness: 'stale',
+    notificationEligibility: { eligible: false, reason: 'stale_source' },
+    paperEligibility: { eligible: false, reason: 'stale_source' },
+  };
+  assert.deepEqual(validateSignal(stale, { now: new Date(signal.observedAt) }), stale);
+
+  const researchSignal = deriveSignals(UNMAPPED_13F_CHANGE).signals[0];
+  const staleResearch = {
+    ...researchSignal,
+    freshness: 'stale',
+    notificationEligibility: { eligible: false, reason: 'stale_source' },
+    paperEligibility: { eligible: false, reason: 'stale_source' },
+  };
+  assert.deepEqual(validateSignal(staleResearch, { now: new Date(researchSignal.observedAt) }), staleResearch);
+});
+
+test('paper reference prices must be positive USD trusted and observed in causal order', () => {
+  assert.deepEqual(TRUSTED_REFERENCE_PRICE_SOURCES, ['yahoo', 'coingecko']);
+  const pending = deriveSignals(FIRST_CHANGE).pendingConfirmations;
+  const signal = deriveSignals({ ...SECOND_CHANGE, pendingConfirmations: pending }).signals[0];
+  for (const referencePrice of [
+    { ...signal.referencePrice, price: 0 },
+    { ...signal.referencePrice, currency: 'EUR' },
+    { ...signal.referencePrice, source: 'attacker-feed' },
+    { ...signal.referencePrice, asOf: '2026-08-26T10:59:59.999Z' },
+    { ...signal.referencePrice, retrievedAt: '2026-08-26T10:59:59.999Z' },
+  ]) {
+    assert.throws(() => validateSignal({ ...signal, referencePrice }, { now: new Date(signal.observedAt) }), /schema_invalid/);
+  }
 });
 
 test('deriveSignals is deterministic and does not mutate inputs', () => {

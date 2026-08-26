@@ -74,6 +74,7 @@ export const UNMAPPED_13F_CHANGE = Object.freeze({
     lastKnownGood: false,
     referencePrice: null,
   }],
+  pendingConfirmations: [],
   nowMs: Date.parse('2026-08-26T09:00:00.000Z'),
 });
 
