@@ -108,6 +108,59 @@ test('AI completion accepts only the fixed cited research contract', () => {
   assert.equal(JSON.stringify(briefing).includes('Go long'), false);
 });
 
+test('AI selection cannot omit accepted investor activity or crypto coverage and claim absence', () => {
+  const evidence = [
+    ...buildSmartMoneyEvidence({ snapshot: SMART_MONEY_RESPONSE, marketContext: MARKET_CONTEXT, now: NOW }),
+    {
+      id: 'activity:accepted-investor', type: 'investor_activity',
+      label: 'Accepted investor filing activity.', asOf: NOW.toISOString(),
+      source: 'SEC EDGAR', sourceUrl: 'https://www.sec.gov/', causalEligible: false,
+    },
+    {
+      id: 'activity:accepted-crypto', type: 'crypto_activity',
+      label: 'Accepted venue-scoped crypto observation.', asOf: NOW.toISOString(),
+      source: 'Accepted public source', sourceUrl: 'https://example.com/crypto', causalEligible: false,
+    },
+  ];
+  const base = [
+    { id: 'market-regime', evidenceIds: [evidence[0].id] },
+    { id: 'investor-disclosures', evidenceIds: ['activity:accepted-investor'] },
+    { id: 'crypto-paper-risk', evidenceIds: ['activity:accepted-crypto', 'capability:simulation'] },
+  ];
+  assert.doesNotThrow(() => validateSmartMoneyCompletion({ text: JSON.stringify({ paragraphs: base }) }, {
+    snapshot: SMART_MONEY_RESPONSE, marketContext: MARKET_CONTEXT, evidence, now: NOW,
+  }));
+  for (const paragraphs of [
+    base.map((row, index) => index === 1 ? { ...row, evidenceIds: ['snapshot:coverage'] } : row),
+    base.map((row, index) => index === 2 ? { ...row, evidenceIds: ['capability:simulation'] } : row),
+  ]) {
+    assert.throws(() => validateSmartMoneyCompletion({ text: JSON.stringify({ paragraphs }) }, {
+      snapshot: SMART_MONEY_RESPONSE, marketContext: MARKET_CONTEXT, evidence, now: NOW,
+    }), /provider_invalid_response/);
+  }
+});
+
+test('handler uses the v2 cache namespace so legacy free-form values cannot be reused', async () => {
+  let cacheKey = null;
+  const handler = createSmartMoneyBriefingHandler({
+    now: () => new Date(NOW),
+    readSnapshot: async () => structuredClone(SMART_MONEY_RESPONSE),
+    loadMarketContext: async () => structuredClone(MARKET_CONTEXT),
+    aiAvailable: true,
+    runGeneration: async ({ snapshot, marketContext, evidence, now }) => (
+      buildDeterministicSmartMoneyBriefing({ snapshot, marketContext, evidence, now })
+    ),
+    guardedGeneration: async (options) => {
+      cacheKey = options.cacheKey;
+      return { value: await options.generate(), source: 'generated' };
+    },
+  });
+  const { req, res } = mockRequest('/api/smart-money/briefing');
+  await handler(req, res);
+  assert.equal(res.statusCode, 200);
+  assert.match(cacheKey, /^smart-money-briefing:v2:/);
+});
+
 test('handler returns deterministic HTTP 200 when generation fails', async () => {
   const handler = createSmartMoneyBriefingHandler({
     now: () => new Date(NOW),
