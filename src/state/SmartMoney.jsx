@@ -138,13 +138,38 @@ export function SmartMoneyProvider({ children }) {
     mountedRef.current = true;
     loadSnapshot(false);
     loadBriefing(false);
-    const onFocus = () => loadSnapshot(false);
+    const onFocus = () => {
+      loadSnapshot(false);
+      loadBriefing(false);
+    };
     window.addEventListener('focus', onFocus);
     return () => {
       mountedRef.current = false;
       snapshotAbortRef.current?.abort();
       briefingAbortRef.current?.abort();
       window.removeEventListener('focus', onFocus);
+    };
+  }, [loadBriefing, loadSnapshot]);
+
+  useEffect(() => {
+    let timer = null;
+    let cancelled = false;
+    const scheduleNextUtcDay = () => {
+      const current = new Date();
+      const next = Date.UTC(
+        current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate() + 1,
+        0, 1, 0,
+      );
+      timer = window.setTimeout(async () => {
+        if (cancelled || !mountedRef.current) return;
+        await Promise.allSettled([loadSnapshot(true), loadBriefing(true)]);
+        if (!cancelled) scheduleNextUtcDay();
+      }, Math.max(1_000, next - current.getTime()));
+    };
+    scheduleNextUtcDay();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [loadBriefing, loadSnapshot]);
 
@@ -174,6 +199,11 @@ export function SmartMoneyProvider({ children }) {
     }));
   }, []);
 
+  const refreshResearch = useCallback(() => Promise.allSettled([
+    loadSnapshot(true),
+    loadBriefing(true),
+  ]), [loadBriefing, loadSnapshot]);
+
   const value = useMemo(() => ({
     snapshot,
     entities: snapshot?.entities ?? [],
@@ -187,7 +217,7 @@ export function SmartMoneyProvider({ children }) {
     simulationCapability: snapshot?.simulationCapability ?? researchOnlyCapabilityCopy(),
     loading,
     error,
-    refreshSmartMoney: () => loadSnapshot(true),
+    refreshSmartMoney: refreshResearch,
     briefingEnvelope: briefingState.accepted,
     briefing: briefingState.accepted?.briefing ?? null,
     briefingLoading: briefingState.loading,
@@ -209,6 +239,7 @@ export function SmartMoneyProvider({ children }) {
     loading,
     preferences.browserNotificationsEnabled,
     preferences.followedEntityIds,
+    refreshResearch,
     setBrowserNotificationsEnabled,
     snapshot,
     unfollowEntity,

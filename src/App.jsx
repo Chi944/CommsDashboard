@@ -62,6 +62,12 @@ export function Dashboard() {
     setRecordId(null);
   };
 
+  const openSmartMoney = () => {
+    setTab('Intel');
+    setView('smart-money');
+    setRecordId(null);
+  };
+
   // Keyboard shortcuts: ⌘K / Ctrl+K opens command palette anywhere.
   useEffect(() => {
     const onKey = (e) => {
@@ -98,7 +104,9 @@ export function Dashboard() {
 
         <main className="px-4 sm:px-6 py-5 sm:py-7 max-w-[1600px] mx-auto pb-24 md:pb-10 animate-fade-in">
           <Suspense fallback={<TabSkeleton />}>
-            {tab === 'Overview'   && <Overview onSelectAsset={openInPrices} />}
+            {tab === 'Overview'   && (
+              <Overview onSelectAsset={openInPrices} onOpenSmartMoney={openSmartMoney} />
+            )}
             {tab === 'Prices'     && <Prices initialTicker={ticker} onTickerChange={setTicker} />}
             {tab === 'Currency'   && <Currency />}
             {tab === 'Portfolio'  && (
