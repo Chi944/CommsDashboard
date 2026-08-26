@@ -6,6 +6,7 @@ import {
   SMART_MONEY_PARAGRAPH_IDS,
   buildDeterministicSmartMoneyBriefing,
   buildSmartMoneyEvidence,
+  buildSmartMoneyBriefingPrompt,
   digestSmartMoneyEvidence,
   validateSmartMoneyCompletion,
 } from '../lib/smart-money/briefing.js';
@@ -27,6 +28,17 @@ const MARKET_CONTEXT = {
     { id: 'sentiment:fear-greed', type: 'crypto_fear_greed', label: '61 · Greed', asOf: '2026-08-27T11:00:00.000Z', source: 'Alternative.me Fear & Greed', sourceUrl: 'https://alternative.me/crypto/fear-and-greed-index/', causalEligible: false },
   ],
 };
+
+test('Smart Money evidence-selection prompt mirrors every conditional completeness rule', () => {
+  const prompt = buildSmartMoneyBriefingPrompt({
+    snapshot: SMART_MONEY_RESPONSE,
+    marketContext: MARKET_CONTEXT,
+    evidence: buildSmartMoneyEvidence({ snapshot: SMART_MONEY_RESPONSE, marketContext: MARKET_CONTEXT, now: NOW }),
+  });
+  assert.match(prompt, /must include at least one investor_activity record when any investor_activity record is supplied/i);
+  assert.match(prompt, /must include capability:simulation/i);
+  assert.match(prompt, /must also include at least one crypto activity, crypto signal, institutional provider, or institutional-flow entity record when any such record is supplied/i);
+});
 
 test('deterministic Smart Money briefing always has three grounded fixed paragraphs', () => {
   const evidence = buildSmartMoneyEvidence({

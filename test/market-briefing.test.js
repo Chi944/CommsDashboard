@@ -6,6 +6,7 @@ import {
   MARKET_BRIEFING_PARAGRAPH_IDS,
   buildDeterministicMarketBriefing,
   buildMarketBriefingEvidence,
+  buildMarketBriefingPrompt,
   digestMarketBriefingEvidence,
   validateMarketBriefingCompletion,
 } from '../lib/briefing/market-briefing.js';
@@ -54,6 +55,16 @@ function context(overrides = {}) {
     ...overrides,
   };
 }
+
+test('market evidence-selection prompt mirrors every conditional completeness rule', () => {
+  const prompt = buildMarketBriefingPrompt(context());
+  assert.match(prompt, /must include at least one recordType top_gainer whose signed percentage is greater than zero when any such qualifying record is supplied/i);
+  assert.match(prompt, /at least one recordType top_loser whose signed percentage is less than zero when any such qualifying record is supplied/i);
+  assert.match(prompt, /do not select a zero-change or wrong-sign mover; select input:coverage only when no qualifying signed mover exists/i);
+  assert.match(prompt, /must include at least one recordType headline when any headline record is supplied/i);
+  assert.match(prompt, /at least one recordType headline_sentiment or crypto_fear_greed when any such sentiment record is supplied/i);
+  assert.match(prompt, /watchpoints must include input:coverage/i);
+});
 
 test('deterministic briefing always returns the exact three paragraph contract with resolved evidence', () => {
   const evidence = buildMarketBriefingEvidence(context());
