@@ -10,14 +10,17 @@ function validBriefingText(label = 'Market') {
   return `${label} tone is balanced.\n\n${label} catalysts remain measured.\n\nWatch the next session. ${DISCLAIMER}`;
 }
 
-function validBriefing(label = 'Market') {
-  const paragraphs = validBriefingText(label).split('\n\n');
+function validBriefing(label = 'Market', {
+  marketId = 'market:gainer:LIVE',
+  themeId = 'sentiment:fear-greed',
+} = {}) {
+  void label;
   return JSON.stringify({
-    paragraphs: paragraphs.map((text, index) => ({
-      id: ['market-tone', 'themes-catalysts', 'watchpoints'][index],
-      text,
-      evidenceIds: ['sentiment:fear-greed'],
-    })),
+    paragraphs: [
+      { id: 'market-tone', evidenceIds: [marketId] },
+      { id: 'themes-catalysts', evidenceIds: [themeId] },
+      { id: 'watchpoints', evidenceIds: ['input:coverage', marketId, themeId] },
+    ],
   });
 }
 
@@ -96,7 +99,7 @@ function createProviderFetch(supportedModel) {
       }
 
       return jsonResponse({
-        choices: [{ message: { content: validBriefing('Risk') } }],
+        choices: [{ message: { content: validBriefing('Risk', { marketId: 'market:gainer:GAIN' }) } }],
       });
     }
 
@@ -241,7 +244,7 @@ test('uses Groq completion-token and low-reasoning parameters for GPT-OSS', asyn
     if (target.endsWith('/api/fear-greed')) return fearGreedResponse();
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       providerRequest = JSON.parse(options.body);
-      return jsonResponse({ choices: [{ message: { content: validBriefing('Parameters') } }] });
+      return jsonResponse({ choices: [{ message: { content: validBriefing('Parameters', { marketId: 'market:gainer:GAIN' }) } }] });
     }
     throw new Error(`Unexpected fetch: ${target}`);
   };
@@ -249,7 +252,7 @@ test('uses Groq completion-token and low-reasoning parameters for GPT-OSS', asyn
   try {
     await briefingHandler(createRequest('203.0.113.11'), createResponse());
 
-    assert.equal(providerRequest.max_completion_tokens, 900);
+    assert.equal(providerRequest.max_completion_tokens, 350);
     assert.equal(providerRequest.max_tokens, undefined);
     assert.equal(providerRequest.reasoning_effort, 'low');
     assert.equal(providerRequest.include_reasoning, false);
@@ -297,7 +300,7 @@ test('caches generated briefings by semantic key and expires them after the TTL'
     await briefingHandler(createRequest('203.0.113.12'), cached);
 
     assert.equal(generations, 1);
-    assert.equal(cached.body.briefing.text, validBriefingText('Briefing 1'));
+    assert.equal(cached.body.briefing.text, first.body.briefing.text);
     assert.equal(cached.body.aiStatus.source, 'cache');
 
     sentimentValue = 51;
@@ -311,7 +314,7 @@ test('caches generated briefings by semantic key and expires them after the TTL'
     const expired = createResponse();
     await briefingHandler(createRequest('203.0.113.12'), expired);
     assert.equal(generations, 3);
-    assert.equal(expired.body.briefing.text, validBriefingText('Briefing 3'));
+    assert.match(expired.body.briefing.text, /51 · Neutral/);
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv(env);
@@ -364,11 +367,11 @@ test('generates a new briefing when the trusted market date changes before the c
     await briefingHandler(createRequest('203.0.113.42'), nextDay);
 
     assert.equal(generations, 2);
-    assert.equal(first.body.briefing.text, validBriefingText('Day 1'));
+    assert.equal(first.body.briefing.source, 'generated');
     assert.equal(first.body.briefing.marketDate, '2030-01-02');
     assert.match(first.body.briefing.generatedAt, /^\d{4}-\d{2}-\d{2}T/);
     assert.equal(first.body.generatedAt, first.body.briefing.generatedAt);
-    assert.equal(nextDay.body.briefing.text, validBriefingText('Day 2'));
+    assert.equal(nextDay.body.briefing.source, 'generated');
     assert.equal(nextDay.body.briefing.marketDate, '2030-01-03');
     assert.equal(nextDay.body.generatedAt, nextDay.body.briefing.generatedAt);
   } finally {
@@ -469,7 +472,7 @@ test('grounds briefing generation in explicit headline and fear-greed sentiment 
       source: 'Alternative.me Fear & Greed',
       causalEligible: false,
     });
-    assert.match(userPrompt, /every evidence ID.*directly support/i);
+    assert.match(userPrompt, /select evidence only/i);
   } finally {
     Date.now = originalDateNow;
     globalThis.fetch = originalFetch;
@@ -514,8 +517,7 @@ test('deduplicates concurrent briefing generations for the same semantic key', a
     await Promise.all(requests);
 
     assert.equal(generations, 1);
-    assert.equal(first.body.briefing.text, validBriefingText('Shared briefing'));
-    assert.equal(second.body.briefing.text, validBriefingText('Shared briefing'));
+    assert.equal(first.body.briefing.text, second.body.briefing.text);
     assert.deepEqual(new Set([first.body.aiStatus.source, second.body.aiStatus.source]), new Set(['generated', 'inflight']));
   } finally {
     globalThis.fetch = originalFetch;
@@ -1174,7 +1176,7 @@ test('rejects an invalid three-paragraph briefing before caching it', async () =
     assert.equal(invalid.body.aiStatus.code, 'provider_invalid_response');
     assert.equal(invalid.headers['Cache-Control'], 'no-store');
     assert.equal(recovered.body.aiStatus.source, 'generated');
-    assert.equal(recovered.body.briefing.text, validBriefingText('Recovered'));
+    assert.ok(recovered.body.briefing.text.endsWith(DISCLAIMER));
     assert.equal(generations, 2);
   } finally {
     globalThis.fetch = originalFetch;
@@ -1278,9 +1280,9 @@ test('a public refresh bypasses edge caching without bypassing the shared AI cac
     await briefingHandler(createRequest('203.0.113.44'), initial);
     await briefingHandler(createRequest('203.0.113.44', { refresh: '1' }), refreshed);
 
-    assert.equal(initial.body.briefing.text, validBriefingText('Refresh 1'));
+    assert.equal(initial.body.briefing.source, 'generated');
     assert.equal(refreshed.statusCode, 200);
-    assert.equal(refreshed.body.briefing.text, validBriefingText('Refresh 1'));
+    assert.equal(refreshed.body.briefing.text, initial.body.briefing.text);
     assert.equal(refreshed.body.aiStatus.source, 'cache');
     assert.equal(refreshed.headers['Cache-Control'], 'no-store');
     assert.equal(generations, 1);
@@ -1439,13 +1441,9 @@ test('accepts current sentiment when a cache-valid price response was fetched si
     }
     if (target === 'https://api.groq.com/openai/v1/chat/completions') {
       providerCalls += 1;
-      return jsonResponse({ choices: [{ message: { content: JSON.stringify({
-        paragraphs: validBriefingText('Current sentiment').split('\n\n').map((text, index) => ({
-          id: ['market-tone', 'themes-catalysts', 'watchpoints'][index],
-          text,
-          evidenceIds: ['sentiment:headlines'],
-        })),
-      }) } }] });
+      return jsonResponse({ choices: [{ message: { content: validBriefing(
+        'Current sentiment', { themeId: 'sentiment:headlines' },
+      ) } }] });
     }
     throw new Error(`Unexpected fetch: ${target}`);
   };
@@ -1496,9 +1494,9 @@ test('requires structured market and sentiment evidence for every generated para
           message: {
             content: JSON.stringify({
               paragraphs: [
-                { id: 'market-tone', text: 'The tracked mover rose while sentiment remained constructive.', evidenceIds: ['market:gainer:LIVE', 'sentiment:fear-greed'] },
-                { id: 'themes-catalysts', text: 'The same price observation aligns with the current sentiment reading.', evidenceIds: ['market:gainer:LIVE', 'sentiment:fear-greed'] },
-                { id: 'watchpoints', text: `The next update will show whether those observations persist. ${DISCLAIMER}`, evidenceIds: ['market:gainer:LIVE', 'sentiment:fear-greed'] },
+                { id: 'market-tone', evidenceIds: ['market:gainer:LIVE'] },
+                { id: 'themes-catalysts', evidenceIds: ['sentiment:fear-greed'] },
+                { id: 'watchpoints', evidenceIds: ['input:coverage', 'market:gainer:LIVE', 'sentiment:fear-greed'] },
               ],
             }),
           },
@@ -1517,10 +1515,11 @@ test('requires structured market and sentiment evidence for every generated para
     assert.deepEqual(response.body.briefing.paragraphs.map((paragraph) => paragraph.id), [
       'market-tone', 'themes-catalysts', 'watchpoints',
     ]);
-    assert.ok(response.body.briefing.paragraphs.every((paragraph) => (
-      paragraph.evidenceIds.includes('market:gainer:LIVE')
-      && paragraph.evidenceIds.includes('sentiment:fear-greed')
-    )));
+    assert.deepEqual(response.body.briefing.paragraphs.map((paragraph) => paragraph.evidenceIds), [
+      ['market:gainer:LIVE'],
+      ['sentiment:fear-greed'],
+      ['input:coverage', 'market:gainer:LIVE', 'sentiment:fear-greed'],
+    ]);
     assert.equal(providerRequest.response_format.type, 'json_schema');
     assert.equal(providerRequest.response_format.json_schema.strict, true);
     assert.equal(
@@ -1530,6 +1529,10 @@ test('requires structured market and sentiment evidence for every generated para
     assert.deepEqual(
       providerRequest.response_format.json_schema.schema.properties.paragraphs.items.properties.id.enum,
       ['market-tone', 'themes-catalysts', 'watchpoints'],
+    );
+    assert.equal(
+      providerRequest.response_format.json_schema.schema.properties.paragraphs.items.properties.text,
+      undefined,
     );
   } finally {
     Date.now = originalDateNow;

@@ -12,7 +12,9 @@ import React, {
 import {
   createDailyBriefingState,
   dailyBriefingReducer,
+  isValidDailyBriefingEnvelope,
 } from '../lib/dailyBriefingState.js';
+import { nextSmartMoneyRefreshAt } from '../lib/smartMoneyRefreshSchedule.js';
 import {
   researchOnlyCapabilityCopy,
   validateSmartMoneySnapshot,
@@ -23,6 +25,18 @@ import {
 } from '../lib/smartMoneyStorage.js';
 
 const SmartMoneyContext = createContext(null);
+const SMART_MONEY_BRIEFING_IDS = Object.freeze([
+  'market-regime',
+  'investor-disclosures',
+  'crypto-paper-risk',
+]);
+
+function isValidSmartMoneyBriefingEnvelope(value) {
+  return isValidDailyBriefingEnvelope(value)
+    && value.briefing.paragraphs.every((paragraph, index) => (
+      paragraph.id === SMART_MONEY_BRIEFING_IDS[index]
+    ));
+}
 
 function safeMessage(value, fallback) {
   return String(value?.message ?? value ?? fallback)
@@ -124,7 +138,11 @@ export function SmartMoneyProvider({ children }) {
       );
       const payload = await readPublicJson(response);
       if (!mountedRef.current || requestId !== briefingRequestRef.current) return;
-      dispatchBriefing({ type: 'success', requestId, candidate: payload });
+      dispatchBriefing({
+        type: 'success',
+        requestId,
+        candidate: isValidSmartMoneyBriefingEnvelope(payload) ? payload : null,
+      });
     } catch (caught) {
       if (!mountedRef.current || requestId !== briefingRequestRef.current
           || caught?.name === 'AbortError') return;
@@ -154,19 +172,16 @@ export function SmartMoneyProvider({ children }) {
   useEffect(() => {
     let timer = null;
     let cancelled = false;
-    const scheduleNextUtcDay = () => {
+    const scheduleNextRefresh = () => {
       const current = new Date();
-      const next = Date.UTC(
-        current.getUTCFullYear(), current.getUTCMonth(), current.getUTCDate() + 1,
-        0, 1, 0,
-      );
+      const next = nextSmartMoneyRefreshAt(current).getTime();
       timer = window.setTimeout(async () => {
         if (cancelled || !mountedRef.current) return;
         await Promise.allSettled([loadSnapshot(true), loadBriefing(true)]);
-        if (!cancelled) scheduleNextUtcDay();
+        if (!cancelled) scheduleNextRefresh();
       }, Math.max(1_000, next - current.getTime()));
     };
-    scheduleNextUtcDay();
+    scheduleNextRefresh();
     return () => {
       cancelled = true;
       window.clearTimeout(timer);

@@ -65,16 +65,19 @@ test('digest follows accepted evidence and provider coverage, not generation tim
   assert.notEqual(first, second);
 });
 
-test('AI completion rejects unknown evidence, causal invention, and trading instructions', () => {
+test('AI selection rejects unknown, cross-section, uncited-capability, and prose fields', () => {
   const evidence = buildSmartMoneyEvidence({ snapshot: SMART_MONEY_RESPONSE, marketContext: MARKET_CONTEXT, now: NOW });
   const base = SMART_MONEY_PARAGRAPH_IDS.map((id) => ({
-    id, text: `Accepted evidence remains limited for ${id}.`, evidenceIds: [evidence[0].id],
+    id,
+    evidenceIds: [id === 'market-regime'
+      ? evidence[0].id
+      : id === 'investor-disclosures' ? 'snapshot:coverage' : 'capability:simulation'],
   }));
   for (const paragraphs of [
     base.map((row, index) => index ? row : { ...row, evidenceIds: ['unknown'] }),
-    base.map((row, index) => index ? row : { ...row, text: 'NVDA rose because this investor disclosed a position.' }),
-    base.map((row, index) => index ? row : { ...row, text: 'Buy NVDA and size the position at five percent.' }),
-    base.map((row, index) => index ? row : { ...row, text: 'This is a recommendation to increase portfolio weight.' }),
+    base.map((row, index) => index ? row : { ...row, evidenceIds: ['capability:simulation'] }),
+    base.map((row, index) => index === 2 ? { ...row, evidenceIds: ['snapshot:coverage'] } : row),
+    base.map((row, index) => index ? row : { ...row, text: 'Go long NVDA and maintain an overweight allocation.' }),
   ]) {
     assert.throws(() => validateSmartMoneyCompletion({ text: JSON.stringify({ paragraphs }) }, {
       snapshot: SMART_MONEY_RESPONSE, marketContext: MARKET_CONTEXT, evidence, now: NOW,
@@ -88,9 +91,9 @@ test('AI completion accepts only the fixed cited research contract', () => {
     model: 'test/research-model',
     text: JSON.stringify({
       paragraphs: [
-        { id: 'market-regime', text: 'The accepted market observations are mixed and remain independent from disclosures.', evidenceIds: [evidence[0].id] },
-        { id: 'investor-disclosures', text: 'The accepted snapshot contains no material new investor or firm activity.', evidenceIds: ['snapshot:coverage'] },
-        { id: 'crypto-paper-risk', text: 'Crypto-wallet success is not established by this evidence. Research intelligence only — not financial advice. No transaction was prepared or executed.', evidenceIds: ['capability:simulation'] },
+        { id: 'market-regime', evidenceIds: [evidence[0].id] },
+        { id: 'investor-disclosures', evidenceIds: ['snapshot:coverage'] },
+        { id: 'crypto-paper-risk', evidenceIds: ['capability:simulation'] },
       ],
     }),
   };
@@ -100,6 +103,9 @@ test('AI completion accepts only the fixed cited research contract', () => {
   assert.equal(briefing.source, 'generated');
   assert.equal(briefing.model, 'test/research-model');
   assert.deepEqual(briefing.paragraphs.map((row) => row.id), SMART_MONEY_PARAGRAPH_IDS);
+  assert.match(briefing.paragraphs[1].text, /No material new investor or firm disclosure was found/i);
+  assert.match(briefing.paragraphs[2].text, /research-only/i);
+  assert.equal(JSON.stringify(briefing).includes('Go long'), false);
 });
 
 test('handler returns deterministic HTTP 200 when generation fails', async () => {

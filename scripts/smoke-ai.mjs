@@ -76,6 +76,16 @@ try {
     ))) {
     throw new Error('/api/briefing did not return resolved per-paragraph evidence');
   }
+  const marketEvidenceTypes = evidenceParagraphs.map((paragraph) => (
+    paragraph.evidenceIds.map((id) => briefingEvidenceById.get(id)?.type)
+  ));
+  if (marketEvidenceTypes[0].some((type) => !['top_gainer', 'top_loser'].includes(type))
+      || marketEvidenceTypes[1].some((type) => ![
+        'headline', 'headline_sentiment', 'crypto_fear_greed',
+      ].includes(type))
+      || !evidenceParagraphs[2].evidenceIds.includes('input:coverage')) {
+    throw new Error('/api/briefing evidence was assigned to the wrong paragraph');
+  }
   if (briefing?.aiStatus?.source !== 'generated') {
     throw new Error('/api/briefing aiStatus.source was not generated');
   }
@@ -137,6 +147,21 @@ try {
         || paragraph.evidenceIds.some((id) => !smartEvidenceById.has(id))
       ))) {
     throw new Error('/api/smart-money/briefing did not return three resolved evidence paragraphs');
+  }
+  const smartTypes = smartParagraphs.map((paragraph) => (
+    paragraph.evidenceIds.map((id) => smartEvidenceById.get(id)?.type)
+  ));
+  if (smartTypes[0].some((type) => !(type === 'snapshot_coverage' || type?.startsWith('market_')))
+      || smartTypes[1].some((type) => ![
+        'investor_activity', 'snapshot_coverage', 'provider_sec', 'provider_institutional',
+        'entity_investors', 'entity_firms',
+      ].includes(type))
+      || !smartParagraphs[2].evidenceIds.includes('capability:simulation')
+      || smartTypes[2].some((type) => ![
+        'simulation_capability', 'snapshot_coverage', 'crypto_activity', 'crypto_signal',
+        'provider_institutional', 'entity_institutional-flows',
+      ].includes(type))) {
+    throw new Error('/api/smart-money/briefing evidence was assigned to the wrong paragraph');
   }
   if (smartMoneyBriefing?.briefing?.source !== 'generated'
       || smartMoneyBriefing?.aiStatus?.source !== 'generated') {

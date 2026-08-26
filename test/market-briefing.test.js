@@ -91,6 +91,10 @@ test('deterministic briefing remains non-null when every upstream input is unava
   assert.match(result.paragraphs[0].text, /unavailable/i);
   assert.match(result.paragraphs[1].text, /unavailable/i);
   assert.ok(result.paragraphs[2].text.endsWith(DISCLAIMER));
+  const evidenceIds = new Set(result.evidence.map((record) => record.id));
+  assert.ok(result.paragraphs.every((paragraph) => paragraph.evidenceIds.length > 0));
+  assert.ok(result.paragraphs.flatMap((paragraph) => paragraph.evidenceIds)
+    .every((evidenceId) => evidenceIds.has(evidenceId)));
 });
 
 test('a single positive mover is not described as both market strength and weakness', () => {
@@ -127,14 +131,14 @@ test('evidence digest changes with accepted evidence rather than generation time
   assert.notEqual(digestMarketBriefingEvidence(original), digestMarketBriefingEvidence(changed));
 });
 
-test('generated completion requires exact IDs, resolved evidence, and non-causal language', () => {
+test('generated completion is evidence selection only and uses server-controlled language', () => {
   const marketContext = context();
   const completion = {
     model: 'test-model (Groq)',
     text: JSON.stringify({ paragraphs: [
-      { id: 'market-tone', text: 'Accepted movers show gains and losses while the sentiment reading remains mixed.', evidenceIds: ['market:gainer:GAIN', 'market:loser:LOSS'] },
-      { id: 'themes-catalysts', text: 'The accepted headline sample describes a rally alongside an oil decline.', evidenceIds: ['news:wire-1'] },
-      { id: 'watchpoints', text: `The next update can show whether these observations persist. ${DISCLAIMER}`, evidenceIds: ['sentiment:fear-greed'] },
+      { id: 'market-tone', evidenceIds: ['market:gainer:GAIN', 'market:loser:LOSS'] },
+      { id: 'themes-catalysts', evidenceIds: ['news:wire-1', 'sentiment:fear-greed'] },
+      { id: 'watchpoints', evidenceIds: ['input:coverage', 'sentiment:fear-greed'] },
     ] }),
   };
 
@@ -143,14 +147,34 @@ test('generated completion requires exact IDs, resolved evidence, and non-causal
   });
   assert.equal(result.source, 'generated');
   assert.deepEqual(result.paragraphs.map((paragraph) => paragraph.id), MARKET_BRIEFING_PARAGRAPH_IDS);
-  assert.equal(result.evidence.length, 5);
+  assert.equal(result.evidence.length, 6);
+  assert.match(result.paragraphs[0].text, /GAIN \+4\.20%/);
+  assert.ok(result.paragraphs[2].text.endsWith(DISCLAIMER));
 
-  const causal = structuredClone(completion);
-  const payload = JSON.parse(causal.text);
-  payload.paragraphs[0].text = 'GAIN rose because the cited market observation drove a change in tone.';
-  causal.text = JSON.stringify(payload);
+  const prose = structuredClone(completion);
+  const prosePayload = JSON.parse(prose.text);
+  prosePayload.paragraphs[0].text = 'Go long GAIN.';
+  prose.text = JSON.stringify(prosePayload);
   assert.throws(
-    () => validateMarketBriefingCompletion(causal, marketContext),
+    () => validateMarketBriefingCompletion(prose, marketContext),
+    (error) => error instanceof GroqProviderError && error.code === 'provider_invalid_response',
+  );
+
+  const crossSection = structuredClone(completion);
+  const crossSectionPayload = JSON.parse(crossSection.text);
+  crossSectionPayload.paragraphs[1].evidenceIds = ['market:gainer:GAIN'];
+  crossSection.text = JSON.stringify(crossSectionPayload);
+  assert.throws(
+    () => validateMarketBriefingCompletion(crossSection, marketContext),
+    (error) => error instanceof GroqProviderError && error.code === 'provider_invalid_response',
+  );
+
+  const noCoverage = structuredClone(completion);
+  const noCoveragePayload = JSON.parse(noCoverage.text);
+  noCoveragePayload.paragraphs[2].evidenceIds = ['sentiment:fear-greed'];
+  noCoverage.text = JSON.stringify(noCoveragePayload);
+  assert.throws(
+    () => validateMarketBriefingCompletion(noCoverage, marketContext),
     (error) => error instanceof GroqProviderError && error.code === 'provider_invalid_response',
   );
 });

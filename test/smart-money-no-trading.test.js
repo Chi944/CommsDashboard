@@ -100,15 +100,14 @@ test('all production JS, JSX, TS, and TSX surfaces contain no execution path or 
   assert.doesNotMatch(dependencies, /^(?:ethers|web3|wagmi|viem|ccxt|@alpacahq\/|coinbase|binance|ibkr)$/im);
 });
 
-test('the built browser bundle contains no order endpoint, credential DTO, or trading SDK', async (t) => {
+test('the built browser bundle contains no order endpoint, credential DTO, or trading SDK', async () => {
   let files;
   try {
     files = (await readdir(path.resolve('dist/assets'), { withFileTypes: true }))
       .filter((entry) => entry.isFile() && /\.js$/.test(entry.name))
       .map((entry) => path.resolve('dist/assets', entry.name));
   } catch {
-    t.skip('run npm run build before the release bundle audit');
-    return;
+    assert.fail('dist/assets is required; run npm run build before the release bundle audit');
   }
   assert.ok(files.length > 0);
   const source = (await Promise.all(files.map((file) => readFile(file, 'utf8')))).join('\n');

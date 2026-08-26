@@ -58,10 +58,15 @@ function marketBriefingPayload({
   aiStatus = { state: 'ready', retryable: false },
   signals,
 } = {}) {
+  const evidence = [
+    { id: 'test:tone', label: `${label} tone evidence`, sourceUrl: 'https://example.com/tone' },
+    { id: 'test:themes', label: `${label} themes evidence`, sourceUrl: 'https://example.com/themes' },
+    { id: 'test:watch', label: `${label} watch evidence`, sourceUrl: 'https://example.com/watch' },
+  ];
   const paragraphs = [
-    { id: 'market-tone', text: label, evidenceIds: [] },
-    { id: 'themes-catalysts', text: `${label} themes`, evidenceIds: [] },
-    { id: 'watchpoints', text: `${label} watchpoints`, evidenceIds: [] },
+    { id: 'market-tone', text: label, evidenceIds: ['test:tone'] },
+    { id: 'themes-catalysts', text: `${label} themes`, evidenceIds: ['test:themes'] },
+    { id: 'watchpoints', text: `${label} watchpoints`, evidenceIds: ['test:watch'] },
   ];
   return {
     ok: true,
@@ -72,7 +77,7 @@ function marketBriefingPayload({
       marketDate,
       generatedAt,
       paragraphs,
-      evidence: [],
+      evidence,
       inputsAsOf: {},
       text: paragraphs.map((paragraph) => paragraph.text).join('\n\n'),
     },

@@ -29,14 +29,13 @@ export function isValidDailyBriefingEnvelope(value) {
   const suppliedEvidence = Array.isArray(value?.briefing?.evidence)
     ? value.briefing.evidence
     : (Array.isArray(value?.evidence) ? value.evidence : null);
+  if (!suppliedEvidence || suppliedEvidence.length === 0) return false;
   const evidenceById = new Map();
-  if (suppliedEvidence) {
-    for (const record of suppliedEvidence) {
-      if (!record || typeof record !== 'object'
-          || typeof record.id !== 'string' || !record.id.trim()
-          || evidenceById.has(record.id)) return false;
-      evidenceById.set(record.id, record);
-    }
+  for (const record of suppliedEvidence) {
+    if (!record || typeof record !== 'object'
+        || typeof record.id !== 'string' || !record.id.trim()
+        || evidenceById.has(record.id)) return false;
+    evidenceById.set(record.id, record);
   }
   const ids = new Set();
   for (const paragraph of paragraphs) {
@@ -45,9 +44,11 @@ export function isValidDailyBriefingEnvelope(value) {
         || ids.has(paragraph.id)
         || typeof paragraph.text !== 'string' || !paragraph.text.trim()
         || !Array.isArray(paragraph.evidenceIds)
+        || paragraph.evidenceIds.length === 0
+        || new Set(paragraph.evidenceIds).size !== paragraph.evidenceIds.length
         || paragraph.evidenceIds.some((evidenceId) => (
           typeof evidenceId !== 'string' || !evidenceId.trim()
-          || (suppliedEvidence && !evidenceById.has(evidenceId))
+          || !evidenceById.has(evidenceId)
         ))) return false;
     ids.add(paragraph.id);
   }

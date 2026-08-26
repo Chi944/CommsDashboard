@@ -8,15 +8,21 @@ import {
 } from '../src/lib/dailyBriefingState.js';
 
 function envelope(marketDate, generatedAt, label = marketDate) {
+  const evidence = [
+    { id: 'evidence:tone', label: `${label} tone evidence` },
+    { id: 'evidence:themes', label: `${label} themes evidence` },
+    { id: 'evidence:watch', label: `${label} watch evidence` },
+  ];
   return {
     ok: true,
     briefing: {
       marketDate,
       generatedAt,
+      evidence,
       paragraphs: [
-        { id: 'market-tone', text: `${label} tone`, evidenceIds: [] },
-        { id: 'themes-catalysts', text: `${label} themes`, evidenceIds: [] },
-        { id: 'watchpoints', text: `${label} watchpoints`, evidenceIds: [] },
+        { id: 'market-tone', text: `${label} tone`, evidenceIds: ['evidence:tone'] },
+        { id: 'themes-catalysts', text: `${label} themes`, evidenceIds: ['evidence:themes'] },
+        { id: 'watchpoints', text: `${label} watchpoints`, evidenceIds: ['evidence:watch'] },
       ],
       text: `${label} tone\n\n${label} themes\n\n${label} watchpoints`,
     },
@@ -90,4 +96,13 @@ test('envelope validation requires canonical timestamps and three distinct nonem
   const duplicate = envelope('2026-08-27', '2026-08-27T00:01:00.000Z');
   duplicate.briefing.paragraphs[1].id = duplicate.briefing.paragraphs[0].id;
   assert.equal(isValidDailyBriefingEnvelope(duplicate), false);
+  const uncited = envelope('2026-08-27', '2026-08-27T00:01:00.000Z');
+  uncited.briefing.paragraphs[0].evidenceIds = [];
+  assert.equal(isValidDailyBriefingEnvelope(uncited), false);
+  const unresolved = envelope('2026-08-27', '2026-08-27T00:01:00.000Z');
+  unresolved.briefing.paragraphs[0].evidenceIds = ['evidence:unknown'];
+  assert.equal(isValidDailyBriefingEnvelope(unresolved), false);
+  const missingEvidence = envelope('2026-08-27', '2026-08-27T00:01:00.000Z');
+  delete missingEvidence.briefing.evidence;
+  assert.equal(isValidDailyBriefingEnvelope(missingEvidence), false);
 });
