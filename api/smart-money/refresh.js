@@ -21,8 +21,8 @@ export function createSmartMoneyRefreshHandler(deps = {}) {
       res.status(400).json({ ok: false, error: { code: 'invalid_query_parameters', message: 'Invalid query parameters.' } });
       return;
     }
-    if (!['GET', 'POST'].includes(req.method)) {
-      res.setHeader('Allow', 'GET, POST');
+    if (req.method !== 'GET') {
+      res.setHeader('Allow', 'GET');
       res.status(405).json({ ok: false, error: { code: 'method_not_allowed', message: 'Method not allowed.' } });
       return;
     }

@@ -37,15 +37,22 @@ no production Task 8 module existed at this point.
 ## Implementation notes
 
 - The durable accepted state is an exact private envelope:
-  `{ schemaVersion: 1, refreshStartedAt, publicSnapshot, adapterState }`.
+  `{ schemaVersion: 1, refreshStartedAt, publicSnapshot, adapterState, stateDigest }`.
   Public routes validate the envelope and return only `publicSnapshot`.
+- `stateDigest` is an internally computed stable SHA-256 binding over the
+  canonical public snapshot and private adapter state. Validation also enforces
+  exact child ID/group/enabled/status/source/count coherence, so swapped or
+  mismatched public/private children fail closed.
 - `adapterState` is an exact seven-child canonical schema containing only
   normalized SEC/institutional source records, normalized status, and pending
   confirmations. HTTP bodies, transport errors, and secrets are rejected.
 - Production refresh order is rights, accepted previous state, due-provider
   `Promise.allSettled`, LKG/freshness normalization, deterministic derivation,
   unavailable reference-price evidence, an empty completed-day mark set,
-  durable journal, then durable accepted snapshot. Provider normalization and
+  durable staged journal, durable accepted snapshot, then an idempotent durable
+  generation-publication marker. History returns only rows named by published
+  accepted-generation markers; failed or superseded snapshot writes publish
+  none. Provider normalization and
   publication validation use trusted post-I/O completion times while
   `refreshStartedAt` remains the invocation/CAS generation.
 - Production enables only SEC EDGAR and the six institutional SEC adapters.
@@ -57,7 +64,10 @@ no production Task 8 module existed at this point.
   5 MB hard cap. Filing-agent accession prefixes are accepted; the submissions
   CIK and registrant archive directory remain exact bindings.
 - Fixed structural inline-XBRL profiles bind entity CIK, instant report date,
-  concept, unit, scale, dimensions/table anchors, and identical duplicates.
+  concept, unit, scale, exact explicit/typed dimensions, structural anchors,
+  and identical duplicates. Comparison-period and wrong-dimension contexts are
+  filtered before target unit/scale/conflict validation; absent scale defaults
+  to zero as required by inline XBRL.
   Nil, negative, conflicting, nonfinite, context-drifted, or structurally
   changed facts fail closed.
 - Tesla's reviewed filing reports exactly 11,509 BTC without a BTC-specific USD
@@ -83,7 +93,31 @@ no production Task 8 module existed at this point.
   CAS remains nondurable and reports no accepted signal.
 - Health recomputes accepted provider freshness against its wall clock, keeps
   the exact seven canonical children even when rights are invalid/expired, and
-  exposes only allowlisted typed provider error codes—not raw error detail.
+  exposes enabled/retrieval/freshness/cache-age fields and only explicitly
+  allowlisted typed provider error codes—not raw error detail. Protected refresh
+  is GET-only, and history validates decoded cursor IDs with the journal's
+  canonical ID validator before storage.
+
+## Review fix round 1 TDD evidence
+
+Focused RED runs were made before each production fix:
+
+- Journal/refresh: the new staged-publication tests failed on missing
+  `stageJournal`/`publishJournalGeneration` exports and missing publication
+  ordering/failure behavior.
+- SEC: `node --test test/smart-money-sec.test.js` exited `1` with 16 passed and
+  7 failed. Failures covered comparison-context contamination, wrong
+  dimensions/default scale, official `text/html` rejection, older-filing
+  fallback, and profile drift.
+- Private envelope/child isolation: `node --test test/smart-money-refresh.test.js`
+  first exited `1` because `buildSmartMoneyPrivateSnapshot` did not exist, then
+  exposed malformed-child sibling isolation until fixed.
+- APIs/health/cursor: `node --test test/smart-money-api.test.js` exited `1` with
+  16 passed and 4 failed for noncanonical decoded cursor IDs, POST refresh,
+  missing health fields, and unknown error-code leakage.
+
+The corresponding focused GREEN runs were journal 24/24, refresh 28/28, SEC
+23/23, and API 20/20.
 
 ## Reviewed SEC filing evidence
 
@@ -97,10 +131,26 @@ no production Task 8 module existed at this point.
 The SEC FAQ supporting filing-agent accession handling is
 https://www.sec.gov/about/webmaster-frequently-asked-questions.
 
+Live probes on 2026-08-26 used the identified
+`CommsDashboard/1.0 compliance@monitored-contact.co` User-Agent and retained
+only these bounded summaries (never filing bodies):
+
+- Strategy: HTTP 200 `text/html`, 2,814,628 bytes; 846,000 BTC and
+  $49,672,080,000.
+- Tesla: HTTP 200 `text/html`, 1,573,323 bytes; 11,509 BTC and no BTC-specific
+  reported USD value.
+- IBIT: HTTP 200 `text/html`, 626,623 bytes; 734,261 BTC and $43,395,920,710.
+- FBTC: HTTP 200 `text/html`, 946,973 bytes; 174,383 BTC and $10,306,297,000.
+- ARKB: HTTP 200 `text/html`, 358,089 bytes; 32,178.2280 BTC and
+  $1,889,314,000.
+- BITB: HTTP 200 `text/html`, 1,186,417 bytes; 36,207.6919 BTC and
+  $2,125,990,000.
+
 ## Final verification
 
-- Provider Core focused command: exit `0`; 214 tests, 214 passed, 0 failed.
-- `npm test`: exit `0`; 338 Node unit tests plus 33 UI tests, 371 total,
+- Provider Core focused command after review fixes: exit `0`; 227 tests, 227
+  passed, 0 failed.
+- `npm test`: exit `0`; 351 Node unit tests plus 33 UI tests, 384 total,
   all passed (2/2 UI test files).
 - `npm run build`: exit `0`; Vite transformed 623 modules and completed the
   production build.

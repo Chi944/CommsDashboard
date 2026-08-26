@@ -1,4 +1,4 @@
-import { readJournal } from '../../lib/smart-money/journal.js';
+import { canonicalJournalCursorId, readJournal } from '../../lib/smart-money/journal.js';
 
 const DAY_MS = 86_400_000;
 
@@ -17,9 +17,9 @@ function validCursor(value, since) {
     if (Buffer.from(text, 'utf8').toString('base64url') !== value) return false;
     const row = JSON.parse(text);
     const keys = Object.keys(row || {});
-    return keys.length === 2 && keys[0] === 'observedAt' && keys[1] === 'id'
-      && canonicalInstant(row.observedAt) !== null && row.observedAt >= since
-      && typeof row.id === 'string' && row.id.length > 0 && row.id.length <= 512;
+    if (keys.length !== 2 || keys[0] !== 'observedAt' || keys[1] !== 'id'
+        || canonicalInstant(row.observedAt) === null || row.observedAt < since) return false;
+    return canonicalJournalCursorId(row.id) === row.id;
   } catch {
     return false;
   }

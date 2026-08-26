@@ -5,13 +5,17 @@ import test from 'node:test';
 import {
   appendJournal,
   listTrackedTickers,
+  publishJournalGeneration,
   pruneJournal,
   readJournal,
+  stageJournal,
 } from '../lib/smart-money/journal.js';
 import { SIGNAL, memoryJournalAdapter } from './fixtures/smart-money/journal.js';
 
 const MANIFEST = 'smart-money/v1/journal/manifest.json';
 const PARTITION = 'smart-money/v1/journal/2026-08-26.json';
+const PUBLICATIONS = 'smart-money/v1/journal/publications.json';
+const GENERATION = '2026-08-27T00:00:00.000Z';
 
 function signalAt(id, observedAt, ticker = 'BTC') {
   const observedMs = Date.parse(observedAt);
@@ -52,6 +56,59 @@ function dailyMark(date = '2026-08-26', ticker = 'BTC') {
   };
 }
 
+async function publishRows(adapter, { signals = [], dailyMarks = [], generation = GENERATION } = {}) {
+  const now = new Date(generation);
+  const staged = await stageJournal({ refreshStartedAt: generation, signals, dailyMarks }, { adapter, now });
+  assert.equal(staged.durableWriteSucceeded, true);
+  const published = await publishJournalGeneration({ refreshStartedAt: generation }, { adapter, now });
+  assert.equal(published.durableWriteSucceeded, true);
+}
+
+test('staged rows stay private until their exact snapshot generation is durably published', async () => {
+  const adapter = memoryJournalAdapter();
+  const mark = dailyMark();
+  const staged = await stageJournal({
+    refreshStartedAt: GENERATION,
+    signals: [SIGNAL],
+    dailyMarks: [mark],
+  }, { adapter, now: new Date(GENERATION) });
+  assert.equal(staged.durableWriteSucceeded, true);
+  const beforePublication = await readJournal({
+    since: SIGNAL.observedAt,
+    limit: 200,
+  }, { adapter, now: new Date(GENERATION) });
+  assert.deepEqual(beforePublication.signals, []);
+  assert.deepEqual(beforePublication.dailyMarks, []);
+
+  const published = await publishJournalGeneration({
+    refreshStartedAt: GENERATION,
+  }, { adapter, now: new Date(GENERATION) });
+  assert.deepEqual(published, { durableWriteSucceeded: true, skipped: false, error: null });
+  const afterPublication = await readJournal({
+    since: SIGNAL.observedAt,
+    limit: 200,
+  }, { adapter, now: new Date(GENERATION) });
+  assert.deepEqual(afterPublication.signals, [SIGNAL]);
+  assert.deepEqual(afterPublication.dailyMarks, [mark]);
+});
+
+test('publication marker retry is idempotent for the same generation and exact IDs', async () => {
+  const adapter = memoryJournalAdapter();
+  await stageJournal({
+    refreshStartedAt: GENERATION,
+    signals: [SIGNAL],
+    dailyMarks: [],
+  }, { adapter, now: new Date(GENERATION) });
+  const input = { refreshStartedAt: GENERATION };
+  assert.deepEqual(await publishJournalGeneration(input, { adapter, now: new Date(GENERATION) }), {
+    durableWriteSucceeded: true, skipped: false, error: null,
+  });
+  assert.deepEqual(await publishJournalGeneration(input, { adapter, now: new Date(GENERATION) }), {
+    durableWriteSucceeded: true, skipped: true, error: null,
+  });
+  assert.deepEqual(Object.keys(adapter.inspect(PUBLICATIONS).published), [GENERATION]);
+});
+
 test('journal append returns the exact durable contract and rereads committed rows', async () => {
   const adapter = memoryJournalAdapter();
   const mark = dailyMark();
@@ -78,6 +135,7 @@ test('journal retry preserves the original immutable signal and reference price'
     }],
     dailyMarks: [],
   }, { adapter });
+  await publishRows(adapter, { signals: [SIGNAL] });
   const result = await readJournal({
     since: SIGNAL.observedAt,
     limit: 200,
@@ -138,6 +196,7 @@ test('concurrent journal writers CAS-merge distinct rows in one partition and ma
     appendJournal({ signals: [first], dailyMarks: [] }, { adapter }),
     appendJournal({ signals: [second], dailyMarks: [] }, { adapter }),
   ]);
+  await publishRows(adapter, { signals: [first, second] });
   const history = await readJournal({ since: '2026-08-26T00:00:00.000Z', limit: 200 }, {
     adapter,
     now: new Date('2026-08-27T00:00:00.000Z'),
@@ -290,6 +349,8 @@ test('concurrent same-ID signal and daily mark contention returns a nondurable l
   assert.deepEqual(retry.committedSignals, []);
   assert.deepEqual(retry.committedDailyMarks, []);
 
+  await publishRows(adapter, { signals: [], dailyMarks: [mark] });
+
   const history = await readJournal({ since: '2026-08-26T00:00:00.000Z', limit: 20 }, options);
   assert.deepEqual(history.signals, []);
   assert.deepEqual(history.dailyMarks.map((row) => row.id), [mark.id]);
@@ -333,6 +394,7 @@ test('a concurrent cross-date ID loser returns nondurable, cleans its orphan, an
 
   const laterResult = await appendJournal({ signals: [later], dailyMarks: [] }, options);
   assert.equal(laterResult.durableWriteSucceeded, true);
+  await publishRows(adapter, { signals: [winner, later] });
   const history = await readJournal({ since: winner.observedAt, limit: 20 }, options);
   assert.deepEqual(history.signals.map((row) => row.id), [winner.id, later.id]);
 });
@@ -352,6 +414,13 @@ test('history ignores partition-only rows when the manifest maps only authoritat
     date: '2026-08-26',
     signals: [authoritative, orphan],
     dailyMarks: [],
+  });
+  adapter.seed(PUBLICATIONS, {
+    schemaVersion: 1,
+    staged: {},
+    published: {
+      [GENERATION]: { signalIds: [authoritative.id], dailyMarkIds: [] },
+    },
   });
   const history = await readJournal({ since: '2026-08-26T00:00:00.000Z', limit: 20 }, {
     adapter,
@@ -701,10 +770,7 @@ test('history is inclusive, bounded, exact, and pages equal timestamps by stable
   const adapter = memoryJournalAdapter();
   const first = signalAt('hyperliquid-account-details:a', '2026-08-26T01:00:00.000Z');
   const second = signalAt('hyperliquid-account-details:b', '2026-08-26T01:00:00.000Z');
-  await appendJournal({ signals: [second, first], dailyMarks: [dailyMark()] }, {
-    adapter,
-    now: new Date('2026-08-27T00:00:00.000Z'),
-  });
+  await publishRows(adapter, { signals: [second, first], dailyMarks: [dailyMark()] });
   const options = { adapter, now: new Date('2026-08-27T00:00:00.000Z') };
   const pageOne = await readJournal({ since: first.observedAt, limit: 1 }, options);
   assert.deepEqual(Object.keys(pageOne), [
@@ -747,7 +813,7 @@ test('tracked tickers use retained supported assets and exclude unsupported rese
     paperEligibility: { eligible: false, reason: 'unsupported_asset' },
     referencePrice: null,
   };
-  await appendJournal({ signals: [eth, unsupported], dailyMarks: [] }, { adapter });
+  await publishRows(adapter, { signals: [eth, unsupported], dailyMarks: [] });
   const tickers = await listTrackedTickers({ since: '2026-08-26T00:00:00.000Z' }, {
     adapter,
     now: new Date('2026-08-27T00:00:00.000Z'),

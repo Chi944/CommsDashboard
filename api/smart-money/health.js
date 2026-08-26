@@ -2,15 +2,14 @@ import { buildSmartMoneyHealth } from '../../lib/smart-money/health.js';
 import { ENABLED_SMART_MONEY_ADAPTER_IDS } from '../../lib/smart-money/refresh.js';
 import { SOURCE_RIGHTS, validateRightsMatrix } from '../../lib/smart-money/rights.js';
 import { readSmartMoneySnapshot } from '../../lib/smart-money/store.js';
+import { sanitizeProviderError } from '../../lib/smart-money/errors.js';
 
 function sanitize(value) {
   if (Array.isArray(value)) return value.map(sanitize);
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.entries(value).flatMap(([key, child]) => {
     if (key === 'errorCode') {
-      return child === null || (typeof child === 'string' && /^[a-z0-9][a-z0-9_-]{0,127}$/.test(child))
-        ? [[key, child]]
-        : [];
+      return [[key, child === null ? null : sanitizeProviderError({ code: child })]];
     }
     return /(?:error|secret|token|raw|body)/i.test(key) ? [] : [[key, sanitize(child)]];
   }));
