@@ -239,3 +239,32 @@ test('plural rollup rejects duplicate stable record IDs', async () => {
     }],
   });
 });
+
+test('plural rollup rejects inherited and hidden raw fields while copying clean records', async () => {
+  const valid = normalizeTreasuryDisclosure(fixture('strategy'), ALL_CONFIGS[0], { now: () => new Date(NOW) });
+  const inherited = Object.assign(Object.create({ filingBody: 'inherited filing text' }),
+    normalizeTreasuryDisclosure(fixture('tesla'), ALL_CONFIGS[1], { now: () => new Date(NOW) }));
+  const hidden = normalizeFundDisclosure(fixture('ibit'), ALL_CONFIGS[2], { now: () => new Date(NOW) });
+  Object.defineProperty(hidden, 'filingBody', { value: 'hidden filing text', enumerable: false });
+  const result = await fetchInstitutionalDisclosures(ALL_CONFIGS.slice(0, 3), {
+    fetchOne: async (config) => ({
+      providerId: config.id,
+      records: config.id === 'institutional-strategy' ? [valid]
+        : config.id === 'institutional-tesla' ? [inherited] : [hidden],
+      retrievedAt: NOW,
+    }),
+    now: () => new Date(NOW),
+  });
+  assert.deepEqual(result.statuses.map((row) => [row.id, row.status, row.errorCode]), [
+    ['institutional-strategy', 'live', undefined],
+    ['institutional-tesla', 'unavailable', 'schema_invalid'],
+    ['institutional-ibit', 'unavailable', 'schema_invalid'],
+  ]);
+  assert.notEqual(result.records[0], valid);
+  assert.deepEqual(Object.keys(result.records[0]).sort(), [
+    'btcAmount', 'entityId', 'filedAt', 'freshnessBasis', 'id', 'methodology',
+    'paperEligible', 'providerId', 'reportedValueUsd', 'reportingDate', 'retrievedAt',
+    'sourceAsOf', 'sourceUrl', 'vehicle',
+  ]);
+  assert.equal(Object.hasOwn(result.records[0], 'filingBody'), false);
+});
