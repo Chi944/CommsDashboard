@@ -263,7 +263,7 @@ const AssetNews = ({ asset }) => {
 };
 
 // ---------- Main ----------
-export default function Prices({ initialTicker, onTickerConsumed } = {}) {
+export default function Prices({ initialTicker = null, onTickerChange } = {}) {
   const {
     commodities: rawCommodities, rankingCommodities, dataMode, pricesUpdatedAt, refresh,
     pricesLoading, newsLoading,
@@ -332,12 +332,15 @@ export default function Prices({ initialTicker, onTickerConsumed } = {}) {
     setQuery('');
     setCat('ALL');
     setSelected(initialTicker);
-    onTickerConsumed && onTickerConsumed();
     // Scroll the page to the top so the chart panel is in view
     if (typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  }, [initialTicker, commodities, onTickerConsumed]);
+  }, [initialTicker, commodities]);
+
+  useEffect(() => {
+    if (selected) onTickerChange?.(selected);
+  }, [onTickerChange, selected]);
 
   const toggleCompare = (t) => setCompareSet((p) => {
     const n = new Set(p);
