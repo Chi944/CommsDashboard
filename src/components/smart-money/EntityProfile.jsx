@@ -9,6 +9,13 @@ function safeHttps(value) {
   }
 }
 
+function sourceLabel(value) {
+  const hostname = new URL(value).hostname.toLowerCase().replace(/^www\./, '');
+  return hostname === 'sec.gov' || hostname.endsWith('.sec.gov')
+    ? 'SEC EDGAR'
+    : hostname;
+}
+
 export default function EntityProfile({ entity, activities, signals, onClose }) {
   if (!entity) return null;
   const entityActivities = activities
@@ -29,11 +36,11 @@ export default function EntityProfile({ entity, activities, signals, onClose }) 
         {entity.caveats?.join(' ') || 'Evidence is limited to accepted public sources and does not establish investment performance.'}
       </p>
       <div className="mt-3 flex flex-wrap gap-3">
-        {(entity.officialUrls || []).map((value, index) => {
+        {(entity.officialUrls || []).map((value) => {
           const href = safeHttps(value);
           return href ? (
             <a key={href} href={href} target="_blank" rel="noopener noreferrer" className="text-xs text-cyan-300 hover:underline">
-              {index === 0 ? 'Official site' : 'Public filing source'}
+              {sourceLabel(href)}
             </a>
           ) : null;
         })}

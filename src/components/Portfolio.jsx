@@ -258,6 +258,7 @@ export default function Portfolio({
   return (
     <div className="space-y-5 sm:space-y-6">
       <SegmentedTabs
+        idPrefix="portfolio-view"
         label="Portfolio view"
         value={activeView}
         onChange={(nextView) => onViewChange?.(nextView)}
@@ -266,9 +267,15 @@ export default function Portfolio({
           { id: 'simulation-readiness', label: 'Simulation readiness' },
         ]}
       />
-      {activeView === 'simulation-readiness'
-        ? <SimulationReadiness capability={simulationCapability} />
-        : <HoldingsView onSelectAsset={onSelectAsset} />}
+      <div
+        id={`portfolio-view-panel-${activeView}`}
+        role="tabpanel"
+        aria-labelledby={`portfolio-view-tab-${activeView}`}
+      >
+        {activeView === 'simulation-readiness'
+          ? <SimulationReadiness capability={simulationCapability} />
+          : <HoldingsView onSelectAsset={onSelectAsset} />}
+      </div>
     </div>
   );
 }

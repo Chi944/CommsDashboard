@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 
-export default function SegmentedTabs({ label, value, onChange, tabs }) {
+export default function SegmentedTabs({ idPrefix, label, value, onChange, tabs }) {
   const tabRefs = useRef([]);
   const select = (next) => {
     onChange(tabs[next].id);
@@ -20,9 +20,11 @@ export default function SegmentedTabs({ label, value, onChange, tabs }) {
         return (
           <button
             key={tab.id}
+            id={`${idPrefix}-tab-${tab.id}`}
             type="button"
             role="tab"
             ref={(node) => { tabRefs.current[index] = node; }}
+            aria-controls={`${idPrefix}-panel-${tab.id}`}
             aria-selected={active}
             tabIndex={active ? 0 : -1}
             onClick={() => onChange(tab.id)}
