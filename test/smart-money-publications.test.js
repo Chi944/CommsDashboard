@@ -13,19 +13,16 @@ import { parseFeed } from '../lib/feeds.js';
 const FEED_XML = fs.readFileSync(new URL('./fixtures/smart-money/publications/feed.xml', import.meta.url), 'utf8');
 const ENTRY = parseFeed(FEED_XML, { allowedOrigins: ['https://publisher.example'] })[0];
 
-test('publication normalization persists metadata and dashboard summary but never provider body', () => {
+test('publication normalization refuses link-only sources before accepting caller-controlled metadata', () => {
   const publication = normalizePublicationEntry(ENTRY, {
-    officialPublisher: 'Official Publisher', rightsId: 'metadata-source',
+    officialPublisher: 'Official Publisher', rightsId: 'oaktree-insights',
     allowedOrigins: ['https://publisher.example'], dashboardSummary: 'A dashboard-authored summary.',
     contentHash: 'metadata-hash',
   });
-  assert.deepEqual(publication, {
-    id: publicationStableId({ canonicalUrl: 'https://publisher.example/insights/update', contentHash: 'metadata-hash' }),
-    title: 'Official & Practical Update', canonicalUrl: 'https://publisher.example/insights/update',
-    officialPublisher: 'Official Publisher', publishedAt: '2026-08-26T00:00:00.000Z',
-    metadataHash: 'metadata-hash', dashboardSummary: 'A dashboard-authored summary.',
-  });
-  assert.equal(JSON.stringify(publication).includes('Provider-supplied content'), false);
+  assert.equal(publication, null);
+  assert.equal(normalizePublicationEntry(ENTRY, {
+    officialPublisher: 'Not an SEC publication', rightsId: 'sec-edgar', allowedOrigins: ['https://publisher.example'],
+  }), null);
 });
 
 test('publication stable ID is deterministic over canonical URL and metadata hash', () => {
