@@ -224,6 +224,25 @@ test('SEC snapshot uses bounded transport with an identified user agent and info
   }
 });
 
+test('SEC snapshot rejects Schedule-only metadata without a usable newest 13F', async () => {
+  const scheduleOnly = structuredClone(SUBMISSIONS);
+  for (const field of ['accessionNumber', 'filingDate', 'reportDate', 'form', 'primaryDocument']) {
+    scheduleOnly.filings.recent[field] = [scheduleOnly.filings.recent[field][4]];
+  }
+  let archiveRequests = 0;
+  await assert.rejects(fetchSecSnapshot({
+    cik: '2045724', maxFilings: 1,
+    userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
+  }, {
+    fetchProviderJson: async () => scheduleOnly,
+    fetchProviderText: async () => {
+      archiveRequests += 1;
+      return '';
+    },
+  }), { code: 'schema_invalid' });
+  assert.equal(archiveRequests, 0);
+});
+
 test('SEC archive index accepts official text/html only through bounded JSON parsing', async () => {
   const textCalls = [];
   const snapshot = await fetchSecSnapshot({

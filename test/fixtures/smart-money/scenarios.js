@@ -194,7 +194,14 @@ function secFixtureSnapshot() {
       primaryDocument: 'primary.xml',
     }],
     disclosures: [],
-    holdings: [],
+    holdings: [{
+      accessionNumber: '0002045724-26-000001', periodEnd: '2026-06-30',
+      filedAt: '2026-08-14T00:00:00.000Z', isAmendment: false,
+      amendmentChain: ['0002045724-26-000001'], issuer: 'NVIDIA Corporation',
+      securityClass: 'COM', cusip: '67066G104', ticker: null,
+      reportedValue: 123456, shares: 1000, putCall: null, shareType: 'SH',
+      paperEligible: false,
+    }],
   };
 }
 
