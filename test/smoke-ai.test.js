@@ -12,14 +12,28 @@ const completeAnalysis = {
   outlook: 'Constructive with caution.',
 };
 const completeBriefingText = 'Market tone is balanced.\n\nSentiment is mixed.\n\nWatch the next session. Informational only — not financial advice.';
+const marketEvidence = [
+  {
+    id: 'market:gainer:NVDA', type: 'top_gainer', label: 'NVDA +2.00%',
+    asOf: new Date().toISOString(), source: 'yahoo', sourceUrl: null, causalEligible: false,
+  },
+  {
+    id: 'sentiment:fear-greed', type: 'crypto_fear_greed', label: '27 · Fear',
+    asOf: new Date().toISOString(), source: 'Alternative.me',
+    sourceUrl: 'https://alternative.me/crypto/fear-and-greed-index/', causalEligible: false,
+  },
+];
 const completeBriefing = {
   ok: true,
   briefing: {
     text: completeBriefingText,
-    paragraphs: completeBriefingText.split('\n\n').map((text) => ({
+    evidence: marketEvidence,
+    paragraphs: completeBriefingText.split('\n\n').map((text, index) => ({
+      id: ['market-tone', 'themes-catalysts', 'watchpoints'][index],
       text,
-      marketEvidenceId: 'gainer-1',
-      sentimentEvidenceId: 'sentiment-headlines',
+      evidenceIds: index === 0
+        ? ['market:gainer:NVDA']
+        : ['sentiment:fear-greed'],
     })),
     marketDate: new Date().toISOString().slice(0, 10),
     generatedAt: new Date().toISOString(),
@@ -47,6 +61,57 @@ const completeBriefing = {
   aiStatus: { state: 'ready', source: 'generated' },
 };
 
+const smartMoneyEvidence = [
+  {
+    id: 'snapshot:coverage', type: 'snapshot_coverage',
+    label: 'Accepted snapshot contains public research coverage.',
+    asOf: new Date().toISOString(), source: 'Accepted Smart Money snapshot',
+    sourceUrl: null, causalEligible: false,
+  },
+  {
+    id: 'capability:simulation', type: 'simulation_capability',
+    label: 'Simulation is research-only and transactions are disabled.',
+    asOf: new Date().toISOString(), source: 'Dashboard capability policy',
+    sourceUrl: null, causalEligible: false,
+  },
+];
+const smartMoneyTexts = [
+  'Accepted market and provider observations remain separate.',
+  'No material new investor or firm disclosure was found in the accepted snapshot.',
+  'Simulation remains research-only. Research intelligence only — not financial advice. No transaction was prepared or executed.',
+];
+const completeSmartMoneyBriefing = {
+  schemaVersion: 1,
+  ok: true,
+  briefing: {
+    source: 'generated',
+    marketDate: new Date().toISOString().slice(0, 10),
+    generatedAt: new Date().toISOString(),
+    evidence: smartMoneyEvidence,
+    paragraphs: smartMoneyTexts.map((text, index) => ({
+      id: ['market-regime', 'investor-disclosures', 'crypto-paper-risk'][index],
+      text,
+      evidenceIds: [index === 2 ? 'capability:simulation' : 'snapshot:coverage'],
+    })),
+    text: smartMoneyTexts.join('\n\n'),
+  },
+  aiStatus: { state: 'ready', source: 'generated' },
+};
+const providerIds = [
+  'sec-edgar', 'institutional-strategy', 'institutional-tesla',
+  'institutional-ibit', 'institutional-fbtc', 'institutional-arkb',
+  'institutional-bitb',
+];
+const completeSmartMoneyHealth = {
+  schemaVersion: 1,
+  ok: true,
+  providerStatuses: providerIds.map((id) => ({ id, state: 'fresh' })),
+};
+const DEFAULT_RESPONSES = Object.freeze({
+  '/api/smart-money/briefing': completeSmartMoneyBriefing,
+  '/api/smart-money/health': completeSmartMoneyHealth,
+});
+
 async function withServer(responses, run) {
   const seen = [];
   const server = http.createServer((req, res) => {
@@ -56,8 +121,11 @@ async function withServer(responses, run) {
     });
     const normalizedUrl = new URL(req.url, 'http://smoke.test');
     normalizedUrl.searchParams.delete('aiSmoke');
+    normalizedUrl.searchParams.delete('fallbackSmoke');
     const lookupKey = `${normalizedUrl.pathname}${normalizedUrl.search}`;
-    const body = responses[lookupKey];
+    const body = Object.hasOwn(responses, lookupKey)
+      ? responses[lookupKey]
+      : DEFAULT_RESPONSES[lookupKey];
     if (typeof body === 'function') {
       body(req, res);
       return;
@@ -106,16 +174,48 @@ test('smoke script checks briefing and configured per-asset AI endpoints', async
     const result = await runSmoke(baseUrl);
 
     assert.equal(result.code, 0, result.stderr);
-    assert.equal(seen.length, 2);
-    assert.match(seen[0].url, /^\/api\/briefing\?aiSmoke=[^&]+$/);
-    assert.match(seen[1].url, /^\/api\/analysis\?ticker=NVDA&aiSmoke=[^&]+$/);
-    assert.deepEqual(seen.map(({ smokeSecret }) => smokeSecret), [
-      'smoke-test-secret',
-      'smoke-test-secret',
-    ]);
+    assert.equal(seen.length, 4);
+    assert.equal(seen.some(({ url }) => /^\/api\/briefing\?aiSmoke=[^&]+$/.test(url)), true);
+    assert.equal(seen.some(({ url }) => /^\/api\/analysis\?ticker=NVDA&aiSmoke=[^&]+$/.test(url)), true);
+    assert.equal(seen.some(({ url }) => url === '/api/smart-money/briefing?aiSmoke=1'), true);
+    assert.equal(seen.some(({ url }) => url === '/api/smart-money/health'), true);
+    assert.deepEqual(seen.map(({ smokeSecret }) => smokeSecret), Array(4).fill('smoke-test-secret'));
     assert.doesNotMatch(seen.map(({ url }) => url).join('\n'), /smoke-test-secret/);
-    assert.match(result.stdout, /AI smoke check passed/);
+    assert.match(result.stdout, /AI and Smart Money smoke check passed/);
     assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /smoke-test-secret/);
+  });
+});
+
+test('smoke script fails unless all seven Smart Money providers are fresh', async () => {
+  await withServer({
+    '/api/briefing': completeBriefing,
+    '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+    '/api/smart-money/health': {
+      ...completeSmartMoneyHealth,
+      providerStatuses: completeSmartMoneyHealth.providerStatuses.map((status, index) => (
+        index === 0 ? { ...status, state: 'stale' } : status
+      )),
+    },
+  }, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /all seven.*fresh/i);
+  });
+});
+
+test('smoke script rejects a deterministic Smart Money result during forced generation smoke', async () => {
+  await withServer({
+    '/api/briefing': completeBriefing,
+    '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+    '/api/smart-money/briefing': {
+      ...completeSmartMoneyBriefing,
+      briefing: { ...completeSmartMoneyBriefing.briefing, source: 'deterministic' },
+      aiStatus: { state: 'degraded' },
+    },
+  }, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /smart-money\/briefing source was not generated/i);
   });
 });
 
