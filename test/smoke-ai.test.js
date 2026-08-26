@@ -22,6 +22,11 @@ const marketEvidence = [
     asOf: new Date().toISOString(), source: 'Alternative.me',
     sourceUrl: 'https://alternative.me/crypto/fear-and-greed-index/', causalEligible: false,
   },
+  {
+    id: 'input:coverage', type: 'input_coverage', label: 'Accepted daily input coverage.',
+    asOf: new Date().toISOString(), source: 'Dashboard input status',
+    sourceUrl: null, causalEligible: false,
+  },
 ];
 const completeBriefing = {
   ok: true,
@@ -33,7 +38,7 @@ const completeBriefing = {
       text,
       evidenceIds: index === 0
         ? ['market:gainer:NVDA']
-        : ['sentiment:fear-greed'],
+        : (index === 1 ? ['sentiment:fear-greed'] : ['input:coverage']),
     })),
     marketDate: new Date().toISOString().slice(0, 10),
     generatedAt: new Date().toISOString(),
@@ -362,6 +367,35 @@ test('smoke script rejects generic prose without per-paragraph market and sentim
 
     assert.equal(result.code, 1);
     assert.match(result.stderr, /paragraph.*evidence/i);
+  });
+});
+
+test('smoke script rejects market evidence assigned to the wrong paragraph', async () => {
+  const briefing = structuredClone(completeBriefing);
+  briefing.briefing.paragraphs[1].evidenceIds = ['market:gainer:NVDA'];
+  await withServer({
+    '/api/briefing': briefing,
+    '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+  }, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /evidence.*wrong paragraph/i);
+  });
+});
+
+test('smoke script rejects Smart Money briefing without the research-only capability evidence', async () => {
+  const briefing = structuredClone(completeSmartMoneyBriefing);
+  briefing.briefing.paragraphs[2].evidenceIds = ['snapshot:coverage'];
+  await withServer({
+    '/api/briefing': completeBriefing,
+    '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+    '/api/smart-money/briefing': briefing,
+  }, async (baseUrl) => {
+    const result = await runSmoke(baseUrl);
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /smart-money.*evidence.*wrong paragraph/i);
   });
 });
 

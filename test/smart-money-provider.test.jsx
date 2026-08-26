@@ -104,19 +104,22 @@ it('does not let a slower earlier snapshot response overwrite a newer refresh', 
   expect(screen.getByTestId('entity-count')).toHaveTextContent('2');
 });
 
-it('retains the accepted briefing when a later briefing response is malformed', async () => {
+it('retains the accepted briefing when a later briefing has wrong Smart Money paragraph IDs', async () => {
   const user = userEvent.setup();
   let calls = 0;
   globalThis.fetch = routeFetch({
     briefing: () => {
       calls += 1;
-      return jsonResponse(calls === 1
-        ? SMART_MONEY_BRIEFING_RESPONSE
-        : { ok: true, briefing: null });
+      if (calls === 1) return jsonResponse(SMART_MONEY_BRIEFING_RESPONSE);
+      const malformed = structuredClone(SMART_MONEY_BRIEFING_RESPONSE);
+      malformed.briefing.paragraphs[0].id = 'untrusted-section';
+      return jsonResponse(malformed);
     },
   });
   render(<SmartMoneyProvider><SmartMoneyProbe /></SmartMoneyProvider>);
   await waitFor(() => expect(screen.getByTestId('briefing-date')).toHaveTextContent('2026-08-27'));
+  expect(screen.getByTestId('briefing-first-id')).toHaveTextContent('market-regime');
   await user.click(screen.getByRole('button', { name: /refresh smart money briefing/i }));
   expect(screen.getByTestId('briefing-date')).toHaveTextContent('2026-08-27');
+  expect(screen.getByTestId('briefing-first-id')).toHaveTextContent('market-regime');
 });
