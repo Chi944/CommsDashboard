@@ -237,6 +237,7 @@ test('fixed institutional SEC profiles extract exact inline-XBRL facts and norma
     const result = parseSecInstitutionalDisclosureDocument(
       institutionalInlineXbrl(providerId),
       providerId,
+      { reportDate: '2026-06-30' },
     );
     assert.deepEqual(result, { btcAmount, reportedValueUsd });
   }
@@ -244,6 +245,7 @@ test('fixed institutional SEC profiles extract exact inline-XBRL facts and norma
     parseSecInstitutionalDisclosureDocument(
       institutionalInlineXbrl('institutional-ibit', { duplicateQuantity: '734,261' }),
       'institutional-ibit',
+      { reportDate: '2026-06-30' },
     ),
     { btcAmount: 734_261, reportedValueUsd: 43_395_920_710 },
   );
@@ -257,7 +259,7 @@ test('institutional SEC profiles reject missing, conflicting, nil, negative, and
     institutionalInlineXbrl('institutional-ibit', { quantity: '-734,261' }),
     institutionalInlineXbrl('institutional-ibit', { reportDate: '2026-03-31' }),
     institutionalInlineXbrl('institutional-ibit', {
-      dimension: 'us-gaap:InvestmentIdentifierAxis', member: 'fake:OtherInvestmentMember',
+      dimension: { kind: 'explicit', axis: 'us-gaap:InvestmentIdentifierAxis', value: 'fake:OtherInvestmentMember' },
     }),
   ]) {
     assert.throws(
@@ -274,6 +276,49 @@ test('institutional SEC profiles reject missing, conflicting, nil, negative, and
     ),
     { code: 'configuration_missing' },
   );
+});
+
+test('institutional profiles ignore comparison periods and wrong-dimension target facts after exact context selection', () => {
+  assert.deepEqual(parseSecInstitutionalDisclosureDocument(
+    institutionalInlineXbrl('institutional-strategy', { comparisonQuantity: '1' }),
+    'institutional-strategy',
+    { reportDate: '2026-06-30' },
+  ), { btcAmount: 846_000, reportedValueUsd: 49_672_080_000 });
+  assert.deepEqual(parseSecInstitutionalDisclosureDocument(
+    institutionalInlineXbrl('institutional-fbtc'),
+    'institutional-fbtc',
+    { reportDate: '2026-06-30' },
+  ), { btcAmount: 174_383, reportedValueUsd: 10_306_297_000 });
+  assert.deepEqual(parseSecInstitutionalDisclosureDocument(
+    institutionalInlineXbrl('institutional-bitb'),
+    'institutional-bitb',
+    { reportDate: '2026-06-30' },
+  ), { btcAmount: 36_207.6919, reportedValueUsd: 2_125_990_000 });
+});
+
+test('institutional profiles accept identical exact-target duplicates but reject ambiguous target candidates', () => {
+  assert.deepEqual(parseSecInstitutionalDisclosureDocument(
+    institutionalInlineXbrl('institutional-ibit', { duplicateQuantity: '734,261' }),
+    'institutional-ibit',
+    { reportDate: '2026-06-30' },
+  ), { btcAmount: 734_261, reportedValueUsd: 43_395_920_710 });
+  assert.throws(() => parseSecInstitutionalDisclosureDocument(
+    institutionalInlineXbrl('institutional-ibit', { ambiguousTargetQuantity: '734,262' }),
+    'institutional-ibit',
+    { reportDate: '2026-06-30' },
+  ), { code: 'schema_invalid' });
+});
+
+test('institutional excerpts retain exact official SEC archive attribution', () => {
+  for (const providerId of [
+    'institutional-strategy', 'institutional-tesla', 'institutional-ibit',
+    'institutional-fbtc', 'institutional-arkb', 'institutional-bitb',
+  ]) {
+    const filing = institutionalFiling(providerId);
+    assert.match(institutionalInlineXbrl(providerId), new RegExp(
+      `https://www\\.sec\\.gov/Archives/edgar/data/${filing.cik}/${filing.accessionNumber.replace(/-/g, '')}/${filing.primaryDocument.replace('.', '\\.')}`,
+    ));
+  }
 });
 
 test('institutional raw fetch binds adapter and CIK to submissions and one archive primary document', async () => {
@@ -315,6 +360,63 @@ test('institutional raw fetch binds adapter and CIK to submissions and one archi
   assert.equal(jsonCalls[0].options.providerId, 'institutional-ibit');
   assert.equal(textCalls[0].options.providerId, 'institutional-ibit');
   assert.equal(textCalls[0].options.maxBytes, 5_000_000);
+  assert.deepEqual(textCalls[0].options.acceptedContentTypes, ['text/html', 'application/xhtml+xml']);
+  assert.equal(textCalls[0].options.requestOptions.headers.Accept, 'text/html, application/xhtml+xml');
+});
+
+test('institutional archive uses the real bounded transport for official HTML responses', async () => {
+  const filing = institutionalFiling('institutional-ibit');
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return new Response(institutionalInlineXbrl('institutional-ibit'), {
+      status: 200,
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    });
+  };
+  try {
+    const raw = await fetchSecInstitutionalDisclosure({
+      providerId: 'institutional-ibit', cik: filing.cik,
+      userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
+    }, {
+      scheduler: { schedule: (task) => task() },
+      fetchProviderJson: async () => ({
+        cik: filing.cik,
+        filings: { recent: {
+          accessionNumber: [filing.accessionNumber], filingDate: [filing.filingDate],
+          reportDate: [filing.reportDate], form: ['10-Q'], primaryDocument: [filing.primaryDocument],
+        } },
+      }),
+    });
+    assert.equal(raw.btcAmount, 734_261);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].options.headers.Accept, 'text/html, application/xhtml+xml');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('institutional filing selection fails closed when the newest applicable tuple is malformed', async () => {
+  const filing = institutionalFiling('institutional-ibit');
+  let archiveCalls = 0;
+  await assert.rejects(fetchSecInstitutionalDisclosure({
+    providerId: 'institutional-ibit', cik: filing.cik,
+    userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
+  }, {
+    fetchProviderJson: async () => ({
+      cik: filing.cik,
+      filings: { recent: {
+        accessionNumber: ['malformed-newest', filing.accessionNumber],
+        filingDate: ['2026-08-20', filing.filingDate],
+        reportDate: ['2026-09-30', filing.reportDate],
+        form: ['10-Q', '10-Q'],
+        primaryDocument: ['latest.txt', filing.primaryDocument],
+      } },
+    }),
+    fetchProviderText: async () => { archiveCalls += 1; return institutionalInlineXbrl('institutional-ibit'); },
+  }), { code: 'schema_invalid' });
+  assert.equal(archiveCalls, 0);
 });
 
 test('institutional raw fetch accepts filing-agent accession prefixes but binds the registrant archive directory', async () => {

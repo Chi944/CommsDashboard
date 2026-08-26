@@ -1,3 +1,5 @@
+import { buildSmartMoneyPrivateSnapshot } from '../../../lib/smart-money/refresh.js';
+
 const FIRST_OBSERVED_AT = '2026-08-26T10:00:00.000Z';
 const SECOND_OBSERVED_AT = '2026-08-26T11:00:00.000Z';
 
@@ -183,6 +185,19 @@ function institutionalFixtureRecord(suffix) {
   };
 }
 
+function secFixtureSnapshot() {
+  return {
+    filings: [{
+      cik: '2045724', form: '13F-HR', accessionNumber: '0002045724-26-000001',
+      periodEnd: '2026-06-30', filedAt: '2026-08-14T00:00:00.000Z',
+      isAmendment: false, amendmentChain: ['0002045724-26-000001'],
+      primaryDocument: 'primary.xml',
+    }],
+    disclosures: [],
+    holdings: [],
+  };
+}
+
 export const DEPS_WITH_ONE_TIMEOUT = Object.freeze({
   adapters: Object.freeze(Object.keys(INSTITUTIONAL_FIXTURES).map((suffix) => Object.freeze({
     id: `institutional-${suffix}`,
@@ -232,7 +247,7 @@ function rightsIdFor(id) {
   return id === 'sec-edgar' ? id : `${id.slice('institutional-'.length)}-disclosures`;
 }
 
-function fixtureStatus(id, status = 'live') {
+function fixtureStatus(id, status = 'live', recordCount = 1) {
   return {
     id,
     group: id === 'sec-edgar' ? 'sec' : 'institutional',
@@ -243,7 +258,7 @@ function fixtureStatus(id, status = 'live') {
     sourceAsOf: null,
     retrievedAt: SECOND_OBSERVED_AT,
     freshnessBasis: 'retrieval_time',
-    recordCount: 1,
+    recordCount,
     cacheAgeSeconds: 0,
     errorCode: status === 'unavailable' ? 'timeout' : null,
   };
@@ -285,6 +300,7 @@ export function createRefreshDeps(overrides = {}) {
     events: [],
     fetchByAdapter: Object.fromEntries(ENABLED_ADAPTER_IDS.map((id) => [id, 0])),
     appendJournal: 0,
+    publishJournal: 0,
     writeSnapshot: 0,
   };
   const captured = {
@@ -296,23 +312,27 @@ export function createRefreshDeps(overrides = {}) {
     retainedSince: null,
     writtenSnapshot: null,
     journalInput: null,
+    publicationInput: null,
   };
   const now = new Date(overrides.now ?? '2026-08-28T12:00:00.000Z');
   const dueIds = new Set(overrides.dueIds ?? ENABLED_ADAPTER_IDS);
   const timeoutId = overrides.timeoutId ?? null;
-  const previous = overrides.previous ?? {
-    schemaVersion: 1,
-    refreshStartedAt: '2026-08-26T10:59:00.000Z',
-    publicSnapshot: structuredClone(ACCEPTED_SNAPSHOT),
-    adapterState: canonicalAdapterState({
+  const previousState = canonicalAdapterState({
       sources: Object.fromEntries(ENABLED_ADAPTER_IDS.map((id) => [id,
         id === 'sec-edgar'
-          ? { kind: 'sec', snapshot: { filings: [], disclosures: [], holdings: [] } }
+          ? { kind: 'sec', snapshot: secFixtureSnapshot() }
           : { kind: 'institutional', records: [institutionalFixtureRecord(id.slice('institutional-'.length))] },
       ])),
       statuses: Object.fromEntries(ENABLED_ADAPTER_IDS.map((id) => [id, fixtureStatus(id)])),
-    }),
-  };
+    });
+  const previous = overrides.previous ?? buildSmartMoneyPrivateSnapshot({
+    refreshStartedAt: '2026-08-26T10:59:00.000Z',
+    publicSnapshot: {
+      ...structuredClone(ACCEPTED_SNAPSHOT),
+      providerStatuses: previousState.adapters.map((row) => structuredClone(row.status)),
+    },
+    adapterState: previousState,
+  }, { now: new Date('2026-08-26T11:00:00.000Z') });
   const adapters = ENABLED_ADAPTER_IDS.map((id) => ({
     id,
     rightsId: rightsIdFor(id),
@@ -330,7 +350,12 @@ export function createRefreshDeps(overrides = {}) {
     performances: structuredClone(ACCEPTED_SNAPSHOT.performances),
     providerStatuses: ENABLED_ADAPTER_IDS.map((id) => fixtureStatus(id, id === timeoutId ? 'unavailable' : 'live')),
     changes: [],
-    adapterState: canonicalAdapterState(),
+    adapterState: canonicalAdapterState({
+      sources: Object.fromEntries(previousState.adapters.map((row) => [row.id, structuredClone(row.source)])),
+      statuses: Object.fromEntries(ENABLED_ADAPTER_IDS.map((id) => [
+        id, fixtureStatus(id, id === timeoutId ? 'unavailable' : 'live'),
+      ])),
+    }),
     warnings: timeoutId ? [`${timeoutId}:timeout`] : [],
     sourceLinks: [],
     partial: Boolean(timeoutId),
@@ -402,6 +427,16 @@ export function createRefreshDeps(overrides = {}) {
         committedDailyMarks: overrides.journalDurable === false ? [] : structuredClone(input.dailyMarks),
       };
     },
+    async publishJournalGeneration(input) {
+      calls.events.push('publication');
+      calls.publishJournal += 1;
+      captured.publicationInput = structuredClone(input);
+      return {
+        durableWriteSucceeded: overrides.publicationDurable !== false,
+        skipped: false,
+        error: overrides.publicationDurable === false ? 'publication_write_failed' : null,
+      };
+    },
     buildSnapshot({ normalized: current, committedSignals: acceptedSignals, now: publicationNow = now }) {
       calls.events.push('buildSnapshot');
       captured.snapshotSignals = structuredClone(acceptedSignals);
@@ -410,6 +445,7 @@ export function createRefreshDeps(overrides = {}) {
         ...structuredClone(ACCEPTED_SNAPSHOT),
         fetchedAt: publicationNow.toISOString(),
         partial: current.partial,
+        providerStatuses: structuredClone(current.providerStatuses),
         activities: structuredClone(ACCEPTED_SNAPSHOT.activities).map((activity) => {
           const signal = signalByActivity.get(activity.id);
           return signal ? {
@@ -430,7 +466,7 @@ export function createRefreshDeps(overrides = {}) {
       calls.events.push('snapshot');
       calls.writeSnapshot += 1;
       captured.writtenSnapshot = structuredClone(snapshot);
-      return {
+      return overrides.snapshotWriteResult ?? {
         snapshot: overrides.snapshotDurable === false ? null : snapshot,
         durableWriteSucceeded: overrides.snapshotDurable !== false,
       };

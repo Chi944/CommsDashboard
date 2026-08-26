@@ -3,8 +3,11 @@ import test from 'node:test';
 
 import {
   buildSecHoldingChanges,
+  buildSmartMoneyPrivateSnapshot,
   createProductionSmartMoneyDependencies,
   createSmartMoneyRefresher,
+  normalizeSmartMoneySettledState,
+  validateSmartMoneyPrivateSnapshot,
 } from '../lib/smart-money/refresh.js';
 import {
   ACCEPTED_SNAPSHOT,
@@ -12,6 +15,14 @@ import {
   ENABLED_ADAPTER_IDS,
   createRefreshDeps,
 } from './fixtures/smart-money/scenarios.js';
+
+function rebindPrivateSnapshot(snapshot) {
+  Object.assign(snapshot, buildSmartMoneyPrivateSnapshot({
+    refreshStartedAt: snapshot.refreshStartedAt,
+    publicSnapshot: snapshot.publicSnapshot,
+    adapterState: snapshot.adapterState,
+  }, { now: new Date('2026-08-28T12:00:00.000Z') }));
+}
 
 test('refresh runs only the exact seven currently enabled adapters', async () => {
   const { deps, calls } = createRefreshDeps({ signals: [] });
@@ -42,12 +53,46 @@ test('one due adapter failure preserves its LKG context but creates no new signa
   assert.equal(result.persisted, true);
 });
 
+test('fulfilled empty or malformed children preserve only their own LKG while successful siblings continue', () => {
+  const { previous, deps } = createRefreshDeps({ signals: [] });
+  const strategyPrior = previous.adapterState.adapters.find((row) => row.id === 'institutional-strategy');
+  const teslaPrior = previous.adapterState.adapters.find((row) => row.id === 'institutional-tesla');
+  const strategyRecord = structuredClone(strategyPrior.source.records[0]);
+  const result = normalizeSmartMoneySettledState({
+    adapters: deps.adapters,
+    dueAdapters: deps.adapters.filter((adapter) => [
+      'institutional-strategy', 'institutional-tesla', 'institutional-ibit',
+    ].includes(adapter.id)),
+    settled: [
+      { adapter: deps.adapters[1], result: { status: 'fulfilled', value: { providerId: 'institutional-strategy', records: [strategyRecord], retrievedAt: strategyRecord.retrievedAt } } },
+      { adapter: deps.adapters[2], result: { status: 'fulfilled', value: { providerId: 'institutional-tesla', records: [], retrievedAt: '2026-08-28T12:00:00.000Z' } } },
+      { adapter: deps.adapters[3], result: { status: 'fulfilled', value: { providerId: 'institutional-ibit', records: [{}], retrievedAt: '2026-08-28T12:00:00.000Z' } } },
+    ],
+    previous,
+    now: new Date('2026-08-28T12:00:00.000Z'),
+  });
+  assert.deepEqual(result.adapterState.adapters[1].source, strategyPrior.source);
+  assert.equal(result.providerStatuses[1].status, 'live');
+  assert.equal(result.providerStatuses[1].sourceAsOf, '2026-06-30T00:00:00.000Z');
+  assert.equal(result.providerStatuses[1].freshnessBasis, 'retrieval_time');
+  assert.deepEqual(result.adapterState.adapters[2].source, teslaPrior.source);
+  assert.equal(result.providerStatuses[2].status, 'unavailable');
+  assert.equal(result.providerStatuses[2].errorCode, 'empty_dataset');
+  assert.deepEqual(
+    result.adapterState.adapters[3].source,
+    previous.adapterState.adapters[3].source,
+  );
+  assert.equal(result.providerStatuses[3].status, 'unavailable');
+  assert.equal(result.changes.length, 0);
+});
+
 test('a partial refresh preserves valid signals derived from successful settled siblings', async () => {
   const { deps, previous, captured } = createRefreshDeps({
     timeoutId: 'institutional-fbtc',
     echoJournalSignals: true,
   });
   previous.adapterState.pendingConfirmations = [structuredClone(ACCEPTED_PENDING_CONFIRMATION)];
+  rebindPrivateSnapshot(previous);
   const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
   assert.equal(result.partial, true);
   assert.deepEqual(captured.journalInput.signals, [ACCEPTED_SNAPSHOT.signals[0]]);
@@ -100,6 +145,7 @@ test('all due adapters settle synchronous failures without erasing successful si
 test('deriveSignals receives changes, accepted pending confirmations, and the trusted nowMs', async () => {
   const { deps, captured, previous } = createRefreshDeps({ signals: [] });
   previous.adapterState.pendingConfirmations = [structuredClone(ACCEPTED_PENDING_CONFIRMATION)];
+  rebindPrivateSnapshot(previous);
   await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
   assert.deepEqual(captured.deriveInput.changes, []);
   assert.deepEqual(captured.deriveInput.pendingConfirmations, [ACCEPTED_PENDING_CONFIRMATION]);
@@ -264,6 +310,36 @@ test('snapshot nondurability leaves the journal row but accepts no signal', asyn
   assert.equal(result.errorCode, 'snapshot_persistence_failed');
   assert.equal(calls.appendJournal, 1);
   assert.equal(calls.writeSnapshot, 1);
+  assert.equal(calls.publishJournal, 0);
+});
+
+test('a superseded snapshot generation publishes none of its staged rows', async () => {
+  const { deps, calls } = createRefreshDeps({
+    snapshotWriteResult: {
+      snapshot: null,
+      durableWriteSucceeded: false,
+      supersededWrites: 2,
+    },
+  });
+  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+  assert.equal(result.persisted, false);
+  assert.deepEqual(result.signalsAccepted, []);
+  assert.equal(result.errorCode, 'snapshot_persistence_failed');
+  assert.equal(calls.appendJournal, 1);
+  assert.equal(calls.writeSnapshot, 1);
+  assert.equal(calls.publishJournal, 0);
+});
+
+test('accepted snapshot generation publishes after snapshot durability and marker failure stays nondurable', async () => {
+  const { deps, calls, captured } = createRefreshDeps({ publicationDurable: false });
+  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+  assert.equal(result.persisted, false);
+  assert.equal(result.errorCode, 'journal_publication_failed');
+  assert.deepEqual(result.signalsAccepted, []);
+  assert.deepEqual(captured.publicationInput, {
+    refreshStartedAt: '2026-08-28T12:00:00.000Z',
+  });
+  assert.ok(calls.events.indexOf('snapshot') < calls.events.indexOf('publication'));
 });
 
 test('snapshot publication uses only journal committedSignals', async () => {
@@ -285,13 +361,43 @@ test('durable storage receives the exact private wrapper and never mixes private
   const { deps, captured } = createRefreshDeps();
   await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
   assert.deepEqual(Object.keys(captured.writtenSnapshot), [
-    'schemaVersion', 'refreshStartedAt', 'publicSnapshot', 'adapterState',
+    'schemaVersion', 'refreshStartedAt', 'publicSnapshot', 'adapterState', 'stateDigest',
   ]);
   assert.equal(captured.writtenSnapshot.schemaVersion, 1);
   assert.equal(captured.writtenSnapshot.refreshStartedAt, '2026-08-28T12:00:00.000Z');
   assert.equal(Object.hasOwn(captured.writtenSnapshot.publicSnapshot, 'adapterState'), false);
   assert.equal(Object.hasOwn(captured.writtenSnapshot.publicSnapshot, 'refreshStartedAt'), false);
   assert.deepEqual(captured.writtenSnapshot.publicSnapshot.signals, captured.snapshotSignals);
+});
+
+test('private envelope digest rejects swapped child statuses and public/private count mismatches', () => {
+  const { previous } = createRefreshDeps({ signals: [] });
+  const swapped = structuredClone(previous);
+  [swapped.adapterState.adapters[1].status, swapped.adapterState.adapters[2].status] = [
+    swapped.adapterState.adapters[2].status,
+    swapped.adapterState.adapters[1].status,
+  ];
+  assert.throws(
+    () => validateSmartMoneyPrivateSnapshot(swapped, { now: new Date('2026-08-28T12:00:00.000Z') }),
+    /snapshot_invalid|schema_invalid/,
+  );
+  const countMismatch = structuredClone(previous);
+  countMismatch.publicSnapshot.providerStatuses[1].recordCount = 0;
+  assert.throws(
+    () => validateSmartMoneyPrivateSnapshot(countMismatch, { now: new Date('2026-08-28T12:00:00.000Z') }),
+    /snapshot_invalid|schema_invalid/,
+  );
+  assert.match(previous.stateDigest, /^sha256:[a-f0-9]{64}$/);
+});
+
+test('private envelope constructor computes its digest internally and rejects caller digest input', () => {
+  const { previous } = createRefreshDeps({ signals: [] });
+  assert.throws(() => buildSmartMoneyPrivateSnapshot({
+    refreshStartedAt: previous.refreshStartedAt,
+    publicSnapshot: previous.publicSnapshot,
+    adapterState: previous.adapterState,
+    stateDigest: 'sha256:caller-controlled',
+  }, { now: new Date('2026-08-28T12:00:00.000Z') }), /schema_invalid/);
 });
 
 test('a private wrapper round-trips as the next accepted previous state', async () => {
@@ -331,12 +437,12 @@ test('refresh transaction follows the exact durable publication order', async ()
   await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
   const phases = calls.events.filter((event) => [
     'rights', 'readSnapshot', 'normalize', 'derive', 'trackedTickers', 'dailyMarks',
-    'journal', 'buildSnapshot', 'snapshot',
+    'journal', 'buildSnapshot', 'snapshot', 'publication',
   ].includes(event) || event.startsWith('price:'));
   assert.deepEqual(phases, [
     'rights', 'readSnapshot', 'normalize', 'derive',
     `price:${ACCEPTED_SNAPSHOT.signals[0].id}`,
-    'trackedTickers', 'dailyMarks', 'journal', 'buildSnapshot', 'snapshot',
+    'trackedTickers', 'dailyMarks', 'journal', 'buildSnapshot', 'snapshot', 'publication',
   ]);
 });
 

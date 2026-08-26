@@ -6,13 +6,14 @@ import { createSmartMoneyHealthHandler } from '../api/smart-money/health.js';
 import { createSmartMoneyHistoryHandler } from '../api/smart-money/history.js';
 import { createSmartMoneyRefreshHandler } from '../api/smart-money/refresh.js';
 import { buildSmartMoneyHealth } from '../lib/smart-money/health.js';
+import { buildSmartMoneyPrivateSnapshot } from '../lib/smart-money/refresh.js';
 import { SOURCE_RIGHTS } from '../lib/smart-money/rights.js';
 import { mockRequest } from './helpers/api.js';
 import {
   ACCEPTED_HISTORY,
   ACCEPTED_SNAPSHOT,
   ENABLED_ADAPTER_IDS,
-  canonicalAdapterState,
+  createRefreshDeps,
 } from './fixtures/smart-money/scenarios.js';
 
 const PUBLIC_SNAPSHOT_FIELDS = [
@@ -21,12 +22,18 @@ const PUBLIC_SNAPSHOT_FIELDS = [
 ];
 
 function acceptedStoredSnapshot() {
-  return {
-    schemaVersion: 1,
-    refreshStartedAt: '2026-08-26T10:59:00.000Z',
-    publicSnapshot: structuredClone(ACCEPTED_SNAPSHOT),
-    adapterState: canonicalAdapterState(),
-  };
+  return structuredClone(createRefreshDeps({ signals: [] }).previous);
+}
+
+function storedWithStatuses(statuses) {
+  const stored = acceptedStoredSnapshot();
+  stored.publicSnapshot.providerStatuses = structuredClone(statuses);
+  stored.adapterState.adapters.forEach((row, index) => { row.status = structuredClone(statuses[index]); });
+  return buildSmartMoneyPrivateSnapshot({
+    refreshStartedAt: stored.refreshStartedAt,
+    publicSnapshot: stored.publicSnapshot,
+    adapterState: stored.adapterState,
+  }, { now: new Date('2026-08-28T12:00:00.000Z') });
 }
 
 function enabledStatuses() {
@@ -40,7 +47,7 @@ function enabledStatuses() {
     sourceAsOf: null,
     retrievedAt: '2026-08-26T11:00:00.000Z',
     freshnessBasis: 'retrieval_time',
-    recordCount: index === 3 ? 0 : 1,
+    recordCount: 1,
     cacheAgeSeconds: 0,
     errorCode: index === 3 ? 'timeout' : null,
   }));
@@ -169,6 +176,7 @@ test('history enforces required canonical since, limit 1-500, 400 days, and stri
     '/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&secret=x',
     '/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&limit=2',
     '/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&cursor=not-opaque',
+    `/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&cursor=${Buffer.from(JSON.stringify({ observedAt: '2026-08-26T11:00:00.000Z', id: 'bad\u0000id' })).toString('base64url')}`,
   ];
   for (const path of invalid) {
     const { req, res } = mockRequest(path);
@@ -219,7 +227,7 @@ test('protected refresh rejects missing server configuration without invoking ma
   assert.equal(refreshes, 0);
 });
 
-test('protected refresh permits authenticated GET and POST and fails other methods closed', async () => {
+test('protected refresh permits only authenticated GET and advertises only GET', async () => {
   let refreshes = 0;
   const handler = createSmartMoneyRefreshHandler({
     cronSecret: 'secret',
@@ -228,17 +236,16 @@ test('protected refresh permits authenticated GET and POST and fails other metho
       return { persisted: true, signalsAccepted: [], providerStatuses: [], warnings: [], errorCode: null };
     },
   });
-  for (const method of ['GET', 'POST']) {
-    const { req, res } = mockRequest('/api/smart-money/refresh', { method, authorization: 'Bearer secret' });
-    await handler(req, res);
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.body.ok, true);
+  const accepted = mockRequest('/api/smart-money/refresh', { method: 'GET', authorization: 'Bearer secret' });
+  await handler(accepted.req, accepted.res);
+  assert.equal(accepted.res.statusCode, 200);
+  for (const method of ['POST', 'PUT']) {
+    const rejected = mockRequest('/api/smart-money/refresh', { method, authorization: 'Bearer secret' });
+    await handler(rejected.req, rejected.res);
+    assert.equal(rejected.res.statusCode, 405);
+    assert.equal(rejected.res.headers.Allow, 'GET');
   }
-  const { req, res } = mockRequest('/api/smart-money/refresh', { method: 'PUT', authorization: 'Bearer secret' });
-  await handler(req, res);
-  assert.equal(res.statusCode, 405);
-  assert.equal(res.headers.Allow, 'GET, POST');
-  assert.equal(refreshes, 2);
+  assert.equal(refreshes, 1);
 });
 
 test('protected refresh returns 503 for either journal or snapshot nondurability', async () => {
@@ -273,13 +280,7 @@ test('protected refresh sanitizes thrown failures', async () => {
 });
 
 test('health exposes exact enabled children, deterministic rollups, deployment, rights, and configuration', () => {
-  const snapshot = {
-    ...acceptedStoredSnapshot(),
-    publicSnapshot: {
-      ...acceptedStoredSnapshot().publicSnapshot,
-      providerStatuses: enabledStatuses(),
-    },
-  };
+  const snapshot = storedWithStatuses(enabledStatuses());
   const health = buildSmartMoneyHealth({
     snapshot,
     adapters: ENABLED_ADAPTER_IDS.map((id) => ({ id })),
@@ -301,6 +302,10 @@ test('health exposes exact enabled children, deterministic rollups, deployment, 
   assert.equal(health.configuration.rights, 'configured');
   assert.equal(health.configuration.storage, 'ready');
   assert.deepEqual(health.providerStatuses.map((row) => row.id), ENABLED_ADAPTER_IDS);
+  assert.ok(health.providerStatuses.every((row) => row.enabled === true));
+  assert.ok(health.providerStatuses.every((row) => row.retrievedAt === '2026-08-26T11:00:00.000Z'));
+  assert.ok(health.providerStatuses.every((row) => row.freshnessBasis === 'retrieval_time'));
+  assert.ok(health.providerStatuses.every((row) => Number.isInteger(row.cacheAgeSeconds)));
   assert.deepEqual(health.providerStatuses.map((row) => row.state), [
     'fresh', 'fresh', 'fresh', 'unavailable', 'fresh', 'fresh', 'fresh',
   ]);
@@ -340,8 +345,16 @@ test('health recomputes stored live children as stale against the wall clock', (
     recordCount: 1,
     errorCode: null,
   }));
+  stored.adapterState.adapters.forEach((row, index) => {
+    row.status = structuredClone(stored.publicSnapshot.providerStatuses[index]);
+  });
+  const rebound = buildSmartMoneyPrivateSnapshot({
+    refreshStartedAt: stored.refreshStartedAt,
+    publicSnapshot: stored.publicSnapshot,
+    adapterState: stored.adapterState,
+  }, { now: new Date('2026-08-28T12:00:00.000Z') });
   const health = buildSmartMoneyHealth({
-    snapshot: stored,
+    snapshot: rebound,
     adapters: ENABLED_ADAPTER_IDS.map((id) => ({ id })),
     rights: SOURCE_RIGHTS,
     rightsValid: true,
@@ -405,6 +418,21 @@ test('health route preserves allowlisted provider error codes but strips raw err
   assert.equal(res.body.providerStatuses[0].errorCode, 'timeout');
   assert.equal(Object.hasOwn(res.body.providerStatuses[0], 'errorDetail'), false);
   assert.equal(JSON.stringify(res.body).includes('raw-secret'), false);
+});
+
+test('health maps unknown internal provider error codes to one fixed safe code', async () => {
+  const handler = createSmartMoneyHealthHandler({
+    readSnapshot: async () => ({ snapshot: null, diagnostics: {} }),
+    buildHealth: () => ({
+      ok: false,
+      providerStatuses: [{ id: 'sec-edgar', errorCode: 'database_password_leaked' }],
+    }),
+  });
+  const { req, res } = mockRequest('/api/smart-money/health');
+  await handler(req, res);
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.providerStatuses[0].errorCode, 'provider_unavailable');
+  assert.equal(JSON.stringify(res.body).includes('database_password_leaked'), false);
 });
 
 test('health keeps exact seven canonical children when the rights review is expired', async () => {
