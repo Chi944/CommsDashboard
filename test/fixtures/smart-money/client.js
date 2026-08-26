@@ -66,11 +66,11 @@ export const SMART_MONEY_BRIEFING_RESPONSE = Object.freeze({
     generatedAt: '2026-08-27T00:05:00.000Z',
     source: 'deterministic',
     paragraphs: [
-      { id: 'disclosures', text: 'One current filing is available.', evidenceIds: ['sec-edgar'] },
-      { id: 'positioning', text: 'Public disclosures remain the available positioning evidence.', evidenceIds: ['sec-edgar'] },
-      { id: 'watchpoints', text: 'Watch for the next accepted filing.', evidenceIds: ['sec-edgar'] },
+      { id: 'market-regime', text: 'Current market evidence is reported independently from disclosure coverage.', evidenceIds: ['sec-edgar'] },
+      { id: 'investor-disclosures', text: 'No material new investor or firm disclosure was found in the accepted snapshot.', evidenceIds: ['sec-edgar'] },
+      { id: 'crypto-paper-risk', text: 'Simulation remains research-only; no transaction was prepared or executed.', evidenceIds: ['sec-edgar'] },
     ],
-    text: 'One current filing is available.\n\nPublic disclosures remain the available positioning evidence.\n\nWatch for the next accepted filing.',
+    text: 'Current market evidence is reported independently from disclosure coverage.\n\nNo material new investor or firm disclosure was found in the accepted snapshot.\n\nSimulation remains research-only; no transaction was prepared or executed.',
   },
   evidence: [{ id: 'sec-edgar', label: 'SEC EDGAR', sourceUrl: 'https://www.sec.gov/' }],
 });
