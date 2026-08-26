@@ -105,7 +105,7 @@ export default function Nav({ active, setActive, onOpenAlerts, onOpenPalette }) 
             <span className={`uppercase tracking-widest text-[10px] font-mono ${liveColor}`}>{liveStatus}</span>
           </div>
         )}
-        <div className="hidden sm:block font-mono text-[#a3a3a3] text-xs tabular-nums">
+        <div className="hidden lg:block font-mono text-[#a3a3a3] text-xs tabular-nums">
           {now.toUTCString().slice(17, 25)} <span className="text-[#525252]">UTC</span>
         </div>
       </div>
