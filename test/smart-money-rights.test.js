@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   assertAdapterRights,
   canUseSourceFor,
+  SOURCE_RIGHTS,
   validateRightsMatrix,
 } from '../lib/smart-money/rights.js';
 
@@ -70,6 +71,23 @@ test('rights validation rejects a non-calendar review date', () => {
   }], { now: new Date('2026-08-26T00:00:00Z') });
   assert.equal(result.ok, false);
   assert.match(result.errors.join('\n'), /invalid_review_dates/);
+});
+
+test('enabled sources require meaningful provider, attribution, and retention metadata', () => {
+  const invalidMetadata = [
+    ['provider', '   '],
+    ['attribution', '   '],
+    ['retention', {}],
+    ['attribution', 'unclear'],
+    ['retention', 'unknown'],
+  ];
+  for (const [field, value] of invalidMetadata) {
+    const record = structuredClone(SOURCE_RIGHTS[0]);
+    record[field] = value;
+    const result = validateRightsMatrix([record], { now: new Date('2026-08-26T00:00:00Z') });
+    assert.equal(result.ok, false, `${field}=${String(value)}`);
+    assert.match(result.errors.join('\n'), new RegExp(`invalid_${field}`));
+  }
 });
 
 test('link-only sources cannot feed rankings or paper signals', () => {
