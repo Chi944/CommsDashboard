@@ -71,6 +71,7 @@ function conflict() {
 export function memoryJournalAdapter(options = {}) {
   const blobs = new Map();
   const failedWrites = new Map();
+  const failedDeletes = new Map();
   let nextEtag = 1;
 
   return {
@@ -94,17 +95,29 @@ export function memoryJournalAdapter(options = {}) {
       return { etag };
     },
     async delete(pathname, expectedEtag) {
+      await options.beforeDelete?.({ pathname, expectedEtag });
+      const failures = failedDeletes.get(pathname) || 0;
+      if (failures > 0) {
+        failedDeletes.set(pathname, failures - 1);
+        throw new Error('simulated delete failure with secret=never-return');
+      }
       const current = blobs.get(pathname);
       if (!current) return false;
       if (expectedEtag != null && current.etag !== expectedEtag) throw conflict();
       blobs.delete(pathname);
       return true;
     },
+    async list(prefix) {
+      return [...blobs.keys()].filter((pathname) => pathname.startsWith(prefix)).sort();
+    },
     isConflict(error) {
       return error?.name === 'BlobPreconditionFailedError';
     },
     failNext(pathname, count = 1) {
       failedWrites.set(pathname, count);
+    },
+    failNextDelete(pathname, count = 1) {
+      failedDeletes.set(pathname, count);
     },
     seed(pathname, data) {
       const etag = String(nextEtag++);

@@ -143,9 +143,271 @@ test('snapshot publication requires every configured durable write and sanitizes
     writeRedis: async () => ({ ok: true, skipped: false, error: null }),
   });
   assert.equal(result.durableWriteSucceeded, false);
-  assert.deepEqual(result.blobWrite, { configured: true, ok: false, error: 'blob_write_failed' });
-  assert.deepEqual(result.redisWrite, { configured: true, ok: true, error: null });
+  assert.deepEqual(result.blobWrite, {
+    configured: true, ok: false, accepted: false, error: 'blob_write_failed',
+  });
+  assert.deepEqual(result.redisWrite, {
+    configured: true, ok: true, accepted: true, error: null,
+  });
   assert.equal(JSON.stringify(result).includes('raw-secret'), false);
+});
+
+test('snapshot publication rejects both-skipped and mixed accepted/skipped generations', async () => {
+  const candidate = snapshot('2026-08-26T02:00:00.000Z', 'candidate');
+  const bothSkipped = await writeSmartMoneySnapshot(candidate, {
+    blobConfigured: true,
+    redisConfigured: true,
+    writeBlob: async () => ({ ok: true, skipped: true, error: null }),
+    writeRedis: async () => ({ ok: true, skipped: true, error: null }),
+  });
+  assert.equal(bothSkipped.durableWriteSucceeded, false);
+  assert.equal(bothSkipped.snapshot, null);
+  assert.equal(bothSkipped.blobWrite.accepted, false);
+  assert.equal(bothSkipped.redisWrite.accepted, false);
+
+  const mixed = await writeSmartMoneySnapshot(candidate, {
+    blobConfigured: true,
+    redisConfigured: true,
+    writeBlob: async () => ({ ok: true, skipped: false, error: null }),
+    writeRedis: async () => ({ ok: true, skipped: true, error: null }),
+  });
+  assert.equal(mixed.durableWriteSucceeded, false);
+  assert.equal(mixed.snapshot, null);
+  assert.equal(mixed.blobWrite.accepted, true);
+  assert.equal(mixed.redisWrite.accepted, false);
+
+  const memoryBaseline = snapshot('2099-08-26T02:00:00.000Z', 'durable-memory-baseline');
+  await writeSmartMoneySnapshot(memoryBaseline, {
+    blobConfigured: true,
+    redisConfigured: false,
+    writeBlob: async () => ({ ok: true, skipped: false, error: null }),
+  });
+  await writeSmartMoneySnapshot(snapshot('2100-08-26T02:00:00.000Z', 'rejected-memory'), {
+    blobConfigured: true,
+    redisConfigured: false,
+    writeBlob: async () => ({ ok: true, skipped: true, error: null }),
+  });
+  const memoryRead = await readSmartMoneySnapshot({
+    blobConfigured: false,
+    redisConfigured: false,
+  });
+  assert.equal(memoryRead.marker, 'durable-memory-baseline');
+});
+
+test('equal same-content, equal conflicting-content, and older snapshots are superseded', async () => {
+  let stored = snapshot('2026-08-26T02:00:00.000Z', 'accepted');
+  let etag = 1;
+  const adapter = {
+    read: async () => ({ data: structuredClone(stored), etag: String(etag) }),
+    write: async (data, expectedEtag) => {
+      assert.equal(expectedEtag, String(etag));
+      stored = structuredClone(data);
+      etag += 1;
+    },
+    isConflict: (error) => error?.name === 'BlobPreconditionFailedError',
+  };
+  const write = (data) => writeSmartMoneySnapshot(data, {
+    blobConfigured: true,
+    redisConfigured: false,
+    writeBlob: (payload) => writeNewestSmartMoneyBlob(payload, adapter),
+  });
+
+  for (const candidate of [
+    snapshot('2026-08-26T02:00:00.000Z', 'accepted'),
+    snapshot('2026-08-26T02:00:00.000Z', 'equal-conflict'),
+    snapshot('2026-08-26T01:00:00.000Z', 'older'),
+  ]) {
+    const result = await write(candidate);
+    assert.equal(result.durableWriteSucceeded, false);
+    assert.equal(result.snapshot, null);
+    assert.equal(result.blobWrite.skipped, true);
+  }
+  assert.equal(stored.marker, 'accepted');
+});
+
+test('only a generation explicitly accepted by every configured store is durable', async () => {
+  const candidate = snapshot('2026-08-26T03:00:00.000Z', 'accepted-by-all');
+  const result = await writeSmartMoneySnapshot(candidate, {
+    blobConfigured: true,
+    redisConfigured: true,
+    writeBlob: async () => ({ ok: true, skipped: false, error: null }),
+    writeRedis: async () => ({ ok: true, skipped: false, error: null }),
+  });
+  assert.equal(result.durableWriteSucceeded, true);
+  assert.deepEqual(result.snapshot, candidate);
+  assert.equal(result.blobWrite.accepted, true);
+  assert.equal(result.redisWrite.accepted, true);
+
+  const ambiguous = await writeSmartMoneySnapshot(candidate, {
+    blobConfigured: true,
+    redisConfigured: false,
+    writeBlob: async () => ({ ok: true, error: null }),
+  });
+  assert.equal(ambiguous.durableWriteSucceeded, false);
+  assert.equal(ambiguous.snapshot, null);
+  assert.equal(ambiguous.blobWrite.accepted, false);
+});
+
+test('overlapping snapshot publications report only the newer accepted generation durable', async () => {
+  let stored = snapshot('2026-08-26T00:00:00.000Z', 'initial');
+  let etag = 1;
+  let releaseOlder;
+  let announceOlder;
+  const olderGate = new Promise((resolve) => { releaseOlder = resolve; });
+  const olderStarted = new Promise((resolve) => { announceOlder = resolve; });
+  const adapter = {
+    read: async () => ({ data: structuredClone(stored), etag: String(etag) }),
+    write: async (data, expectedEtag) => {
+      if (data.marker === 'older-overlap') {
+        announceOlder();
+        await olderGate;
+      }
+      if (expectedEtag !== String(etag)) {
+        const error = new Error('stale ETag with private details');
+        error.name = 'BlobPreconditionFailedError';
+        throw error;
+      }
+      stored = structuredClone(data);
+      etag += 1;
+    },
+    isConflict: (error) => error?.name === 'BlobPreconditionFailedError',
+  };
+  const write = (data) => writeSmartMoneySnapshot(data, {
+    blobConfigured: true,
+    redisConfigured: false,
+    writeBlob: (payload) => writeNewestSmartMoneyBlob(payload, adapter),
+  });
+  const olderWrite = write(snapshot('2026-08-26T01:00:00.000Z', 'older-overlap'));
+  await olderStarted;
+  const newerResult = await write(snapshot('2026-08-26T02:00:00.000Z', 'newer-overlap'));
+  releaseOlder();
+  const olderResult = await olderWrite;
+
+  assert.equal(newerResult.durableWriteSucceeded, true);
+  assert.equal(olderResult.durableWriteSucceeded, false);
+  assert.equal(olderResult.snapshot, null);
+  assert.equal(stored.marker, 'newer-overlap');
+});
+
+test('Redis write accepts a new generation despite malformed legacy metadata', async () => {
+  class LegacyRedis {
+    constructor({ payload, version }) {
+      this.payload = payload;
+      this.version = version;
+    }
+
+    async eval(script, _keys, args) {
+      const incomingVersion = Number(args[0]);
+      const incoming = JSON.parse(args[1]);
+      const numericVersion = Number(this.version);
+      if (this.version != null && !Number.isFinite(numericVersion)
+          && !script.includes('local function finite(value)')) {
+        throw new Error('legacy nonnumeric version crashed Lua with redis-secret');
+      }
+      let currentVersion = this.version != null && this.version !== '' && Number.isFinite(numericVersion)
+        ? numericVersion
+        : null;
+      if (currentVersion === null && this.payload && typeof this.payload === 'object') {
+        const parsed = Date.parse(this.payload.refreshStartedAt);
+        const canonical = Number.isFinite(parsed)
+          && new Date(parsed).toISOString() === this.payload.refreshStartedAt;
+        currentVersion = canonical ? parsed : null;
+      }
+      if (currentVersion !== null && currentVersion >= incomingVersion) return 0;
+      this.payload = incoming;
+      this.version = String(incomingVersion);
+      return 1;
+    }
+  }
+
+  for (const state of [
+    { payload: { refreshStartedAt: '2026-13-40T00:00:00.000Z' }, version: null },
+    { payload: { refreshStartedAt: '2026-02-30T00:00:00.000Z' }, version: null },
+    { payload: { refreshStartedAt: 'not-json-metadata' }, version: 'not-a-number' },
+    { payload: '{malformed-json', version: null },
+    { payload: null, version: 'Infinity' },
+  ]) {
+    const redis = new LegacyRedis(state);
+    const result = await writeNewestSmartMoneyRedis(
+      snapshot('2026-08-26T04:00:00.000Z', 'replacement'),
+      redis,
+    );
+    assert.deepEqual(result, { ok: true, skipped: false, error: null });
+    assert.equal(redis.payload.marker, 'replacement');
+    assert.equal(JSON.stringify(result).includes('redis-secret'), false);
+  }
+
+  const migrated = new LegacyRedis({
+    payload: { refreshStartedAt: '2026-08-26T05:00:00.000Z', marker: 'valid-newer' },
+    version: null,
+  });
+  assert.deepEqual(
+    await writeNewestSmartMoneyRedis(snapshot('2026-08-26T04:00:00.000Z', 'older'), migrated),
+    { ok: true, skipped: true, error: null },
+  );
+  assert.equal(migrated.payload.marker, 'valid-newer');
+});
+
+test('Redis legacy migration seeds Lua only from a canonical payload observed by preflight', async () => {
+  const legacyPayload = JSON.stringify(
+    snapshot('2026-08-26T05:00:00.000Z', 'valid-newer'),
+  );
+  const calls = [];
+  const redis = {
+    async get(key) {
+      if (key === 'smart-money:v1:snapshot') return legacyPayload;
+      if (key === 'smart-money:v1:snapshot:refresh-started-at-ms') return 'not-a-number';
+      throw new Error('unexpected key');
+    },
+    async eval(_script, _keys, args) {
+      calls.push(args);
+      assert.equal(args[4], legacyPayload);
+      assert.equal(args[3], String(Date.parse('2026-08-26T05:00:00.000Z')));
+      return 0;
+    },
+  };
+  assert.deepEqual(
+    await writeNewestSmartMoneyRedis(snapshot('2026-08-26T04:00:00.000Z', 'older'), redis),
+    { ok: true, skipped: true, error: null },
+  );
+  assert.equal(calls.length, 1);
+
+  const malformedRedis = {
+    async get(key) {
+      if (key === SMART_MONEY_STORE_NAMESPACES.snapshot) {
+        return JSON.stringify({ refreshStartedAt: '2026-02-30T00:00:00.000Z' });
+      }
+      return '';
+    },
+    async eval(_script, _keys, args) {
+      assert.equal(args[3], '');
+      assert.equal(args[4], '');
+      return 1;
+    },
+  };
+  assert.deepEqual(
+    await writeNewestSmartMoneyRedis(
+      snapshot('2026-08-26T04:00:00.000Z', 'replacement'),
+      malformedRedis,
+    ),
+    { ok: true, skipped: false, error: null },
+  );
+});
+
+test('Redis write rejects impossible incoming calendar timestamps before eval', async () => {
+  let evalCalls = 0;
+  const redis = { async eval() { evalCalls += 1; return 1; } };
+  for (const refreshStartedAt of [
+    '2026-13-01T00:00:00.000Z',
+    '2026-02-30T00:00:00.000Z',
+    '2026-08-26T00:00:00Z',
+  ]) {
+    assert.deepEqual(
+      await writeNewestSmartMoneyRedis({ refreshStartedAt }, redis),
+      { ok: false, skipped: false, error: 'redis_write_failed' },
+    );
+  }
+  assert.equal(evalCalls, 0);
 });
 
 test('snapshot storage fails closed when production credentials are absent or incomplete', async () => {
