@@ -125,6 +125,48 @@ test('sec-edgar sourceAsOf uses the latest accepted 13F period and survives LKG 
   assert.deepEqual(failed.adapterState.adapters[0].source, accepted.adapterState.adapters[0].source);
 });
 
+test('fulfilled SEC metadata without one bound nonempty 13F preserves LKG and fails closed', () => {
+  const { previous, deps } = createRefreshDeps({ signals: [] });
+  const secAdapter = deps.adapters[0];
+  const prior = previous.adapterState.adapters[0];
+  const schedule = {
+    cik: '2045724', form: 'SC 13G', accessionNumber: '0002045724-26-000010',
+    periodEnd: null, filedAt: '2026-08-20T00:00:00.000Z', isAmendment: false,
+    amendmentChain: ['0002045724-26-000010'], primaryDocument: 'schedule13g.htm',
+    timingBasis: 'filing_date',
+  };
+  const malformedCandidates = [
+    { filings: [], disclosures: [schedule], holdings: [] },
+    { ...structuredClone(prior.source.snapshot), holdings: [] },
+    {
+      ...structuredClone(prior.source.snapshot),
+      disclosures: [],
+      filings: [...prior.source.snapshot.filings, schedule],
+    },
+    {
+      ...structuredClone(prior.source.snapshot),
+      holdings: prior.source.snapshot.holdings.map((holding) => ({
+        ...holding, accessionNumber: '0002045724-26-999999',
+      })),
+    },
+  ];
+
+  for (const value of malformedCandidates) {
+    const result = normalizeSmartMoneySettledState({
+      adapters: deps.adapters,
+      dueAdapters: [secAdapter],
+      settled: [{ adapter: secAdapter, result: { status: 'fulfilled', value } }],
+      previous,
+      now: new Date('2026-08-28T12:00:00.000Z'),
+    });
+    assert.deepEqual(result.adapterState.adapters[0].source, prior.source);
+    assert.equal(result.providerStatuses[0].status, 'unavailable');
+    assert.equal(result.providerStatuses[0].errorCode, 'schema_invalid');
+    assert.equal(result.changes.length, 0);
+    assert.equal(result.warnings.includes('sec-edgar:schema_invalid'), true);
+  }
+});
+
 test('failed and not-due SEC LKG reuse preserves evidence and activity timestamps byte-for-byte', () => {
   const { previous, deps } = createRefreshDeps({ signals: [] });
   const secAdapter = deps.adapters[0];
