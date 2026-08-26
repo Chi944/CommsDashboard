@@ -4,12 +4,18 @@ import test from 'node:test';
 
 import {
   compare13FPeriods,
+  fetchSecInstitutionalDisclosure,
   fetchSecSnapshot,
+  parseSecInstitutionalDisclosureDocument,
   parseSecInformationTable,
   parseSecSubmissions,
   secHeaders,
   selectCanonical13FByPeriod,
 } from '../lib/smart-money/sec.js';
+import {
+  institutionalFiling,
+  institutionalInlineXbrl,
+} from './fixtures/smart-money/sec/institutional-inline-xbrl.js';
 
 const FIXTURES = new URL('./fixtures/smart-money/sec/', import.meta.url);
 const INFORMATION_TABLE_XML = fs.readFileSync(new URL('information-table.xml', FIXTURES), 'utf8');
@@ -216,4 +222,137 @@ test('concurrent SEC snapshots schedule every physical transport attempt, includ
   }
   assert.equal(physicalRequests, 8);
   assert.equal(maxActive, 1);
+});
+
+test('fixed institutional SEC profiles extract exact inline-XBRL facts and normalize scale', () => {
+  const cases = [
+    ['institutional-strategy', 846_000, 49_672_080_000],
+    ['institutional-tesla', 11_509, null],
+    ['institutional-ibit', 734_261, 43_395_920_710],
+    ['institutional-fbtc', 174_383, 10_306_297_000],
+    ['institutional-arkb', 32_178.2280, 1_889_314_000],
+    ['institutional-bitb', 36_207.6919, 2_125_990_000],
+  ];
+  for (const [providerId, btcAmount, reportedValueUsd] of cases) {
+    const result = parseSecInstitutionalDisclosureDocument(
+      institutionalInlineXbrl(providerId),
+      providerId,
+    );
+    assert.deepEqual(result, { btcAmount, reportedValueUsd });
+  }
+  assert.deepEqual(
+    parseSecInstitutionalDisclosureDocument(
+      institutionalInlineXbrl('institutional-ibit', { duplicateQuantity: '734,261' }),
+      'institutional-ibit',
+    ),
+    { btcAmount: 734_261, reportedValueUsd: 43_395_920_710 },
+  );
+});
+
+test('institutional SEC profiles reject missing, conflicting, nil, negative, and context drift', () => {
+  for (const document of [
+    institutionalInlineXbrl('institutional-ibit', { omitValue: true }),
+    institutionalInlineXbrl('institutional-ibit', { duplicateQuantity: '734,262' }),
+    institutionalInlineXbrl('institutional-ibit', { nilQuantity: true }),
+    institutionalInlineXbrl('institutional-ibit', { quantity: '-734,261' }),
+    institutionalInlineXbrl('institutional-ibit', { reportDate: '2026-03-31' }),
+    institutionalInlineXbrl('institutional-ibit', {
+      dimension: 'us-gaap:InvestmentIdentifierAxis', member: 'fake:OtherInvestmentMember',
+    }),
+  ]) {
+    assert.throws(
+      () => parseSecInstitutionalDisclosureDocument(document, 'institutional-ibit', {
+        reportDate: '2026-06-30',
+      }),
+      { code: 'schema_invalid' },
+    );
+  }
+  assert.throws(
+    () => parseSecInstitutionalDisclosureDocument(
+      institutionalInlineXbrl('institutional-ibit'),
+      'institutional-fake',
+    ),
+    { code: 'configuration_missing' },
+  );
+});
+
+test('institutional raw fetch binds adapter and CIK to submissions and one archive primary document', async () => {
+  const filing = institutionalFiling('institutional-ibit');
+  const submissions = {
+    cik: '1980994',
+    filings: { recent: {
+      accessionNumber: [filing.accessionNumber, '0001437749-26-010000'],
+      filingDate: [filing.filingDate, '2026-05-05'],
+      reportDate: ['2026-06-30', '2026-03-31'],
+      form: ['10-Q', '10-Q'],
+      primaryDocument: [filing.primaryDocument, 'bit20260331c_10q.htm'],
+    } },
+  };
+  const jsonCalls = [];
+  const textCalls = [];
+  const raw = await fetchSecInstitutionalDisclosure({
+    providerId: 'institutional-ibit', cik: '1980994',
+    userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
+  }, {
+    fetchProviderJson: async (url, options) => { jsonCalls.push({ url, options }); return submissions; },
+    fetchProviderText: async (url, options) => {
+      textCalls.push({ url, options });
+      return institutionalInlineXbrl('institutional-ibit');
+    },
+  });
+  assert.deepEqual(raw, {
+    accessionNumber: filing.accessionNumber,
+    reportingDate: '2026-06-30',
+    filingDate: filing.filingDate,
+    btcAmount: 734_261,
+    reportedValueUsd: 43_395_920_710,
+    sourceUrl: `https://www.sec.gov/Archives/edgar/data/1980994/${filing.accessionNumber.replace(/-/g, '')}/${filing.primaryDocument}`,
+  });
+  assert.equal(jsonCalls.length, 1);
+  assert.equal(textCalls.length, 1);
+  assert.equal(new URL(jsonCalls[0].url).origin, 'https://data.sec.gov');
+  assert.equal(new URL(textCalls[0].url).origin, 'https://www.sec.gov');
+  assert.equal(jsonCalls[0].options.providerId, 'institutional-ibit');
+  assert.equal(textCalls[0].options.providerId, 'institutional-ibit');
+  assert.equal(textCalls[0].options.maxBytes, 5_000_000);
+});
+
+test('institutional raw fetch accepts filing-agent accession prefixes but binds the registrant archive directory', async () => {
+  for (const providerId of [
+    'institutional-tesla', 'institutional-ibit', 'institutional-fbtc',
+    'institutional-arkb', 'institutional-bitb',
+  ]) {
+    const filing = institutionalFiling(providerId);
+    const raw = await fetchSecInstitutionalDisclosure({
+      providerId, cik: filing.cik,
+      userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
+    }, {
+      fetchProviderJson: async () => ({
+        cik: filing.cik,
+        filings: { recent: {
+          accessionNumber: [filing.accessionNumber], filingDate: [filing.filingDate],
+          reportDate: [filing.reportDate], form: ['10-Q'],
+          primaryDocument: [filing.primaryDocument],
+        } },
+      }),
+      fetchProviderText: async () => institutionalInlineXbrl(providerId),
+    });
+    assert.match(raw.sourceUrl, new RegExp(`/Archives/edgar/data/${filing.cik}/${filing.accessionNumber.replace(/-/g, '')}/`));
+  }
+});
+
+test('institutional raw fetch fails before transport on mismatched identity or SEC contact', async () => {
+  let calls = 0;
+  const deps = {
+    fetchProviderJson: async () => { calls += 1; return {}; },
+    fetchProviderText: async () => { calls += 1; return ''; },
+  };
+  await assert.rejects(fetchSecInstitutionalDisclosure({
+    providerId: 'institutional-ibit', cik: '1852317',
+    userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
+  }, deps), { code: 'configuration_missing' });
+  await assert.rejects(fetchSecInstitutionalDisclosure({
+    providerId: 'institutional-ibit', cik: '1980994', userAgent: 'placeholder@example.com',
+  }, deps), { code: 'configuration_missing' });
+  assert.equal(calls, 0);
 });

@@ -9,6 +9,10 @@ import {
   normalizeFundDisclosure,
   normalizeTreasuryDisclosure,
 } from '../lib/smart-money/disclosures.js';
+import {
+  institutionalFiling,
+  institutionalInlineXbrl,
+} from './fixtures/smart-money/sec/institutional-inline-xbrl.js';
 
 const FIXTURES = new URL('./fixtures/smart-money/disclosures/', import.meta.url);
 const NOW = '2026-08-26T00:00:00.000Z';
@@ -61,11 +65,11 @@ test('a first disclosure and complete exit always qualify without claiming a tra
 test('treasury disclosures retain only validated filing metrics and no raw filing body', () => {
   const record = normalizeTreasuryDisclosure(fixture('strategy'), ALL_CONFIGS[0], { now: () => new Date(NOW) });
   assert.deepEqual(record, {
-    id: 'institutional-strategy:0001050446-26-000101:2026-06-30',
+    id: 'institutional-strategy:0001050446-26-000044:2026-06-30',
     providerId: 'institutional-strategy', entityId: 'strategy', vehicle: 'corporate_bitcoin_treasury',
-    reportingDate: '2026-06-30', filedAt: '2026-08-05T00:00:00.000Z', btcAmount: 597325,
-    reportedValueUsd: 64800000000,
-    sourceUrl: 'https://www.sec.gov/Archives/edgar/data/1050446/000105044626000101/strategy-20260630.htm',
+    reportingDate: '2026-06-30', filedAt: '2026-08-03T00:00:00.000Z', btcAmount: 846000,
+    reportedValueUsd: 49672080000,
+    sourceUrl: 'https://www.sec.gov/Archives/edgar/data/1050446/000105044626000044/mstr-20260630.htm',
     methodology: 'sec_filing_reported', sourceAsOf: '2026-06-30T00:00:00.000Z',
     retrievedAt: NOW, freshnessBasis: 'reporting_date', paperEligible: false,
   });
@@ -78,9 +82,23 @@ test('fund disclosures retain holdings and reported value with exact SEC filing 
   assert.equal(record.providerId, 'institutional-ibit');
   assert.equal(record.entityId, 'blackrock-ibit');
   assert.equal(record.vehicle, 'spot_bitcoin_etf');
-  assert.equal(record.btcAmount, 738401);
-  assert.equal(record.reportedValueUsd, 80800000000);
-  assert.equal(record.sourceUrl, 'https://www.sec.gov/Archives/edgar/data/1980994/000198099426000044/ibit-20260630.htm');
+  assert.equal(record.btcAmount, 734261);
+  assert.equal(record.reportedValueUsd, 43395920710);
+  assert.equal(record.sourceUrl, 'https://www.sec.gov/Archives/edgar/data/1980994/000143774926026004/bit20260630c_10q.htm');
+});
+
+test('Tesla BTC quantity is accepted with a null BTC-specific value and remains research-only', () => {
+  const record = normalizeTreasuryDisclosure(fixture('tesla'), ALL_CONFIGS[1], { now: () => new Date(NOW) });
+  assert.equal(record.btcAmount, 11_509);
+  assert.equal(record.reportedValueUsd, null);
+  assert.equal(record.paperEligible, false);
+
+  const otherProfile = fixture('ibit');
+  otherProfile.reportedValueUsd = null;
+  assert.throws(
+    () => normalizeFundDisclosure(otherProfile, ALL_CONFIGS[2], { now: () => new Date(NOW) }),
+    { code: 'schema_invalid' },
+  );
 });
 
 test('six concrete adapters have independently stable records and statuses', async () => {
@@ -171,14 +189,19 @@ test('plural fetching isolates synchronous child throws and rejects a mismatched
   ]);
 });
 
-test('a filing accession and archive directory must bind exactly to the configured CIK', () => {
-  const crossFiler = fixture('strategy');
-  crossFiler.accessionNumber = '0001318605-26-000101';
-  assert.throws(() => normalizeTreasuryDisclosure(crossFiler, ALL_CONFIGS[0], { now: () => new Date(NOW) }), { code: 'schema_invalid' });
-
+test('filing-agent accession prefixes are valid but the archive directory and accession path bind exactly', () => {
+  const filingAgent = fixture('tesla');
+  assert.equal(
+    normalizeTreasuryDisclosure(filingAgent, ALL_CONFIGS[1], { now: () => new Date(NOW) }).providerId,
+    'institutional-tesla',
+  );
   const crossDirectory = fixture('strategy');
-  crossDirectory.sourceUrl = 'https://www.sec.gov/Archives/edgar/data/1050446/000131860526000101/strategy-20260630.htm';
+  crossDirectory.sourceUrl = 'https://www.sec.gov/Archives/edgar/data/1318605/000105044626000044/mstr-20260630.htm';
   assert.throws(() => normalizeTreasuryDisclosure(crossDirectory, ALL_CONFIGS[0], { now: () => new Date(NOW) }), { code: 'schema_invalid' });
+
+  const wrongAccessionPath = fixture('strategy');
+  wrongAccessionPath.sourceUrl = 'https://www.sec.gov/Archives/edgar/data/1050446/000162828026049270/mstr-20260630.htm';
+  assert.throws(() => normalizeTreasuryDisclosure(wrongAccessionPath, ALL_CONFIGS[0], { now: () => new Date(NOW) }), { code: 'schema_invalid' });
 });
 
 test('filing dates require an exact calendar or canonical ISO timestamp', () => {
@@ -267,4 +290,28 @@ test('plural rollup rejects inherited and hidden raw fields while copying clean 
     'sourceAsOf', 'sourceUrl', 'vehicle',
   ]);
   assert.equal(Object.hasOwn(result.records[0], 'filingBody'), false);
+});
+
+test('a concrete institutional adapter uses the authoritative SEC raw path by default', async () => {
+  const filing = institutionalFiling('institutional-ibit');
+  const submissions = {
+    cik: '1980994',
+    filings: { recent: {
+      accessionNumber: [filing.accessionNumber],
+      filingDate: [filing.filingDate],
+      reportDate: ['2026-06-30'],
+      form: ['10-Q'],
+      primaryDocument: [filing.primaryDocument],
+    } },
+  };
+  const result = await fetchInstitutionalDisclosure(ALL_CONFIGS[2], {
+    userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
+    now: () => new Date(NOW),
+    fetchProviderJson: async () => submissions,
+    fetchProviderText: async () => institutionalInlineXbrl('institutional-ibit'),
+  });
+  assert.equal(result.providerId, 'institutional-ibit');
+  assert.deepEqual(result.records, [normalizeFundDisclosure(fixture('ibit'), ALL_CONFIGS[2], {
+    now: () => new Date(NOW),
+  })]);
 });
