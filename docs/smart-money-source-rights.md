@@ -18,8 +18,19 @@ evidence, and reviewed official URL.
 ## Enabled SEC filing records
 
 `sec-edgar`, `strategy-disclosures`, `tesla-disclosures`, `ibit-disclosures`,
-`fbtc-disclosures`, `arkb-disclosures`, and `bitb-disclosures` use the specific
-`data.sec.gov/submissions/CIK...json` endpoint in the matrix. SEC's
+`fbtc-disclosures`, `arkb-disclosures`, and `bitb-disclosures` use the exact
+`data.sec.gov/submissions/CIK...json` endpoints in the matrix. `sec-edgar` then
+uses the filing's bounded `www.sec.gov/Archives/.../index.json` and exactly one
+recognized information-table document; its rights record enumerates those
+templates and every retrieved, persisted, and displayed filing/holding field.
+Each production refresh fetches only the newest canonical 13F filing selected
+from the current submissions metadata; the prior accepted quarter supplies the
+comparison state, so quarter-over-quarter reductions and exits remain visible
+without repeatedly downloading older filing documents.
+The six institutional adapters use their aligned submissions tuple and one
+bounded primary filing document with a fixed reviewed inline-XBRL profile.
+Schedule 13D/G rows are retained only as filing metadata with filing-date timing;
+they never imply a ticker, holding, ownership-effective date, or trade. SEC's
 [website-dissemination policy](https://www.sec.gov/about/privacy-information)
 says information on sec.gov may be copied or further distributed and asks users
 to cite the SEC; its [webmaster FAQ](https://www.sec.gov/about/webmaster-frequently-asked-questions)
@@ -44,7 +55,9 @@ markets entities to consult Polymarket and ICE before consuming or redistributin
 Polymarket data, including derived or aggregated data. No Polymarket ranking,
 briefing, signal, or paper-simulation adapter is enabled.
 
-`hyperliquid-stats-api` and `hyperliquid-info-api` are link-only. The reviewed
+`hyperliquid-stats-api` (whose exact dormant leaderboard link is
+`https://stats-data.hyperliquid.xyz/Mainnet/leaderboard`) and
+`hyperliquid-info-api` are link-only. The reviewed
 [API documentation](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api)
 and [Info endpoint documentation](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint)
 describe access but do not affirm the required no-cost cache, redistribution,

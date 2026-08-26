@@ -3,7 +3,8 @@
     "id": "sec-edgar",
     "provider": "U.S. Securities and Exchange Commission",
     "endpoint": "https://data.sec.gov/submissions/CIK0002045724.json",
-    "fieldsUsed": ["accessionNumber", "filingDate", "reportDate", "form", "primaryDocument", "primaryDocDescription"],
+    "endpointTemplates": ["https://data.sec.gov/submissions/CIK{cik10}.json", "https://www.sec.gov/Archives/edgar/data/{registrantCik}/{accessionNoDashes}/index.json", "https://www.sec.gov/Archives/edgar/data/{registrantCik}/{accessionNoDashes}/{informationTableDocument}"],
+    "fieldsUsed": ["submissions.cik", "submissions.accessionNumber", "submissions.filingDate", "submissions.reportDate", "submissions.form", "submissions.primaryDocument", "archiveIndex.directory.item.name", "informationTable.nameOfIssuer", "informationTable.titleOfClass", "informationTable.cusip", "informationTable.value", "informationTable.shrsOrPrnAmt.sshPrnamt", "informationTable.shrsOrPrnAmt.sshPrnamtType", "informationTable.putCall", "filing.cik", "filing.form", "filing.accessionNumber", "filing.periodEnd", "filing.filedAt", "filing.isAmendment", "filing.amendmentChain", "filing.primaryDocument", "filing.timingBasis", "holding.accessionNumber", "holding.periodEnd", "holding.filedAt", "holding.isAmendment", "holding.amendmentChain", "holding.issuer", "holding.securityClass", "holding.cusip", "holding.ticker", "holding.reportedValue", "holding.shares", "holding.putCall", "holding.shareType", "holding.paperEligible"],
     "termsUrl": "https://www.sec.gov/about/privacy-information",
     "evidenceUrls": ["https://www.sec.gov/about/privacy-information", "https://www.sec.gov/about/webmaster-frequently-asked-questions", "https://www.sec.gov/about/developer-resources"],
     "attribution": "Cite the U.S. Securities and Exchange Commission (SEC), link to the source filing, and do not use SEC or EDGAR marks as branding.",
@@ -227,7 +228,7 @@
   {
     "id": "hyperliquid-stats-api",
     "provider": "Hyperliquid",
-    "endpoint": "https://stats.hyperliquid.xyz/leaderboard",
+    "endpoint": "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard",
     "fieldsUsed": ["address", "accountValue", "pnl", "roi", "volume", "rank"],
     "termsUrl": "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api",
     "evidenceUrls": ["https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api", "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/rate-limits-and-user-limits"],

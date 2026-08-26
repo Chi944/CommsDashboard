@@ -105,7 +105,7 @@ function signalAt(id, observedAt, ticker = 'BTC') {
   };
 }
 
-function dailyMark(date = '2026-08-26', ticker = 'BTC') {
+function dailyMark(date = '2026-08-26', ticker = 'BTC', asOf = `${date}T20:00:00.000Z`) {
   return {
     id: `${date}:${ticker}`,
     date,
@@ -115,8 +115,8 @@ function dailyMark(date = '2026-08-26', ticker = 'BTC') {
     price: ticker === 'BTC' ? 100_000 : 5_000,
     currency: 'USD',
     source: 'yahoo',
-    asOf: `${date}T20:00:00.000Z`,
-    retrievedAt: `${date}T20:00:01.000Z`,
+    asOf,
+    retrievedAt: new Date(Date.parse(asOf) + 1_000).toISOString(),
   };
 }
 
@@ -739,6 +739,50 @@ test('an unresolved staged generation newer than current survives a long outage 
   );
 });
 
+test('prune removes recent superseded orphan rows but preserves current and newest unresolved work', async () => {
+  const adapter = memoryJournalAdapter();
+  const generationA = '2026-08-25T12:00:00.000Z';
+  const generationB = '2026-08-26T12:00:00.000Z';
+  const generationC = '2026-08-27T12:00:00.000Z';
+  const orphanA = signalAt('hyperliquid-account-details:orphan-a', '2026-08-25T11:00:00.000Z');
+  const acceptedB = signalAt('hyperliquid-account-details:accepted-b', '2026-08-26T11:00:00.000Z');
+  const unresolvedC = signalAt('hyperliquid-account-details:unresolved-c', '2026-08-27T11:00:00.000Z');
+
+  await stageJournal({
+    refreshStartedAt: generationA, signals: [orphanA], dailyMarks: [],
+  }, { adapter, now: new Date(generationA) });
+  await stageJournal({
+    refreshStartedAt: generationB, signals: [acceptedB], dailyMarks: [],
+  }, { adapter, now: new Date(generationB) });
+  await publishJournalGeneration({
+    refreshStartedAt: generationB,
+    snapshot: acceptedPrivateSnapshot(generationB, [acceptedB]),
+  }, { adapter, now: new Date(generationB) });
+  await stageJournal({
+    refreshStartedAt: generationC, signals: [unresolvedC], dailyMarks: [],
+  }, { adapter, now: new Date(generationC) });
+
+  const result = await pruneJournal({ now: new Date('2026-08-28T00:00:00.000Z') }, { adapter });
+  const publications = adapter.inspect(PUBLICATIONS);
+  const manifest = adapter.inspect(MANIFEST);
+  assert.equal(result.durableWriteSucceeded, true);
+  assert.deepEqual(Object.keys(publications.staged), [generationC]);
+  assert.equal(Object.hasOwn(manifest.signalIds, orphanA.id), false);
+  assert.equal(Object.hasOwn(manifest.signalIds, acceptedB.id), true);
+  assert.equal(Object.hasOwn(manifest.signalIds, unresolvedC.id), true);
+  assert.equal(adapter.inspect('smart-money/v1/journal/2026-08-25.json'), null);
+
+  const recovered = await publishJournalGeneration({
+    refreshStartedAt: generationC,
+    snapshot: acceptedPrivateSnapshot(generationC, [unresolvedC]),
+  }, { adapter, now: new Date('2026-08-28T00:00:00.000Z') });
+  assert.equal(recovered.durableWriteSucceeded, true);
+  const history = await readJournal({
+    since: '2026-08-25T00:00:00.000Z', limit: 10,
+  }, { adapter, now: new Date('2026-08-28T00:00:00.000Z') });
+  assert.deepEqual(history.signals.map((row) => row.id), [acceptedB.id, unresolvedC.id]);
+});
+
 test('prune commits manifest removal before deletion and performs zero deletes on manifest failure', async () => {
   const oldDate = '2025-07-21';
   const oldPath = `smart-money/v1/journal/${oldDate}.json`;
@@ -1088,11 +1132,16 @@ test('history is inclusive, bounded, exact, and pages equal timestamps by stable
     'dailyMarks', 'nextCursor', 'providerStatuses', 'warnings', 'sourceLinks',
   ]);
   assert.deepEqual(pageOne.signals.map((row) => row.id), [first.id]);
+  assert.deepEqual(pageOne.dailyMarks, []);
   assert.equal(typeof pageOne.nextCursor, 'string');
   const pageTwo = await readJournal({ since: first.observedAt, limit: 1, cursor: pageOne.nextCursor }, options);
   assert.deepEqual(pageTwo.signals.map((row) => row.id), [second.id]);
-  assert.equal(pageTwo.nextCursor, null);
-  assert.deepEqual(pageTwo.dailyMarks.map((row) => row.id), ['2026-08-26:BTC']);
+  assert.deepEqual(pageTwo.dailyMarks, []);
+  assert.equal(typeof pageTwo.nextCursor, 'string');
+  const pageThree = await readJournal({ since: first.observedAt, limit: 1, cursor: pageTwo.nextCursor }, options);
+  assert.deepEqual(pageThree.signals, []);
+  assert.deepEqual(pageThree.dailyMarks.map((row) => row.id), ['2026-08-26:BTC']);
+  assert.equal(pageThree.nextCursor, null);
 
   for (const query of [
     { since: first.observedAt, limit: 0 },
@@ -1102,6 +1151,108 @@ test('history is inclusive, bounded, exact, and pages equal timestamps by stable
   ]) {
     await assert.rejects(readJournal(query, options), /schema_invalid/);
   }
+});
+
+test('history selects the exact manifest date range before partition reads', async () => {
+  const base = memoryJournalAdapter();
+  const date = '2026-08-26';
+  const mark = dailyMark(date, 'BTC');
+  const generation = '2026-08-27T00:00:00.000Z';
+  await publishRows(base, { dailyMarks: [mark], generation });
+  const partitions = [];
+  for (let offset = 398; offset >= 0; offset -= 1) {
+    const partitionDate = new Date(Date.parse(`${date}T00:00:00.000Z`) - offset * 86_400_000)
+      .toISOString().slice(0, 10);
+    partitions.push(partitionDate);
+    if (partitionDate !== date) {
+      base.seed(`smart-money/v1/journal/${partitionDate}.json`, {
+        schemaVersion: 1, date: partitionDate, signals: [], dailyMarks: [],
+      });
+    }
+  }
+  base.seed(MANIFEST, {
+    schemaVersion: 1,
+    partitions,
+    signalIds: {},
+    dailyMarkIds: { [mark.id]: date },
+  });
+  const reads = [];
+  const adapter = {
+    ...base,
+    async read(pathname) {
+      reads.push(pathname);
+      return base.read(pathname);
+    },
+  };
+
+  const history = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 10,
+  }, { adapter, now: new Date('2026-08-27T00:00:00.000Z') });
+
+  assert.deepEqual(history.dailyMarks.map((row) => row.id), [mark.id]);
+  assert.deepEqual(reads.filter((pathname) => pathname.startsWith('smart-money/v1/journal/202')),
+    [PARTITION]);
+});
+
+test('history limit bounds one combined stream even with one thousand daily marks', async () => {
+  const adapter = memoryJournalAdapter();
+  const marks = Array.from({ length: 1_000 }, (_, index) => (
+    dailyMark('2026-08-26', `T${String(index).padStart(4, '0')}`)
+  ));
+  await publishRows(adapter, { dailyMarks: marks });
+  const options = { adapter, now: new Date('2026-08-27T00:00:00.000Z') };
+
+  const first = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 1,
+  }, options);
+  assert.equal(first.signals.length + first.dailyMarks.length, 1);
+  assert.equal(typeof first.nextCursor, 'string');
+  const second = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 1, cursor: first.nextCursor,
+  }, options);
+  assert.equal(second.signals.length + second.dailyMarks.length, 1);
+  assert.notEqual(second.dailyMarks[0].id, first.dailyMarks[0].id);
+});
+
+test('history compares daily marks against the exact inclusive since instant', async () => {
+  const adapter = memoryJournalAdapter();
+  const early = dailyMark('2026-08-26', 'ETH', '2026-08-26T20:00:00.000Z');
+  const late = dailyMark('2026-08-26', 'SOL', '2026-08-26T23:30:00.000Z');
+  await publishRows(adapter, { dailyMarks: [early, late] });
+
+  const history = await readJournal({
+    since: '2026-08-26T23:00:00.000Z', limit: 10,
+  }, { adapter, now: new Date('2026-08-27T00:00:00.000Z') });
+
+  assert.deepEqual(history.dailyMarks.map((row) => row.id), [late.id]);
+});
+
+test('history cursor freezes through and excludes concurrent later observations', async () => {
+  const adapter = memoryJournalAdapter();
+  const first = signalAt('hyperliquid-account-details:through-a', '2026-08-26T10:00:00.000Z');
+  const second = signalAt('hyperliquid-account-details:through-b', '2026-08-26T11:00:00.000Z');
+  await publishRows(adapter, {
+    signals: [first, second], generation: '2026-08-26T11:30:00.000Z',
+  });
+  const pageOne = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 1,
+  }, { adapter, now: new Date('2026-08-26T12:00:00.000Z') });
+  assert.equal(pageOne.through, '2026-08-26T12:00:00.000Z');
+
+  const concurrent = signalAt(
+    'hyperliquid-account-details:through-c', '2026-08-26T12:30:00.000Z',
+  );
+  await publishRows(adapter, {
+    signals: [concurrent], generation: '2026-08-26T13:00:00.000Z',
+  });
+  const pageTwo = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 10, cursor: pageOne.nextCursor,
+  }, { adapter, now: new Date('2026-08-26T14:00:00.000Z') });
+
+  assert.equal(pageTwo.through, pageOne.through);
+  assert.deepEqual(pageTwo.signals.map((row) => row.id), [second.id]);
+  assert.equal(pageTwo.signals.some((row) => row.id === concurrent.id), false);
+  assert.equal(pageTwo.nextCursor, null);
 });
 
 test('tracked tickers use retained supported assets and exclude unsupported research rows', async () => {

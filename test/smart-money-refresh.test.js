@@ -18,6 +18,7 @@ import {
   validateSmartMoneyPrivateSnapshot,
 } from '../lib/smart-money/refresh.js';
 import { computeSmartMoneyPrivateStateDigest } from '../lib/smart-money/private-snapshot.js';
+import { deriveSignals } from '../lib/smart-money/signals.js';
 import { readDurableSmartMoneyCandidate } from '../lib/smart-money/store.js';
 import { mockRequest } from './helpers/api.js';
 import { memoryJournalAdapter } from './fixtures/smart-money/journal.js';
@@ -122,6 +123,118 @@ test('sec-edgar sourceAsOf uses the latest accepted 13F period and survives LKG 
   assert.equal(failed.providerStatuses[0].status, 'unavailable');
   assert.equal(failed.providerStatuses[0].sourceAsOf, '2026-06-30T00:00:00.000Z');
   assert.deepEqual(failed.adapterState.adapters[0].source, accepted.adapterState.adapters[0].source);
+});
+
+test('failed and not-due SEC LKG reuse preserves evidence and activity timestamps byte-for-byte', () => {
+  const { previous, deps } = createRefreshDeps({ signals: [] });
+  const secAdapter = deps.adapters[0];
+  const accepted = normalizeSmartMoneySettledState({
+    adapters: deps.adapters,
+    dueAdapters: [secAdapter],
+    settled: [{
+      adapter: secAdapter,
+      result: { status: 'fulfilled', value: structuredClone(previous.adapterState.adapters[0].source.snapshot) },
+    }],
+    previous,
+    now: new Date('2026-08-28T12:00:00.000Z'),
+  });
+  const acceptedActivities = accepted.activities.filter((row) => row.providerId === 'sec-edgar');
+
+  const failed = normalizeSmartMoneySettledState({
+    adapters: deps.adapters,
+    dueAdapters: [secAdapter],
+    settled: [{ adapter: secAdapter, result: { status: 'rejected', reason: { code: 'timeout' } } }],
+    previous: { adapterState: accepted.adapterState },
+    now: new Date('2026-08-28T13:00:00.000Z'),
+  });
+  const notDue = normalizeSmartMoneySettledState({
+    adapters: deps.adapters,
+    dueAdapters: [],
+    settled: [],
+    previous: { adapterState: accepted.adapterState },
+    now: new Date('2026-08-28T14:00:00.000Z'),
+  });
+
+  assert.deepEqual(
+    failed.activities.filter((row) => row.providerId === 'sec-edgar'),
+    acceptedActivities,
+  );
+  assert.deepEqual(
+    notDue.activities.filter((row) => row.providerId === 'sec-edgar'),
+    acceptedActivities,
+  );
+  assert.equal(failed.providerStatuses[0].lastAttemptAt, '2026-08-28T13:00:00.000Z');
+  assert.equal(failed.providerStatuses[0].retrievedAt, '2026-08-28T12:00:00.000Z');
+  assert.equal(failed.providerStatuses[0].sourceAsOf, '2026-06-30T00:00:00.000Z');
+  assert.deepEqual(failed.adapterState.adapters[0].source, accepted.adapterState.adapters[0].source);
+});
+
+test('Schedule filings establish a silent baseline and only later unseen accessions emit filing signals', () => {
+  const { previous, deps } = createRefreshDeps({ signals: [] });
+  const secAdapter = deps.adapters[0];
+  const schedule = (accessionNumber, filedAt, form = 'SC 13G') => ({
+    cik: '2045724', form, accessionNumber, periodEnd: null, filedAt,
+    isAmendment: form.endsWith('/A'), amendmentChain: [accessionNumber],
+    primaryDocument: 'schedule13g.htm', timingBasis: 'filing_date',
+  });
+  const initialSnapshot = structuredClone(previous.adapterState.adapters[0].source.snapshot);
+  initialSnapshot.disclosures = [
+    schedule('0002045724-26-000010', '2026-08-20T00:00:00.000Z'),
+  ];
+  const noSecBaseline = structuredClone(previous);
+  noSecBaseline.adapterState.adapters[0].source.snapshot.disclosures = [];
+  delete noSecBaseline.adapterState.adapters[0].source.scheduleBaselineEstablished;
+  const baseline = normalizeSmartMoneySettledState({
+    adapters: deps.adapters,
+    dueAdapters: [secAdapter],
+    settled: [{ adapter: secAdapter, result: { status: 'fulfilled', value: initialSnapshot } }],
+    previous: noSecBaseline,
+    now: new Date('2026-08-28T12:00:00.000Z'),
+  });
+  assert.equal(baseline.changes.some((row) => row.kind === 'filing'), false);
+  assert.equal(
+    baseline.adapterState.adapters[0].source.scheduleBaselineEstablished,
+    true,
+  );
+
+  const laterSnapshot = structuredClone(initialSnapshot);
+  laterSnapshot.disclosures.push(
+    schedule('0002045724-26-000011', '2026-08-27T00:00:00.000Z', 'SC 13D/A'),
+  );
+  const later = normalizeSmartMoneySettledState({
+    adapters: deps.adapters,
+    dueAdapters: [secAdapter],
+    settled: [{ adapter: secAdapter, result: { status: 'fulfilled', value: laterSnapshot } }],
+    previous: { adapterState: baseline.adapterState },
+    now: new Date('2026-08-28T13:00:00.000Z'),
+  });
+  assert.equal(later.changes.filter((row) => row.kind === 'filing').length, 1);
+  const activity = later.activities.find((row) => (
+    row.sourceStableId === '0002045724-26-000011'
+  ));
+  assert.equal(activity.timingBasis, 'filing_date');
+  assert.equal(activity.effectiveAt, '2026-08-27T00:00:00.000Z');
+  assert.equal(activity.disclosedAt, '2026-08-27T00:00:00.000Z');
+  assert.deepEqual(activity.asset, {
+    ticker: null,
+    name: 'Beneficial ownership filing',
+    providerSymbol: null,
+    assetClass: 'other',
+    supported: false,
+  });
+  assert.equal(activity.caveats.includes('The beneficial-ownership effective date was not extracted.'), true);
+
+  const derived = deriveSignals({
+    changes: later.changes,
+    pendingConfirmations: [],
+    nowMs: Date.parse('2026-08-28T13:00:00.000Z'),
+  });
+  assert.equal(derived.signals.length, 1);
+  assert.equal(derived.signals[0].kind, 'filing');
+  assert.equal(derived.signals[0].action, 'observe');
+  assert.equal(derived.signals[0].asset.ticker, null);
+  assert.equal(derived.signals[0].positionChange, null);
+  assert.equal(derived.signals[0].paperEligibility.eligible, false);
 });
 
 test('a partial refresh preserves valid signals derived from successful settled siblings', async () => {
@@ -280,6 +393,14 @@ test('production defaults make zero market-data calls and persist no price evide
   }
 });
 
+test('production SEC refresh is bounded to the newest canonical 13F filing', () => {
+  const deps = createProductionSmartMoneyDependencies(
+    new Date('2026-08-28T12:00:00.000Z'),
+  );
+  const secAdapter = deps.adapters.find((adapter) => adapter.id === 'sec-edgar');
+  assert.equal(secAdapter.maxFilings, 1);
+});
+
 test('the private Yahoo bridge uses raw SYMBOLS evidence for causal quotes and completed closes', async () => {
   const signal = structuredClone(ACCEPTED_SNAPSHOT.signals[0]);
   signal.referencePrice = null;
@@ -366,6 +487,46 @@ test('a new SEC quarter compares against the previous accepted latest quarter', 
   assert.equal(changes[0].classification, 'reduced');
   assert.equal(changes[0].previousShares, 1_000);
   assert.equal(changes[0].currentShares, 800);
+});
+
+test('a Q2 exit uses only Q2 filing evidence while Q1 supplies prior numerical state', () => {
+  const holding = (periodEnd, shares, accessionNumber, filedAt, cusip) => ({
+    accessionNumber, periodEnd, filedAt, isAmendment: false,
+    amendmentChain: [accessionNumber], issuer: cusip === '67066G104' ? 'NVIDIA Corporation' : 'Other',
+    securityClass: 'COM', cusip, ticker: null, reportedValue: 2_000,
+    shares, putCall: null, shareType: 'SH', paperEligible: false,
+  });
+  const currentAccession = '0002045724-26-000002';
+  const previousAccession = '0002045724-26-000001';
+  const currentFiledAt = '2026-08-14T00:00:00.000Z';
+  const changes = buildSecHoldingChanges(
+    { kind: 'sec', snapshot: {
+      filings: [{
+        cik: '2045724', form: '13F-HR', accessionNumber: currentAccession,
+        periodEnd: '2026-06-30', filedAt: currentFiledAt, isAmendment: false,
+        amendmentChain: [currentAccession], primaryDocument: 'primary.xml',
+      }],
+      disclosures: [],
+      holdings: [holding('2026-06-30', 5, currentAccession, currentFiledAt, '111111111')],
+    } },
+    { kind: 'sec', snapshot: {
+      filings: [{
+        cik: '2045724', form: '13F-HR', accessionNumber: previousAccession,
+        periodEnd: '2026-03-31', filedAt: '2026-05-14T00:00:00.000Z', isAmendment: false,
+        amendmentChain: [previousAccession], primaryDocument: 'primary.xml',
+      }],
+      disclosures: [],
+      holdings: [holding('2026-03-31', 1_000, previousAccession, '2026-05-14T00:00:00.000Z', '67066G104')],
+    } },
+    new Date('2026-08-28T12:00:00.000Z'),
+  );
+  const exit = changes.find((row) => row.classification === 'exited');
+  assert.equal(exit.previousShares, 1_000);
+  assert.equal(exit.currentShares, 0);
+  assert.equal(exit.sourceStableId.startsWith(`${currentAccession}:`), true);
+  assert.equal(exit.sourceUrl.includes(currentAccession.replaceAll('-', '')), true);
+  assert.equal(exit.effectiveAt, '2026-06-30T00:00:00.000Z');
+  assert.equal(exit.disclosedAt, currentFiledAt);
 });
 
 test('completed-day marks cover retained, signaled, SPX, and BTC tickers on the latest completed UTC date', async () => {
@@ -659,6 +820,44 @@ test('refresh transaction follows the exact durable publication order', async ()
     `price:${ACCEPTED_SNAPSHOT.signals[0].id}`,
     'trackedTickers', 'dailyMarks', 'journal', 'buildSnapshot', 'snapshot', 'publication',
   ]);
+});
+
+test('production dependencies expose journal pruning and refresh invokes it under the lock after publication', async () => {
+  const production = createProductionSmartMoneyDependencies(
+    new Date('2026-08-28T12:00:00.000Z'),
+  );
+  assert.equal(typeof production.pruneJournal, 'function');
+
+  const { deps, calls } = createRefreshDeps({ signals: [] });
+  deps.pruneJournal = async ({ now }) => {
+    calls.events.push('prune');
+    assert.equal(now, '2026-08-28T12:00:00.000Z');
+    return { durableWriteSucceeded: true, partitions: [], manifest: { ok: true, error: null } };
+  };
+  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+  assert.equal(result.persisted, true);
+  assert.ok(calls.events.indexOf('prune') > calls.events.indexOf('publication'));
+  assert.equal(calls.events[0], 'lock');
+});
+
+test('journal prune failure preserves accepted publication but returns a safe partial warning', async () => {
+  const { deps, calls } = createRefreshDeps({ signals: [] });
+  deps.pruneJournal = async () => {
+    calls.events.push('prune');
+    return {
+      durableWriteSucceeded: false,
+      partitions: [{ date: '2025-07-01', ok: false, error: 'private-delete-detail' }],
+      manifest: { ok: true, error: null },
+    };
+  };
+  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+  assert.equal(calls.publishJournal, 1);
+  assert.equal(calls.writeSnapshot, 1);
+  assert.equal(result.persisted, true);
+  assert.equal(result.partial, true);
+  assert.equal(result.errorCode, null);
+  assert.equal(result.warnings.includes('journal:prune_failed'), true);
+  assert.equal(JSON.stringify(result).includes('private-delete-detail'), false);
 });
 
 test('operational failure details are sanitized from refresh results', async () => {
