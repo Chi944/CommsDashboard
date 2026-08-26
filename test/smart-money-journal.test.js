@@ -1558,11 +1558,11 @@ test('production Blob pruning forwards the just-read partition ETag to condition
           signalIds: {},
           dailyMarkIds: {},
         },
-        etag: 'manifest-etag',
+        etag: '"manifest-etag"',
       }],
       [oldPath, {
         data: { schemaVersion: 1, date: oldDate, signals: [], dailyMarks: [] },
-        etag: 'partition-etag',
+        etag: '"partition-etag"',
       }],
     ]);
     class BlobNotFoundError extends Error {}
@@ -1570,20 +1570,25 @@ test('production Blob pruning forwards the just-read partition ETag to condition
     function blobResult(record) {
       return {
         stream: new Blob([JSON.stringify(record.data)]).stream(),
-        blob: { etag: record.etag },
+        blob: { etag: typeof record.etag === 'string' ? 'W/' + record.etag : record.etag },
       };
     }
     await mock.module('@vercel/blob', {
       namedExports: {
         BlobNotFoundError,
         BlobPreconditionFailedError,
+        async head(pathname) {
+          const record = records.get(pathname);
+          if (!record) throw new BlobNotFoundError('missing');
+          return { etag: record.etag };
+        },
         async get(pathname) {
           const record = records.get(pathname);
           if (!record) throw new BlobNotFoundError('missing');
           const result = blobResult(record);
           if (replaceStaleRead && pathname === 'smart-money/v1/journal/2025-07-18.json') {
             replaceStaleRead = false;
-            records.set(pathname, { ...record, etag: 'stale-replacement-etag' });
+            records.set(pathname, { ...record, etag: '"stale-replacement-etag"' });
           }
           return result;
         },
@@ -1594,7 +1599,7 @@ test('production Blob pruning forwards the just-read partition ETag to condition
           }
           records.set(pathname, {
             data: JSON.parse(body),
-            etag: 'manifest-next-' + nextEtag++,
+            etag: '"manifest-next-' + nextEtag++ + '"',
           });
         },
         async del(pathname, options) {
@@ -1620,7 +1625,7 @@ test('production Blob pruning forwards the just-read partition ETag to condition
     const stalePath = 'smart-money/v1/journal/2025-07-18.json';
     records.set(stalePath, {
       data: { schemaVersion: 1, date: '2025-07-18', signals: [], dailyMarks: [] },
-      etag: 'stale-read-etag',
+      etag: '"stale-read-etag"',
     });
     replaceStaleRead = true;
     const staleResult = await pruneJournal({ now: new Date('2026-08-26T12:00:00.000Z') });
@@ -1673,11 +1678,11 @@ test('production Blob pruning forwards the just-read partition ETag to condition
   assert.deepEqual(observed.deleteAttempts, [
     {
       pathname: 'smart-money/v1/journal/2025-07-21.json',
-      options: { access: 'private', ifMatch: 'partition-etag' },
+      options: { access: 'private', ifMatch: '"partition-etag"' },
     },
     {
       pathname: 'smart-money/v1/journal/2025-07-18.json',
-      options: { access: 'private', ifMatch: 'stale-read-etag' },
+      options: { access: 'private', ifMatch: '"stale-read-etag"' },
     },
   ]);
   assert.equal(observed.deleteCalls, 2);
