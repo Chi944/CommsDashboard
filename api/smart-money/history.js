@@ -49,7 +49,7 @@ export function createSmartMoneyHistoryHandler(deps = {}) {
       return;
     }
     try {
-      const history = await read(input);
+      const history = await read(input, { now });
       res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=300');
       res.status(200).json(history);
     } catch {

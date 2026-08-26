@@ -1102,6 +1102,7 @@ test('journal rejects future signals and marks from an incomplete UTC day', asyn
 
 test('journal rejects stored rows placed in the wrong UTC-day partition', async () => {
   const adapter = memoryJournalAdapter();
+  const accepted = acceptedPrivateSnapshot(GENERATION, [SIGNAL]);
   adapter.seed(MANIFEST, {
     schemaVersion: 1,
     partitions: ['2026-08-26'],
@@ -1114,6 +1115,7 @@ test('journal rejects stored rows placed in the wrong UTC-day partition', async 
     signals: [signalAt('hyperliquid-account-details:wrong-day', '2026-08-25T23:59:59.000Z')],
     dailyMarks: [],
   });
+  adapter.seed(PUBLICATIONS, acceptedPublicationRecord(accepted));
   await assert.rejects(readJournal({ since: '2026-08-26T00:00:00.000Z', limit: 10 }, {
     adapter,
     now: new Date('2026-08-27T00:00:00.000Z'),
@@ -1255,6 +1257,162 @@ test('history cursor freezes through and excludes concurrent later observations'
   assert.equal(pageTwo.nextCursor, null);
 });
 
+test('history cursor freezes the accepted publication generation against later backdated rows', async () => {
+  const adapter = memoryJournalAdapter();
+  const first = signalAt(
+    'hyperliquid-account-details:generation-a', '2026-08-26T10:00:00.000Z',
+  );
+  const second = signalAt(
+    'hyperliquid-account-details:generation-b', '2026-08-26T11:00:00.000Z',
+  );
+  await publishRows(adapter, {
+    signals: [first, second], generation: '2026-08-26T11:30:00.000Z',
+  });
+  const pageOne = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 1,
+  }, { adapter, now: new Date('2026-08-26T12:00:00.000Z') });
+  assert.deepEqual(pageOne.signals.map((row) => row.id), [first.id]);
+
+  const backdated = signalAt(
+    'hyperliquid-account-details:generation-c', '2026-08-26T10:30:00.000Z',
+  );
+  await publishRows(adapter, {
+    signals: [backdated], generation: '2026-08-26T13:00:00.000Z',
+  });
+  const pageTwo = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 10, cursor: pageOne.nextCursor,
+  }, { adapter, now: new Date('2026-08-26T14:00:00.000Z') });
+
+  assert.equal(pageTwo.through, pageOne.through);
+  assert.deepEqual(pageTwo.signals.map((row) => row.id), [second.id]);
+  assert.equal(pageTwo.signals.some((row) => row.id === backdated.id), false);
+});
+
+test('history rejects a cursor publication watermark newer than the accepted generation', async () => {
+  const adapter = memoryJournalAdapter();
+  const first = signalAt(
+    'hyperliquid-account-details:watermark-bound-a', '2026-08-26T10:00:00.000Z',
+  );
+  const second = signalAt(
+    'hyperliquid-account-details:watermark-bound-b', '2026-08-26T11:00:00.000Z',
+  );
+  await publishRows(adapter, {
+    signals: [first, second], generation: '2026-08-26T11:30:00.000Z',
+  });
+  const pageOne = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 1,
+  }, { adapter, now: new Date('2026-08-26T12:00:00.000Z') });
+  const payload = JSON.parse(Buffer.from(pageOne.nextCursor, 'base64url').toString('utf8'));
+  payload.publicationThrough = '2026-08-26T11:45:00.000Z';
+  const cursor = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+
+  await assert.rejects(readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 10, cursor,
+  }, { adapter, now: new Date('2026-08-26T12:00:00.000Z') }), /schema_invalid/);
+});
+
+test('history cursor survives compaction of its empty accepted-generation watermark', async () => {
+  const adapter = memoryJournalAdapter();
+  const generationOne = '2026-08-27T10:00:00.000Z';
+  const generationTwo = '2026-08-27T11:00:00.000Z';
+  const generationThree = '2026-08-27T12:00:00.000Z';
+  const first = signalAt(
+    'hyperliquid-account-details:watermark-a', '2026-08-26T08:00:00.000Z',
+  );
+  const second = signalAt(
+    'hyperliquid-account-details:watermark-b', '2026-08-26T09:00:00.000Z',
+  );
+  await publishRows(adapter, { signals: [first, second], generation: generationOne });
+  await publishRows(adapter, { generation: generationTwo });
+  const pageOne = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 1,
+  }, { adapter, now: new Date('2026-08-27T11:30:00.000Z') });
+  assert.deepEqual(pageOne.signals.map((row) => row.id), [first.id]);
+
+  await publishRows(adapter, { generation: generationThree });
+  const pruned = await pruneJournal({
+    now: new Date('2026-08-27T13:00:00.000Z'),
+  }, { adapter });
+  assert.equal(pruned.durableWriteSucceeded, true);
+  assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS).published, generationTwo), false);
+
+  const pageTwo = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 10, cursor: pageOne.nextCursor,
+  }, { adapter, now: new Date('2026-08-27T14:00:00.000Z') });
+
+  assert.deepEqual(pageTwo.signals.map((row) => row.id), [second.id]);
+  assert.equal(pageTwo.nextCursor, null);
+});
+
+test('history resumes partition reads from the cursor UTC date', async () => {
+  const base = memoryJournalAdapter();
+  const first = signalAt(
+    'hyperliquid-account-details:range-a', '2026-08-24T10:00:00.000Z',
+  );
+  const second = signalAt(
+    'hyperliquid-account-details:range-b', '2026-08-25T10:00:00.000Z',
+  );
+  const third = signalAt(
+    'hyperliquid-account-details:range-c', '2026-08-26T10:00:00.000Z',
+  );
+  await publishRows(base, {
+    signals: [first, second, third], generation: '2026-08-26T11:00:00.000Z',
+  });
+  let rejectOldPartition = false;
+  const adapter = {
+    ...base,
+    async read(pathname) {
+      if (rejectOldPartition && pathname === 'smart-money/v1/journal/2026-08-24.json') {
+        throw new Error('cursor page reread an already-consumed partition');
+      }
+      return base.read(pathname);
+    },
+  };
+  const pageOne = await readJournal({
+    since: '2026-08-24T00:00:00.000Z', limit: 2,
+  }, { adapter, now: new Date('2026-08-27T00:00:00.000Z') });
+  assert.deepEqual(pageOne.signals.map((row) => row.id), [first.id, second.id]);
+  rejectOldPartition = true;
+
+  const pageTwo = await readJournal({
+    since: '2026-08-24T00:00:00.000Z', limit: 2, cursor: pageOne.nextCursor,
+  }, { adapter, now: new Date('2026-08-27T00:00:00.000Z') });
+
+  assert.deepEqual(pageTwo.signals.map((row) => row.id), [third.id]);
+});
+
+test('history ignores a missing partition referenced only by an unpublished stage', async () => {
+  const base = memoryJournalAdapter();
+  const accepted = signalAt(
+    'hyperliquid-account-details:accepted-partition', '2026-08-26T10:00:00.000Z',
+  );
+  await publishRows(base, {
+    signals: [accepted], generation: '2026-08-27T00:00:00.000Z',
+  });
+  const unresolved = signalAt(
+    'hyperliquid-account-details:unpublished-partition', '2026-08-25T10:00:00.000Z',
+  );
+  const staged = await stageJournal({
+    refreshStartedAt: '2026-08-27T01:00:00.000Z', signals: [unresolved], dailyMarks: [],
+  }, { adapter: base, now: new Date('2026-08-27T01:00:00.000Z') });
+  assert.equal(staged.durableWriteSucceeded, true);
+  const adapter = {
+    ...base,
+    async read(pathname) {
+      if (pathname === 'smart-money/v1/journal/2026-08-25.json') {
+        return { data: null, etag: null };
+      }
+      return base.read(pathname);
+    },
+  };
+
+  const history = await readJournal({
+    since: '2026-08-25T00:00:00.000Z', limit: 10,
+  }, { adapter, now: new Date('2026-08-27T02:00:00.000Z') });
+
+  assert.deepEqual(history.signals.map((row) => row.id), [accepted.id]);
+});
+
 test('tracked tickers use retained supported assets and exclude unsupported research rows', async () => {
   const adapter = memoryJournalAdapter();
   const eth = signalAt('hyperliquid-account-details:eth', '2026-08-26T02:00:00.000Z', 'ETH');
@@ -1318,4 +1476,276 @@ test('prune removes only expired partitions and a stale manifest ETag cannot era
   assert.deepEqual(manifest.partitions, ['2026-08-26']);
   assert.equal(manifest.signalIds[recent.id], '2026-08-26');
   assert.equal(adapter.inspect('smart-money/v1/journal/2025-07-21.json'), null);
+});
+
+test('prune cannot erase a daily mark reused by a concurrently staged newer generation', async () => {
+  const mark = dailyMark();
+  const generationA = '2026-08-27T01:00:00.000Z';
+  const generationB = '2026-08-27T02:00:00.000Z';
+  const generationC = '2026-08-27T03:00:00.000Z';
+  let armPrune = false;
+  let blocked = false;
+  let announceBlocked;
+  let releasePrune;
+  const pruneBlocked = new Promise((resolve) => { announceBlocked = resolve; });
+  const pruneRelease = new Promise((resolve) => { releasePrune = resolve; });
+  const adapter = memoryJournalAdapter({
+    beforeWrite: async ({ pathname, data }) => {
+      if (armPrune && !blocked && pathname === MANIFEST
+          && !Object.hasOwn(data.dailyMarkIds, mark.id)) {
+        blocked = true;
+        announceBlocked();
+        await pruneRelease;
+      }
+    },
+  });
+  await stageJournal({
+    refreshStartedAt: generationA, signals: [], dailyMarks: [mark],
+  }, { adapter, now: new Date(generationA) });
+  await stageJournal({
+    refreshStartedAt: generationB, signals: [], dailyMarks: [],
+  }, { adapter, now: new Date(generationB) });
+  await publishJournalGeneration({
+    refreshStartedAt: generationB,
+    snapshot: acceptedPrivateSnapshot(generationB, []),
+  }, { adapter, now: new Date(generationB) });
+
+  armPrune = true;
+  const pruning = pruneJournal({ now: new Date('2026-08-27T04:00:00.000Z') }, { adapter });
+  await pruneBlocked;
+  const stagedC = await stageJournal({
+    refreshStartedAt: generationC, signals: [], dailyMarks: [mark],
+  }, { adapter, now: new Date(generationC) });
+  assert.equal(stagedC.durableWriteSucceeded, false);
+  releasePrune();
+  const pruned = await pruning;
+  assert.equal(pruned.durableWriteSucceeded, true);
+
+  const retriedC = await stageJournal({
+    refreshStartedAt: generationC, signals: [], dailyMarks: [mark],
+  }, { adapter, now: new Date(generationC) });
+  assert.equal(retriedC.durableWriteSucceeded, true);
+
+  const publishedC = await publishJournalGeneration({
+    refreshStartedAt: generationC,
+    snapshot: acceptedPrivateSnapshot(generationC, []),
+  }, { adapter, now: new Date('2026-08-27T04:00:00.000Z') });
+  assert.equal(publishedC.durableWriteSucceeded, true);
+  const history = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 10,
+  }, { adapter, now: new Date('2026-08-27T04:00:00.000Z') });
+  assert.deepEqual(history.dailyMarks.map((row) => row.id), [mark.id]);
+});
+
+test('a stale-generation restage cannot recreate an orphan after cleanup passes its fence', async () => {
+  const base = memoryJournalAdapter();
+  const generationP = '2026-08-28T00:00:00.000Z';
+  const generationA = '2026-08-28T01:00:00.000Z';
+  const generationB = '2026-08-28T02:00:00.000Z';
+  const orphanA = signalAt(
+    'hyperliquid-account-details:stale-restage', '2026-08-26T10:00:00.000Z',
+  );
+  const movedA = signalAt(orphanA.id, '2026-08-27T10:00:00.000Z');
+  await publishRows(base, { generation: generationP });
+  await stageJournal({
+    refreshStartedAt: generationA, signals: [orphanA], dailyMarks: [],
+  }, { adapter: base, now: new Date(generationA) });
+
+  let announceRetryRead;
+  let releaseRetryRead;
+  let blockRetry = true;
+  const retryRead = new Promise((resolve) => { announceRetryRead = resolve; });
+  const retryRelease = new Promise((resolve) => { releaseRetryRead = resolve; });
+  const adapter = {
+    ...base,
+    async read(pathname) {
+      const record = await base.read(pathname);
+      if (blockRetry && pathname === PUBLICATIONS) {
+        blockRetry = false;
+        announceRetryRead();
+        await retryRelease;
+      }
+      return record;
+    },
+  };
+  const retrying = stageJournal({
+    refreshStartedAt: generationA, signals: [movedA], dailyMarks: [],
+  }, { adapter, now: new Date('2026-08-28T03:00:00.000Z') });
+  await retryRead;
+
+  await publishRows(base, { generation: generationB });
+  const pruned = await pruneJournal({
+    now: new Date('2026-08-28T03:00:00.000Z'),
+  }, { adapter: base });
+  assert.equal(pruned.durableWriteSucceeded, true);
+  releaseRetryRead();
+  const retried = await retrying;
+
+  assert.equal(retried.durableWriteSucceeded, false);
+  assert.equal(Object.hasOwn(base.inspect(MANIFEST).signalIds, orphanA.id), false);
+  assert.equal(base.inspect('smart-money/v1/journal/2026-08-27.json'), null);
+  assert.equal(Object.hasOwn(base.inspect(PUBLICATIONS).staged, generationA), false);
+  assert.equal(Object.hasOwn(base.inspect(PUBLICATIONS), 'cleanup'), false);
+});
+
+test('publication fails closed when a staged ID is no longer manifest-and-partition durable', async () => {
+  const adapter = memoryJournalAdapter();
+  const mark = dailyMark();
+  await stageJournal({
+    refreshStartedAt: GENERATION, signals: [], dailyMarks: [mark],
+  }, { adapter, now: new Date(GENERATION) });
+  adapter.seed(MANIFEST, {
+    schemaVersion: 1, partitions: [], signalIds: {}, dailyMarkIds: {},
+  });
+
+  const result = await publishJournalGeneration({
+    refreshStartedAt: GENERATION,
+    snapshot: acceptedPrivateSnapshot(GENERATION, []),
+  }, { adapter, now: new Date(GENERATION) });
+
+  assert.deepEqual(result, {
+    durableWriteSucceeded: false, skipped: false, error: 'publication_rows_unavailable',
+  });
+  assert.equal(await readAcceptedSmartMoneySnapshot({ adapter, now: new Date(GENERATION) }), null);
+});
+
+test('failed recent row cleanup restores manifest retry metadata before compacting its stage', async () => {
+  const adapter = memoryJournalAdapter();
+  const generationA = '2026-08-27T01:00:00.000Z';
+  const generationB = '2026-08-27T02:00:00.000Z';
+  const orphanA = signalAt(
+    'hyperliquid-account-details:recent-cleanup-retry', '2026-08-26T10:00:00.000Z',
+  );
+  const acceptedB = signalAt(
+    'hyperliquid-account-details:recent-cleanup-accepted', '2026-08-26T11:00:00.000Z',
+  );
+  await stageJournal({
+    refreshStartedAt: generationA, signals: [orphanA], dailyMarks: [],
+  }, { adapter, now: new Date(generationA) });
+  await stageJournal({
+    refreshStartedAt: generationB, signals: [acceptedB], dailyMarks: [],
+  }, { adapter, now: new Date(generationB) });
+  await publishJournalGeneration({
+    refreshStartedAt: generationB,
+    snapshot: acceptedPrivateSnapshot(generationB, [acceptedB]),
+  }, { adapter, now: new Date(generationB) });
+  adapter.failNext(PARTITION);
+
+  const first = await pruneJournal({
+    now: new Date('2026-08-27T04:00:00.000Z'),
+  }, { adapter });
+  assert.equal(first.durableWriteSucceeded, false);
+  assert.equal(adapter.inspect(MANIFEST).signalIds[orphanA.id], '2026-08-26');
+  assert.deepEqual(adapter.inspect(PUBLICATIONS).staged[generationA], {
+    signalIds: [orphanA.id], dailyMarkIds: [],
+  });
+  assert.deepEqual(adapter.inspect(PUBLICATIONS).cleanup, {
+    staged: { [generationA]: { signalIds: [orphanA.id], dailyMarkIds: [] } },
+    signalIds: { [orphanA.id]: '2026-08-26' },
+    dailyMarkIds: {},
+  });
+  assert.equal(adapter.inspect(PARTITION).signals.some((row) => row.id === orphanA.id), true);
+
+  const retry = await pruneJournal({
+    now: new Date('2026-08-27T04:00:00.000Z'),
+  }, { adapter });
+  assert.equal(retry.durableWriteSucceeded, true);
+  assert.equal(Object.hasOwn(adapter.inspect(MANIFEST).signalIds, orphanA.id), false);
+  assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS).staged, generationA), false);
+  assert.equal(adapter.inspect(PARTITION).signals.some((row) => row.id === orphanA.id), false);
+  assert.equal(adapter.inspect(PARTITION).signals.some((row) => row.id === acceptedB.id), true);
+});
+
+test('durable cleanup ID-to-date metadata survives both row and manifest-restore failures', async () => {
+  const generationA = '2026-08-27T01:00:00.000Z';
+  const generationB = '2026-08-27T02:00:00.000Z';
+  const orphanA = signalAt(
+    'hyperliquid-account-details:double-cleanup-failure', '2026-08-26T10:00:00.000Z',
+  );
+  const acceptedB = signalAt(
+    'hyperliquid-account-details:double-cleanup-accepted', '2026-08-26T11:00:00.000Z',
+  );
+  let adapter;
+  let armedRestoreFailure = false;
+  adapter = memoryJournalAdapter({
+    beforeWrite: async ({ pathname, data }) => {
+      if (!armedRestoreFailure && pathname === PARTITION
+          && !data.signals.some((row) => row.id === orphanA.id)) {
+        armedRestoreFailure = true;
+        adapter.failNext(MANIFEST);
+      }
+    },
+  });
+  await stageJournal({
+    refreshStartedAt: generationA, signals: [orphanA], dailyMarks: [],
+  }, { adapter, now: new Date(generationA) });
+  await stageJournal({
+    refreshStartedAt: generationB, signals: [acceptedB], dailyMarks: [],
+  }, { adapter, now: new Date(generationB) });
+  await publishJournalGeneration({
+    refreshStartedAt: generationB,
+    snapshot: acceptedPrivateSnapshot(generationB, [acceptedB]),
+  }, { adapter, now: new Date(generationB) });
+  adapter.failNext(PARTITION);
+
+  const first = await pruneJournal({
+    now: new Date('2026-08-27T04:00:00.000Z'),
+  }, { adapter });
+  assert.equal(first.durableWriteSucceeded, false);
+  assert.equal(Object.hasOwn(adapter.inspect(MANIFEST).signalIds, orphanA.id), false);
+  assert.equal(adapter.inspect(PARTITION).signals.some((row) => row.id === orphanA.id), true);
+  assert.deepEqual(adapter.inspect(PUBLICATIONS).cleanup.signalIds, {
+    [orphanA.id]: '2026-08-26',
+  });
+
+  const retry = await pruneJournal({
+    now: new Date('2026-08-27T04:00:00.000Z'),
+  }, { adapter });
+  assert.equal(retry.durableWriteSucceeded, true);
+  assert.equal(adapter.inspect(PARTITION).signals.some((row) => row.id === orphanA.id), false);
+  assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS).staged, generationA), false);
+  assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS), 'cleanup'), false);
+});
+
+test('failed expired cleanup retains stage retry metadata until the physical delete succeeds', async () => {
+  const adapter = memoryJournalAdapter();
+  const oldDate = '2025-07-20';
+  const oldGeneration = '2025-07-20T21:00:00.000Z';
+  const currentGeneration = '2026-08-26T22:00:00.000Z';
+  const oldSignal = signalAt(
+    'hyperliquid-account-details:cleanup-retry', `${oldDate}T20:00:00.000Z`,
+  );
+  const oldPath = `smart-money/v1/journal/${oldDate}.json`;
+  await stageJournal({
+    refreshStartedAt: oldGeneration, signals: [oldSignal], dailyMarks: [],
+  }, { adapter, now: new Date(oldGeneration) });
+  await stageJournal({
+    refreshStartedAt: currentGeneration, signals: [], dailyMarks: [],
+  }, { adapter, now: new Date(currentGeneration) });
+  await publishJournalGeneration({
+    refreshStartedAt: currentGeneration,
+    snapshot: acceptedPrivateSnapshot(currentGeneration, []),
+  }, { adapter, now: new Date(currentGeneration) });
+  adapter.failNextDelete(oldPath);
+
+  const first = await pruneJournal({
+    now: new Date('2026-08-26T23:00:00.000Z'),
+  }, { adapter });
+  assert.equal(first.durableWriteSucceeded, false);
+  assert.deepEqual(adapter.inspect(PUBLICATIONS).staged[oldGeneration], {
+    signalIds: [oldSignal.id], dailyMarkIds: [],
+  });
+  assert.deepEqual(adapter.inspect(PUBLICATIONS).cleanup, {
+    staged: { [oldGeneration]: { signalIds: [oldSignal.id], dailyMarkIds: [] } },
+    signalIds: { [oldSignal.id]: oldDate },
+    dailyMarkIds: {},
+  });
+  assert.ok(adapter.inspect(oldPath));
+
+  const retry = await pruneJournal({
+    now: new Date('2026-08-26T23:00:00.000Z'),
+  }, { adapter });
+  assert.equal(retry.durableWriteSucceeded, true);
+  assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS).staged, oldGeneration), false);
+  assert.equal(adapter.inspect(oldPath), null);
 });

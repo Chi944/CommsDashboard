@@ -147,6 +147,7 @@ test('history forwards inclusive since, bounded limit, and opaque cursor and ret
   });
   const cursor = Buffer.from(JSON.stringify({
     through: '2026-08-28T11:59:00.000Z',
+    publicationThrough: '2026-08-28T11:58:00.000Z',
     timestamp: '2026-08-26T11:00:00.000Z',
     type: 'signal',
     id: ACCEPTED_SNAPSHOT.signals[0].id,
@@ -179,7 +180,7 @@ test('history enforces required canonical since, limit 1-500, 400 days, and stri
     '/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&secret=x',
     '/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&limit=2',
     '/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&cursor=not-opaque',
-    `/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&cursor=${Buffer.from(JSON.stringify({ through: '2026-08-28T11:59:00.000Z', timestamp: '2026-08-26T11:00:00.000Z', type: 'signal', id: 'bad\u0000id' })).toString('base64url')}`,
+    `/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&cursor=${Buffer.from(JSON.stringify({ through: '2026-08-28T11:59:00.000Z', publicationThrough: '2026-08-28T11:58:00.000Z', timestamp: '2026-08-26T11:00:00.000Z', type: 'signal', id: 'bad\u0000id' })).toString('base64url')}`,
     `/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&cursor=${Buffer.from(JSON.stringify({ timestamp: '2026-08-26T11:00:00.000Z', type: 'signal', id: ACCEPTED_SNAPSHOT.signals[0].id })).toString('base64url')}`,
   ];
   for (const path of invalid) {
@@ -193,6 +194,33 @@ test('history enforces required canonical since, limit 1-500, 400 days, and stri
   assert.equal(res.statusCode, 405);
   assert.equal(res.headers.Allow, 'GET');
   assert.equal(reads, 0);
+});
+
+test('history uses one captured clock at the exact inclusive 400-day boundary', async () => {
+  const now = new Date('2026-08-28T12:00:00.000Z');
+  const since = new Date(now.getTime() - 400 * 86_400_000).toISOString();
+  let clockReads = 0;
+  let forwardedNow = null;
+  const handler = createSmartMoneyHistoryHandler({
+    now: () => {
+      clockReads += 1;
+      return new Date(now);
+    },
+    readJournal: async (_query, options) => {
+      forwardedNow = options?.now;
+      return structuredClone(ACCEPTED_HISTORY);
+    },
+  });
+  const { req, res } = mockRequest(
+    `/api/smart-money/history?since=${encodeURIComponent(since)}&limit=1`,
+  );
+
+  await handler(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(clockReads, 1);
+  assert.ok(forwardedNow instanceof Date);
+  assert.equal(forwardedNow.toISOString(), now.toISOString());
 });
 
 test('protected refresh requires exact Bearer authorization and forbids query secrets', async () => {
