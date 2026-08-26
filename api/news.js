@@ -4,7 +4,7 @@
 //
 // GET /api/news -> { ok, fetchedAt, items: [...] }
 
-import { parseFeed } from '../lib/feeds.js';
+import { parseGoogleNewsFeed } from '../lib/feeds.js';
 
 const QUERIES = [
   { category: 'Shipping',     q: 'shipping disruption red sea suez container' },
@@ -45,10 +45,8 @@ async function fetchTopic({ category, q }) {
   });
   if (!r.ok) throw new Error(`${category} ${r.status}`);
   const xml = await r.text();
-  const items = parseFeed(xml, {
+  const items = parseGoogleNewsFeed(xml, {
     maxItems: PER_QUERY,
-    allowedOrigins: ['https://news.google.com'],
-    allowExternalHttpsLinks: true,
   });
   return items.map((it, i) => {
     const ts = Date.parse(it.pubDate) || 0;

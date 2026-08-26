@@ -2,6 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { canonicalizeSourceUrl, parseFeed } from '../lib/feeds.js';
+import newsHandler from '../api/news.js';
+import assetNewsHandler from '../api/asset-news.js';
+
+function responseRecorder() {
+  return {
+    body: null,
+    statusCode: 200,
+    headers: {},
+    setHeader(name, value) { this.headers[name] = value; },
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  };
+}
 
 test('shared feed parser keeps only allowlisted canonical links', () => {
   const xml = '<rss><channel><item><title>A</title><link>https://example.com/a?utm_source=x</link><pubDate>Wed, 26 Aug 2026 00:00:00 GMT</pubDate></item></channel></rss>';
@@ -39,4 +52,29 @@ test('canonicalizeSourceUrl strips tracking parameters and enforces exact origin
     'https://example.com/a?keep=1',
   );
   assert.equal(canonicalizeSourceUrl('https://example.com.evil/a', ['https://example.com']), null);
+});
+
+test('strict parseFeed has no external-link bypass while Google News handlers preserve response shape', async () => {
+  const xml = '<rss><channel><item><title>News</title><link>https://publisher.example/story?utm_source=x</link><pubDate>Wed, 26 Aug 2026 00:00:00 GMT</pubDate><description><![CDATA[<b>Details</b>]]></description><source>Publisher</source></item></channel></rss>';
+  assert.deepEqual(parseFeed(xml, { allowedOrigins: ['https://news.google.com'] }), []);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(xml, { headers: { 'content-type': 'application/rss+xml' } });
+  try {
+    const news = responseRecorder();
+    const asset = responseRecorder();
+    await newsHandler({}, news);
+    await assetNewsHandler({ query: { q: 'Nvidia', limit: '1' } }, asset);
+
+    assert.equal(news.statusCode, 200);
+    assert.deepEqual(Object.keys(news.body).sort(), ['fetchedAt', 'items', 'ok']);
+    assert.deepEqual(Object.keys(news.body.items[0]).sort(), ['category', 'desc', 'headline', 'id', 'source', 'time', 'ts', 'url']);
+    assert.equal(news.body.items[0].url, 'https://publisher.example/story');
+    assert.equal(asset.statusCode, 200);
+    assert.deepEqual(Object.keys(asset.body).sort(), ['fetchedAt', 'items', 'ok', 'query']);
+    assert.deepEqual(Object.keys(asset.body.items[0]).sort(), ['desc', 'headline', 'id', 'source', 'time', 'ts', 'url']);
+    assert.equal(asset.body.items[0].url, 'https://publisher.example/story');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

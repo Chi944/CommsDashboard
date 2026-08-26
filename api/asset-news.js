@@ -1,7 +1,7 @@
 // Vercel serverless function: news for a single asset, by name/symbol query.
 // GET /api/asset-news?q=Nvidia&limit=6 -> { ok, items: [...] }
 
-import { parseFeed } from '../lib/feeds.js';
+import { parseGoogleNewsFeed } from '../lib/feeds.js';
 
 const PER_QUERY_LIMIT = 8;
 
@@ -39,10 +39,8 @@ export default async function handler(req, res) {
       return;
     }
     const xml = await r.text();
-    const items = parseFeed(xml, {
+    const items = parseGoogleNewsFeed(xml, {
       maxItems: PER_QUERY_LIMIT,
-      allowedOrigins: ['https://news.google.com'],
-      allowExternalHttpsLinks: true,
     }).map((it, i) => {
       const ts = Date.parse(it.pubDate) || 0;
       return {
