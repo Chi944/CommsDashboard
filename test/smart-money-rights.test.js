@@ -95,6 +95,15 @@ test('link-only sources cannot feed rankings or paper signals', () => {
   assert.equal(canUseSourceFor('oaktree-insights', 'paper'), false);
 });
 
+test('Yahoo spark is explicitly excluded from Smart Money retrieval, history, display, and paper use', () => {
+  const record = SOURCE_RIGHTS.find((row) => row.id === 'yahoo-finance-spark');
+  assert.ok(record);
+  assert.equal(record.decision, 'exclude');
+  for (const purpose of ['fetch', 'cache', 'history', 'display', 'ranking', 'paper']) {
+    assert.equal(canUseSourceFor(record.id, purpose), false, purpose);
+  }
+});
+
 test('rights assertion rejects an adapter with an unknown rights record', () => {
   assert.throws(
     () => assertAdapterRights([{ id: 'unknown-adapter', rightsId: 'missing', requiredPurposes: ['fetch'] }]),

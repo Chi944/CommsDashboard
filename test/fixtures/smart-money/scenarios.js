@@ -196,3 +196,245 @@ export const DEPS_WITH_ONE_TIMEOUT = Object.freeze({
     },
   }))),
 });
+
+export const ACCEPTED_HISTORY = Object.freeze({
+  schemaVersion: 1,
+  ok: true,
+  fetchedAt: '2026-08-28T12:00:00.000Z',
+  partial: false,
+  since: '2026-08-25T00:00:00.000Z',
+  through: '2026-08-28T12:00:00.000Z',
+  entities: [],
+  signals: [ACCEPTED_SIGNAL],
+  dailyMarks: [{
+    id: '2026-08-27:BTC', date: '2026-08-27', ticker: 'BTC',
+    assetClass: 'crypto', kind: 'benchmark', price: 101_000, currency: 'USD',
+    source: 'coingecko', asOf: '2026-08-27T23:59:59.000Z',
+    retrievedAt: '2026-08-27T23:59:59.500Z',
+  }],
+  nextCursor: null,
+  providerStatuses: [],
+  warnings: [],
+  sourceLinks: [],
+});
+
+export const ENABLED_ADAPTER_IDS = Object.freeze([
+  'sec-edgar',
+  'institutional-strategy',
+  'institutional-tesla',
+  'institutional-ibit',
+  'institutional-fbtc',
+  'institutional-arkb',
+  'institutional-bitb',
+]);
+
+function rightsIdFor(id) {
+  return id === 'sec-edgar' ? id : `${id.slice('institutional-'.length)}-disclosures`;
+}
+
+function fixtureStatus(id, status = 'live') {
+  return {
+    id,
+    group: id === 'sec-edgar' ? 'sec' : 'institutional',
+    enabled: true,
+    status,
+    lastAttemptAt: SECOND_OBSERVED_AT,
+    lastSuccessAt: status === 'unavailable' ? SECOND_OBSERVED_AT : SECOND_OBSERVED_AT,
+    sourceAsOf: null,
+    retrievedAt: SECOND_OBSERVED_AT,
+    freshnessBasis: 'retrieval_time',
+    recordCount: 1,
+    cacheAgeSeconds: 0,
+    errorCode: status === 'unavailable' ? 'timeout' : null,
+  };
+}
+
+export function canonicalAdapterState(overrides = {}) {
+  const sources = overrides.sources ?? {};
+  const statuses = overrides.statuses ?? {};
+  return {
+    schemaVersion: 1,
+    adapters: ENABLED_ADAPTER_IDS.map((id) => ({
+      id,
+      source: sources[id] ?? null,
+      status: statuses[id] ?? null,
+    })),
+    pendingConfirmations: structuredClone(overrides.pendingConfirmations ?? []),
+  };
+}
+
+export const ACCEPTED_PENDING_CONFIRMATION = Object.freeze({
+  id: 'pending:hyperliquid-account-details:hyperliquid:0x0000000000000000000000000000000000000def:BTC',
+  entityId: 'hyperliquid:0x0000000000000000000000000000000000000def',
+  providerId: 'hyperliquid-account-details',
+  assetTicker: 'BTC',
+  providerSymbol: 'BTC',
+  baselineNotionalUsd: 200_000,
+  candidateNotionalUsd: 350_000,
+  baselineDirection: 'long',
+  candidateDirection: 'long',
+  signedBaselineNotionalUsd: 200_000,
+  signedCandidateNotionalUsd: 350_000,
+  observationId: 'hyperliquid-observation-1',
+  acceptedSnapshotId: `snapshot:${FIRST_OBSERVED_AT}`,
+  observedAt: FIRST_OBSERVED_AT,
+});
+
+export function createRefreshDeps(overrides = {}) {
+  const calls = {
+    events: [],
+    fetchByAdapter: Object.fromEntries(ENABLED_ADAPTER_IDS.map((id) => [id, 0])),
+    appendJournal: 0,
+    writeSnapshot: 0,
+  };
+  const captured = {
+    dailyMarkTickers: [],
+    dailyMarkDate: null,
+    deriveInput: null,
+    normalizeInput: null,
+    snapshotSignals: null,
+    retainedSince: null,
+    writtenSnapshot: null,
+    journalInput: null,
+  };
+  const now = new Date(overrides.now ?? '2026-08-28T12:00:00.000Z');
+  const dueIds = new Set(overrides.dueIds ?? ENABLED_ADAPTER_IDS);
+  const timeoutId = overrides.timeoutId ?? null;
+  const previous = overrides.previous ?? {
+    schemaVersion: 1,
+    refreshStartedAt: '2026-08-26T10:59:00.000Z',
+    publicSnapshot: structuredClone(ACCEPTED_SNAPSHOT),
+    adapterState: canonicalAdapterState({
+      sources: Object.fromEntries(ENABLED_ADAPTER_IDS.map((id) => [id,
+        id === 'sec-edgar'
+          ? { kind: 'sec', snapshot: { filings: [], disclosures: [], holdings: [] } }
+          : { kind: 'institutional', records: [institutionalFixtureRecord(id.slice('institutional-'.length))] },
+      ])),
+      statuses: Object.fromEntries(ENABLED_ADAPTER_IDS.map((id) => [id, fixtureStatus(id)])),
+    }),
+  };
+  const adapters = ENABLED_ADAPTER_IDS.map((id) => ({
+    id,
+    rightsId: rightsIdFor(id),
+    requiredPurposes: ['fetch', 'cache', 'history', 'display', 'ranking', 'briefing', 'paper', 'attribute'],
+    async fetch() {
+      calls.events.push(`fetch:${id}`);
+      calls.fetchByAdapter[id] += 1;
+      if (id === timeoutId) throw Object.assign(new Error('https://provider.invalid/?token=raw-secret'), { code: 'timeout' });
+      return { providerId: id, records: [{ id: `${id}:fresh`, providerId: id }], retrievedAt: now.toISOString() };
+    },
+  }));
+  const normalized = overrides.normalized ?? {
+    entities: structuredClone(ACCEPTED_SNAPSHOT.entities),
+    activities: structuredClone(ACCEPTED_SNAPSHOT.activities),
+    performances: structuredClone(ACCEPTED_SNAPSHOT.performances),
+    providerStatuses: ENABLED_ADAPTER_IDS.map((id) => fixtureStatus(id, id === timeoutId ? 'unavailable' : 'live')),
+    changes: [],
+    adapterState: canonicalAdapterState(),
+    warnings: timeoutId ? [`${timeoutId}:timeout`] : [],
+    sourceLinks: [],
+    partial: Boolean(timeoutId),
+  };
+  const derivedSignals = overrides.signals ?? [structuredClone(ACCEPTED_SIGNAL)];
+  const committedSignals = overrides.committedSignals ?? derivedSignals;
+
+  const deps = {
+    adapters,
+    rights: [{ fixture: true }],
+    now: () => new Date(now),
+    async withRefreshLock(action) {
+      calls.events.push('lock');
+      return action();
+    },
+    assertAdapterRights(assertedAdapters, rights, options) {
+      calls.events.push('rights');
+      if (overrides.rightsError) throw new Error('smart_money_rights_invalid');
+      if (assertedAdapters !== adapters || rights !== deps.rights || options.now.getTime() !== now.getTime()) {
+        throw new Error('unexpected_rights_arguments');
+      }
+    },
+    async readSnapshot() {
+      calls.events.push('readSnapshot');
+      return structuredClone(previous);
+    },
+    isAdapterDue(adapter) {
+      return dueIds.has(adapter.id);
+    },
+    normalizeSettled(input) {
+      calls.events.push('normalize');
+      captured.normalizeInput = input;
+      return structuredClone(normalized);
+    },
+    deriveSignals(input) {
+      calls.events.push('derive');
+      captured.deriveInput = input;
+      return {
+        signals: structuredClone(derivedSignals),
+        pendingConfirmations: [],
+      };
+    },
+    async resolveReferencePrice(signal) {
+      calls.events.push(`price:${signal.id}`);
+      return structuredClone(signal.referencePrice ?? { skipped: true, reason: 'missing_reference_price' });
+    },
+    async listTrackedTickers({ since }) {
+      calls.events.push('trackedTickers');
+      captured.retainedSince = since;
+      return [...(overrides.trackedTickers ?? [])];
+    },
+    async resolveDailyMarks({ tickers, date }) {
+      calls.events.push('dailyMarks');
+      captured.dailyMarkTickers = [...tickers];
+      captured.dailyMarkDate = date;
+      return [];
+    },
+    async appendJournal(input) {
+      calls.events.push('journal');
+      calls.appendJournal += 1;
+      captured.journalInput = structuredClone(input);
+      return {
+        durableWriteSucceeded: overrides.journalDurable !== false,
+        partitions: [],
+        manifest: { ok: overrides.journalDurable !== false, error: overrides.journalDurable === false ? 'manifest_write_failed' : null },
+        committedSignals: overrides.journalDurable === false
+          ? []
+          : structuredClone(overrides.echoJournalSignals ? input.signals : committedSignals),
+        committedDailyMarks: overrides.journalDurable === false ? [] : structuredClone(input.dailyMarks),
+      };
+    },
+    buildSnapshot({ normalized: current, committedSignals: acceptedSignals, now: publicationNow = now }) {
+      calls.events.push('buildSnapshot');
+      captured.snapshotSignals = structuredClone(acceptedSignals);
+      const signalByActivity = new Map(acceptedSignals.map((signal) => [signal.activityId, signal]));
+      return {
+        ...structuredClone(ACCEPTED_SNAPSHOT),
+        fetchedAt: publicationNow.toISOString(),
+        partial: current.partial,
+        activities: structuredClone(ACCEPTED_SNAPSHOT.activities).map((activity) => {
+          const signal = signalByActivity.get(activity.id);
+          return signal ? {
+            ...activity,
+            providerId: signal.providerId,
+            entityId: signal.entityId,
+            kind: signal.kind,
+            asset: structuredClone(signal.asset),
+            effectiveAt: signal.effectiveAt,
+            disclosedAt: signal.disclosedAt,
+            observedAt: signal.observedAt,
+          } : activity;
+        }),
+        signals: structuredClone(acceptedSignals),
+      };
+    },
+    async writeSnapshot(snapshot) {
+      calls.events.push('snapshot');
+      calls.writeSnapshot += 1;
+      captured.writtenSnapshot = structuredClone(snapshot);
+      return {
+        snapshot: overrides.snapshotDurable === false ? null : snapshot,
+        durableWriteSucceeded: overrides.snapshotDurable !== false,
+      };
+    },
+  };
+  return { deps, calls, captured, previous };
+}

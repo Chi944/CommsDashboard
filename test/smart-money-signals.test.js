@@ -13,6 +13,7 @@ import {
   SEC_MIN_REPORTED_VALUE_USD,
   SEC_MIN_SHARE_CHANGE_PCT,
   THRESHOLD_VERSION,
+  attachReferencePrice,
   deriveSignals,
 } from '../lib/smart-money/signals.js';
 import { TRUSTED_REFERENCE_PRICE_SOURCES, validateSignal } from '../lib/smart-money/contracts.js';
@@ -271,4 +272,49 @@ test('deriveSignals is deterministic and does not mutate inputs', () => {
   const second = deriveSignals(input);
   assert.deepEqual(first, second);
   assert.deepEqual(input, before);
+});
+
+test('attachReferencePrice validates a trusted causal quote and enables only actionable supported signals', () => {
+  const firstInput = structuredClone(FIRST_CHANGE);
+  firstInput.changes[0].referencePrice = null;
+  const secondInput = structuredClone(SECOND_CHANGE);
+  secondInput.changes[0].referencePrice = null;
+  const pending = deriveSignals(firstInput).pendingConfirmations;
+  const signal = deriveSignals({ ...secondInput, pendingConfirmations: pending }).signals[0];
+  assert.deepEqual(signal.paperEligibility, { eligible: false, reason: 'missing_reference_price' });
+  const quote = {
+    ticker: 'BTC', price: 101_000, currency: 'USD', source: 'yahoo',
+    asOf: signal.observedAt, retrievedAt: '2026-08-26T11:00:01.000Z',
+  };
+  const attached = attachReferencePrice(signal, quote, { now: new Date('2026-08-26T11:01:00.000Z') });
+  assert.deepEqual(attached.referencePrice, quote);
+  assert.deepEqual(attached.paperEligibility, { eligible: true, reason: 'supported_reference_price' });
+
+  const institutional = {
+    ...UNMAPPED_13F_CHANGE.changes[0], id: 'institutional:attach', sourceStableId: 'institutional:attach',
+    providerId: 'institutional-strategy', entityId: 'strategy', classification: 'new',
+    asset: { ticker: 'BTC', name: 'Bitcoin', providerSymbol: 'BTC', assetClass: 'crypto', supported: true },
+  };
+  const observe = deriveSignals({
+    changes: [institutional], pendingConfirmations: [], nowMs: Date.parse(institutional.observedAt),
+  }).signals[0];
+  const unchanged = attachReferencePrice(observe, quote, { now: new Date(quote.retrievedAt) });
+  assert.equal(unchanged.action, 'observe');
+  assert.deepEqual(unchanged.paperEligibility, { eligible: false, reason: 'research_only' });
+});
+
+test('attachReferencePrice rejects untrusted, noncausal, wrong-ticker, and nonpositive quotes', () => {
+  const pending = deriveSignals(FIRST_CHANGE).pendingConfirmations;
+  const signal = deriveSignals({ ...SECOND_CHANGE, pendingConfirmations: pending }).signals[0];
+  for (const quote of [
+    { ...signal.referencePrice, source: 'provider-feed' },
+    { ...signal.referencePrice, ticker: 'ETH' },
+    { ...signal.referencePrice, price: 0 },
+    { ...signal.referencePrice, asOf: '2026-08-26T10:59:59.999Z' },
+  ]) {
+    assert.throws(
+      () => attachReferencePrice({ ...signal, referencePrice: null, paperEligibility: { eligible: false, reason: 'missing_reference_price' } }, quote, { now: new Date(signal.referencePrice.retrievedAt) }),
+      /schema_invalid/,
+    );
+  }
 });
