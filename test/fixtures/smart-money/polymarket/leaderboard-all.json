@@ -1,0 +1,10 @@
+[
+  {
+    "proxyWallet": "0x0000000000000000000000000000000000000abc",
+    "userName": "Public Trader",
+    "displayUsernamePublic": true,
+    "pnl": 200000,
+    "vol": 900000,
+    "rank": 8
+  }
+]
