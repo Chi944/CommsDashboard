@@ -24,12 +24,12 @@ export default function ProviderHealthPanel({ statuses, sourceLinks }) {
         <h3 id="provider-coverage-title" className="text-sm font-semibold text-gray-100">Provider coverage</h3>
         <span className="font-mono text-[10px] text-gray-500">{live}/{statuses?.length || 0} live</span>
       </div>
-      <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {(statuses || []).map((status) => {
           const link = links.get(status.id);
           const href = safeHttps(link?.url);
           return (
-            <li key={status.id} className={`rounded-lg border p-3 ${tone[status.status] || tone.unavailable}`}>
+            <li key={status.id} className={`min-w-0 rounded-lg border p-3 ${tone[status.status] || tone.unavailable}`}>
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-xs font-medium text-gray-200">{link?.label || status.id}</span>
                 <span className="text-[9px] uppercase tracking-widest">{status.status}</span>
@@ -38,7 +38,7 @@ export default function ProviderHealthPanel({ statuses, sourceLinks }) {
                 {status.recordCount || 0} records · {status.sourceAsOf ? `source ${status.sourceAsOf.slice(0, 10)}` : 'no source date'}
               </div>
               {href && (
-                <a href={href} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-[10px] text-cyan-300 hover:underline">
+                <a href={href} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block break-words text-[10px] text-cyan-300 hover:underline">
                   Open {link.label || 'source'}
                 </a>
               )}
