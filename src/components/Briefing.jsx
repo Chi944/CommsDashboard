@@ -1,16 +1,89 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, {
+  useEffect, useId, useReducer, useRef, useState,
+} from 'react';
 import { readDashboardJson } from '../lib/apiClient.js';
+import {
+  createDailyBriefingState,
+  dailyBriefingReducer,
+  isValidDailyBriefingEnvelope,
+} from '../lib/dailyBriefingState.js';
 
 const utcDay = () => new Date().toISOString().slice(0, 10);
 const STALE_DAY_RETRY_MS = 60_000;
 const MAX_STALE_DAY_RETRY_MS = 15 * 60_000;
+const MARKET_PARAGRAPH_IDS = Object.freeze([
+  'market-tone', 'themes-catalysts', 'watchpoints',
+]);
+const PARAGRAPH_LABELS = Object.freeze({
+  'market-tone': 'Market tone',
+  'themes-catalysts': 'Themes and catalysts',
+  watchpoints: 'Watchpoints',
+});
+
+function safeHttpsUrl(value) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function isValidMarketBriefingEnvelope(value) {
+  return isValidDailyBriefingEnvelope(value)
+    && value.briefing.paragraphs.every(
+      (paragraph, index) => paragraph.id === MARKET_PARAGRAPH_IDS[index],
+    );
+}
+
+function inputLabel(value) {
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) return 'Unavailable';
+  return `Current · as of ${new Date(value).toUTCString().replace('GMT', 'UTC')}`;
+}
+
+function InputState({ label, value }) {
+  return (
+    <li className="text-[10px] text-gray-500">
+      <span><span className="uppercase tracking-widest">{label} input</span> — {inputLabel(value)}</span>
+    </li>
+  );
+}
+
+function EvidenceList({ evidenceIds, evidenceById }) {
+  const records = evidenceIds.map((id) => evidenceById.get(id)).filter(Boolean);
+  if (!records.length) return null;
+  return (
+    <ul aria-label="Paragraph evidence" className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+      {records.map((record) => {
+        const url = safeHttpsUrl(record.sourceUrl);
+        const label = String(record.label || record.source || 'Evidence');
+        return (
+          <li key={record.id} className="text-[10px] text-cyan-300/80">
+            {url ? (
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline decoration-cyan-700/60 underline-offset-2 hover:text-cyan-200"
+              >{label}</a>
+            ) : <span>{label}</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 export default function Briefing() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState(null);
+  const [briefingState, dispatchBriefing] = useReducer(
+    dailyBriefingReducer,
+    undefined,
+    () => createDailyBriefingState(),
+  );
   const [open, setOpen] = useState(true);
   const [requestVersion, setRequestVersion] = useState(0);
+  const requestIdRef = useRef(0);
   const acceptedMarketDayRef = useRef(null);
   const requestedMarketDayRef = useRef(null);
   const staleDayRetryRef = useRef(null);
@@ -39,36 +112,45 @@ export default function Briefing() {
 
   useEffect(() => {
     let cancelled = false;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     const requestedDay = utcDay();
     requestedMarketDayRef.current = requestedDay;
-    setLoading(true);
-    setErr(null);
+    dispatchBriefing({ type: 'request', requestId });
     const url = requestVersion > 0 ? '/api/briefing?refresh=1' : '/api/briefing';
-    fetch(url)
+    fetch(url, { method: 'GET', credentials: 'omit' })
       .then(readDashboardJson)
-      .then((j) => {
+      .then((candidate) => {
         if (cancelled) return;
-        setData(j);
-        setLoading(false);
+        const valid = isValidMarketBriefingEnvelope(candidate);
+        dispatchBriefing({
+          type: 'success',
+          requestId,
+          candidate: valid ? candidate : null,
+        });
         requestedMarketDayRef.current = null;
         const currentDay = utcDay();
-        if (j?.briefing?.marketDate === currentDay) {
+        if (valid && candidate.briefing.marketDate === currentDay) {
           acceptedMarketDayRef.current = currentDay;
           window.clearTimeout(staleDayRetryRef.current);
           staleDayRetryRef.current = null;
           staleDayRetryAttemptRef.current = 0;
           staleDayRetryDateRef.current = currentDay;
-        } else if (j?.briefing?.marketDate) {
+        } else if (valid && candidate.briefing.marketDate !== currentDay) {
           if (requestVersion === 0) scheduleDailyRetry(0);
           else scheduleDailyRetry();
-        } else if (j?.aiStatus?.retryable === true) {
+        } else if (candidate?.aiStatus?.retryable === true
+          || acceptedMarketDayRef.current !== currentDay) {
           scheduleDailyRetry();
         }
       })
-      .catch((e) => {
+      .catch(() => {
         if (cancelled) return;
-        setErr(String(e?.message || e));
-        setLoading(false);
+        dispatchBriefing({
+          type: 'failure',
+          requestId,
+          error: 'Briefing refresh failed. Showing the last available briefing.',
+        });
         if (requestedMarketDayRef.current === requestedDay) {
           requestedMarketDayRef.current = null;
         }
@@ -114,18 +196,31 @@ export default function Briefing() {
     };
   }, []);
 
-  const aiMessage = data?.aiError || data?.error?.message || data?.aiStatus?.message;
-  const briefingText = typeof data?.briefing?.text === 'string'
-    ? data.briefing.text.trim()
-    : '';
-  const hasBriefing = Boolean(briefingText);
+  const data = briefingState.accepted;
+  const briefing = data?.briefing;
+  const hasBriefing = Boolean(briefing);
+  const evidenceById = new Map(
+    (Array.isArray(briefing?.evidence) ? briefing.evidence : [])
+      .map((record) => [record.id, record]),
+  );
+  const sourceLabel = briefing?.source === 'generated' ? 'AI generated' : 'Deterministic fallback';
+  const inputsAsOf = briefing?.inputsAsOf || {};
+
+  const refresh = () => {
+    window.clearTimeout(staleDayRetryRef.current);
+    staleDayRetryRef.current = null;
+    staleDayRetryAttemptRef.current = 0;
+    staleDayRetryDateRef.current = utcDay();
+    requestedMarketDayRef.current = utcDay();
+    setRequestVersion((version) => version + 1);
+  };
 
   return (
     <div className="rounded-xl border border-cyan-700/30 bg-gradient-to-br from-cyan-900/20 via-gray-900/80 to-gray-900/40 overflow-hidden">
       <div className="w-full flex items-center hover:bg-white/5 transition-colors">
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
           aria-controls={detailsId}
           aria-label={`${open ? 'Collapse' : 'Expand'} market briefing`}
@@ -138,7 +233,9 @@ export default function Briefing() {
             <div className="min-w-0">
               <div className="text-[10px] uppercase tracking-widest text-cyan-300/80">Market Briefing</div>
               <div className="text-sm text-gray-100 truncate">
-                {loading ? 'Generating today\'s briefing…' : (hasBriefing ? 'Today\'s market in three paragraphs' : 'Briefing')}
+                {briefingState.loading
+                  ? (hasBriefing ? 'Refreshing today\'s briefing…' : 'Loading today\'s briefing…')
+                  : (hasBriefing ? 'Today\'s market in three paragraphs' : 'Briefing')}
               </div>
             </div>
           </div>
@@ -146,61 +243,79 @@ export default function Briefing() {
         </button>
         <button
           type="button"
-          onClick={() => {
-            window.clearTimeout(staleDayRetryRef.current);
-            staleDayRetryRef.current = null;
-            staleDayRetryAttemptRef.current = 0;
-            staleDayRetryDateRef.current = utcDay();
-            requestedMarketDayRef.current = utcDay();
-            setRequestVersion((version) => version + 1);
-          }}
-          disabled={loading}
+          onClick={refresh}
+          disabled={briefingState.loading}
           aria-label="Refresh market briefing"
           className="mr-4 sm:mr-5 shrink-0 text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900 text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50"
-        >{loading ? '…' : 'refresh'}</button>
+        >{briefingState.loading ? '…' : 'refresh'}</button>
       </div>
 
       {open && (
         <div id={detailsId} role="region" aria-label="Market briefing details" className="border-t border-gray-800 p-4 sm:p-5 space-y-3">
-          {err && <div role="alert" className="text-xs text-red-300">Failed: {err}</div>}
+          {briefingState.error && (
+            <div role="alert" className="text-xs text-amber-300">
+              Briefing refresh failed. Showing the last available briefing.
+            </div>
+          )}
+
+          {briefingState.loading && hasBriefing && (
+            <div role="status" aria-label="Refreshing market briefing" className="text-[10px] text-cyan-300/80">
+              Checking for a newer daily briefing…
+            </div>
+          )}
 
           {hasBriefing && (
-            <div className="text-xs sm:text-sm text-gray-200 leading-relaxed whitespace-pre-line">
-              {briefingText}
-            </div>
+            <>
+              <div
+                role="status"
+                aria-label="Briefing source"
+                className={`text-[10px] uppercase tracking-widest ${briefing.source === 'generated' ? 'text-cyan-300' : 'text-amber-300'}`}
+              >
+                {sourceLabel}
+                {briefing.source === 'deterministic' ? ' · AI generation unavailable; evidence-based fallback shown' : ''}
+              </div>
+
+              <div className="space-y-4">
+                {briefing.paragraphs.map((paragraph) => (
+                  <article
+                    key={paragraph.id}
+                    data-briefing-paragraph-id={paragraph.id}
+                    className="text-xs sm:text-sm text-gray-200 leading-relaxed"
+                  >
+                    <h3 className="mb-1 text-[10px] uppercase tracking-widest text-gray-500">
+                      {PARAGRAPH_LABELS[paragraph.id]}
+                    </h3>
+                    <p>{paragraph.text}</p>
+                    <EvidenceList evidenceIds={paragraph.evidenceIds} evidenceById={evidenceById} />
+                  </article>
+                ))}
+              </div>
+
+              <ul aria-label="Briefing input status" className="grid grid-cols-1 gap-1 border-t border-gray-800 pt-3 sm:grid-cols-3">
+                <InputState label="Market prices" value={inputsAsOf.market} />
+                <InputState label="Headlines" value={inputsAsOf.news} />
+                <InputState label="Sentiment" value={inputsAsOf.sentiment} />
+              </ul>
+            </>
           )}
 
-          {data && !hasBriefing && data.aiAvailable && (
-            <div role="status" aria-live="polite" className="text-xs text-amber-300">
-              AI briefing unavailable: {aiMessage || 'Please try again shortly.'}
-            </div>
-          )}
-
-          {data && !data.aiAvailable && (
-            <div className="text-[11px] text-gray-500 border border-gray-800 bg-gray-950/50 rounded-md p-3">
-              <span className="text-amber-400 uppercase tracking-widest text-[10px]">AI briefing disabled</span>
-              <span> — set <code className="font-mono text-cyan-300">GROQ_API_KEY</code> in Vercel env vars to enable.</span>
-            </div>
-          )}
-
-          {/* Mini-snapshot of signals as fallback context */}
           {data?.signals && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-gray-800">
               <SignalList title="Top Gainers" rows={data.signals.gainers} positive />
-              <SignalList title="Top Losers"  rows={data.signals.losers}  positive={false} />
+              <SignalList title="Top Losers" rows={data.signals.losers} positive={false} />
             </div>
           )}
 
           {hasBriefing && (
             <div className="text-[9px] uppercase tracking-widest text-gray-600 pt-1">
-              Generated by {data.briefing.model} · {new Date(data.generatedAt).toUTCString().slice(17, 25)}Z
+              Updated {new Date(briefing.generatedAt).toUTCString().replace('GMT', 'UTC')}
             </div>
           )}
 
-          {loading && !data && (
+          {briefingState.loading && !hasBriefing && (
             <div role="status" aria-live="polite" aria-label="Loading market briefing" className="space-y-2">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="h-3 rounded bg-gray-800/70 animate-pulse" style={{ width: `${95 - i * 5}%` }} />
+              {[0, 1, 2].map((index) => (
+                <div key={index} className="h-3 rounded bg-gray-800/70 animate-pulse" style={{ width: `${95 - index * 5}%` }} />
               ))}
             </div>
           )}
@@ -214,12 +329,12 @@ const SignalList = ({ title, rows, positive }) => (
   <div>
     <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-1">{title}</div>
     <ul className="space-y-1">
-      {(rows || []).slice(0, 3).map((r) => (
-        <li key={r.ticker} className="flex items-center gap-2 text-xs">
-          <span className="font-mono text-gray-100 w-14">{r.ticker}</span>
-          <span className="text-gray-400 truncate flex-1">{r.name}</span>
+      {(rows || []).slice(0, 3).map((row) => (
+        <li key={row.ticker} className="flex items-center gap-2 text-xs">
+          <span className="font-mono text-gray-100 w-14">{row.ticker}</span>
+          <span className="text-gray-400 truncate flex-1">{row.name}</span>
           <span className={`font-mono ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
-            {r.changePct >= 0 ? '+' : ''}{r.changePct.toFixed(2)}%
+            {row.changePct >= 0 ? '+' : ''}{row.changePct.toFixed(2)}%
           </span>
         </li>
       ))}

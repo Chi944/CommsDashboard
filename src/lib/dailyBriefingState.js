@@ -26,13 +26,29 @@ export function isValidDailyBriefingEnvelope(value) {
   const stamp = briefingStamp(value);
   const paragraphs = value?.briefing?.paragraphs;
   if (!stamp || !Array.isArray(paragraphs) || paragraphs.length !== 3) return false;
+  const suppliedEvidence = Array.isArray(value?.briefing?.evidence)
+    ? value.briefing.evidence
+    : (Array.isArray(value?.evidence) ? value.evidence : null);
+  const evidenceById = new Map();
+  if (suppliedEvidence) {
+    for (const record of suppliedEvidence) {
+      if (!record || typeof record !== 'object'
+          || typeof record.id !== 'string' || !record.id.trim()
+          || evidenceById.has(record.id)) return false;
+      evidenceById.set(record.id, record);
+    }
+  }
   const ids = new Set();
   for (const paragraph of paragraphs) {
     if (!paragraph || typeof paragraph !== 'object'
         || typeof paragraph.id !== 'string' || !paragraph.id.trim()
+        || ids.has(paragraph.id)
         || typeof paragraph.text !== 'string' || !paragraph.text.trim()
         || !Array.isArray(paragraph.evidenceIds)
-        || ids.has(paragraph.id)) return false;
+        || paragraph.evidenceIds.some((evidenceId) => (
+          typeof evidenceId !== 'string' || !evidenceId.trim()
+          || (suppliedEvidence && !evidenceById.has(evidenceId))
+        ))) return false;
     ids.add(paragraph.id);
   }
   return true;
