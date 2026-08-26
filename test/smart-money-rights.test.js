@@ -104,6 +104,47 @@ test('Yahoo spark is explicitly excluded from Smart Money retrieval, history, di
   }
 });
 
+test('enabled SEC rights enumerate every production endpoint template and persisted filing field', () => {
+  const record = SOURCE_RIGHTS.find((row) => row.id === 'sec-edgar');
+  assert.deepEqual(record.endpointTemplates, [
+    'https://data.sec.gov/submissions/CIK{cik10}.json',
+    'https://www.sec.gov/Archives/edgar/data/{registrantCik}/{accessionNoDashes}/index.json',
+    'https://www.sec.gov/Archives/edgar/data/{registrantCik}/{accessionNoDashes}/{informationTableDocument}',
+  ]);
+  assert.deepEqual(record.fieldsUsed, [
+    'submissions.cik', 'submissions.accessionNumber', 'submissions.filingDate',
+    'submissions.reportDate', 'submissions.form', 'submissions.primaryDocument',
+    'archiveIndex.directory.item.name',
+    'informationTable.nameOfIssuer', 'informationTable.titleOfClass',
+    'informationTable.cusip', 'informationTable.value',
+    'informationTable.shrsOrPrnAmt.sshPrnamt',
+    'informationTable.shrsOrPrnAmt.sshPrnamtType', 'informationTable.putCall',
+    'filing.cik', 'filing.form', 'filing.accessionNumber', 'filing.periodEnd',
+    'filing.filedAt', 'filing.isAmendment', 'filing.amendmentChain',
+    'filing.primaryDocument', 'filing.timingBasis',
+    'holding.accessionNumber', 'holding.periodEnd', 'holding.filedAt',
+    'holding.isAmendment', 'holding.amendmentChain', 'holding.issuer',
+    'holding.securityClass', 'holding.cusip', 'holding.ticker',
+    'holding.reportedValue', 'holding.shares', 'holding.putCall',
+    'holding.shareType', 'holding.paperEligible',
+  ]);
+
+  const missingTemplates = structuredClone(record);
+  delete missingTemplates.endpointTemplates;
+  const validation = validateRightsMatrix([missingTemplates], {
+    now: new Date('2026-08-26T00:00:00.000Z'),
+  });
+  assert.equal(validation.ok, false);
+  assert.match(validation.errors.join('\n'), /endpoint_templates/);
+});
+
+test('dormant Hyperliquid rights name the exact adapter leaderboard endpoint without enabling it', () => {
+  const record = SOURCE_RIGHTS.find((row) => row.id === 'hyperliquid-stats-api');
+  assert.equal(record.endpoint, 'https://stats-data.hyperliquid.xyz/Mainnet/leaderboard');
+  assert.equal(record.decision, 'link-only');
+  assert.equal(canUseSourceFor(record.id, 'fetch'), false);
+});
+
 test('rights assertion rejects an adapter with an unknown rights record', () => {
   assert.throws(
     () => assertAdapterRights([{ id: 'unknown-adapter', rightsId: 'missing', requiredPurposes: ['fetch'] }]),

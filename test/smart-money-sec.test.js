@@ -12,6 +12,7 @@ import {
   secHeaders,
   selectCanonical13FByPeriod,
 } from '../lib/smart-money/sec.js';
+import { SOURCE_RIGHTS } from '../lib/smart-money/rights.js';
 import {
   institutionalFiling,
   institutionalInlineXbrl,
@@ -36,22 +37,29 @@ test('13F parser preserves period, filing, amendment, CUSIP, and research-only t
   });
 });
 
-test('SEC submission parser retains only supported 13F forms and amendment semantics', () => {
+test('SEC submission parser separates 13F holdings from canonical metadata-only Schedule filings', () => {
   assert.deepEqual(parseSecSubmissions(SUBMISSIONS, { cik: '2045724' }).map((filing) => ({
     form: filing.form, periodEnd: filing.periodEnd, accessionNumber: filing.accessionNumber,
     primaryDocument: filing.primaryDocument,
     isAmendment: filing.isAmendment,
+    timingBasis: filing.timingBasis,
   })), [
-    { form: '13F-HR', periodEnd: '2026-06-30', accessionNumber: '0002045724-26-000001', primaryDocument: 'xslForm13F_X02/primary_doc.xml', isAmendment: false },
-    { form: '13F-HR/A', periodEnd: '2026-06-30', accessionNumber: '0002045724-26-000002', primaryDocument: 'xslForm13F_X02/amendment.xml', isAmendment: true },
+    { form: '13F-HR', periodEnd: '2026-06-30', accessionNumber: '0002045724-26-000001', primaryDocument: 'xslForm13F_X02/primary_doc.xml', isAmendment: false, timingBasis: undefined },
+    { form: '13F-HR/A', periodEnd: '2026-06-30', accessionNumber: '0002045724-26-000002', primaryDocument: 'xslForm13F_X02/amendment.xml', isAmendment: true, timingBasis: undefined },
+    { form: 'SC 13D', periodEnd: null, accessionNumber: '0002045724-26-000003', primaryDocument: 'schedule13d.htm', isAmendment: false, timingBasis: 'filing_date' },
+    { form: 'SC 13G', periodEnd: null, accessionNumber: '0002045724-26-000005', primaryDocument: 'schedule13g.htm', isAmendment: false, timingBasis: 'filing_date' },
+    { form: 'SC 13G/A', periodEnd: null, accessionNumber: '0002045724-26-000006', primaryDocument: 'schedule13ga.htm', isAmendment: true, timingBasis: 'filing_date' },
   ]);
 });
 
-test('live-shaped Schedule rows with blank report dates are ignored only after global shape validation', () => {
+test('live-shaped Schedule rows with blank report dates are retained only after global shape validation', () => {
   const parsed = parseSecSubmissions(SUBMISSIONS, { cik: '2045724' });
   assert.deepEqual(parsed.map(({ form, periodEnd }) => [form, periodEnd]), [
     ['13F-HR', '2026-06-30'],
     ['13F-HR/A', '2026-06-30'],
+    ['SC 13D', null],
+    ['SC 13G', null],
+    ['SC 13G/A', null],
   ]);
 
   const nonPrimitiveUnsupportedRow = structuredClone(SUBMISSIONS);
@@ -62,6 +70,30 @@ test('live-shaped Schedule rows with blank report dates are ignored only after g
     () => parseSecSubmissions(nonPrimitiveUnsupportedRow, { cik: '2045724' }),
     { code: 'schema_invalid' },
   );
+});
+
+test('Schedule metadata ignores non-date reportDate text while retaining strict filing metadata', () => {
+  const payload = structuredClone(SUBMISSIONS);
+  payload.filings.recent.reportDate[4] = 'not applicable to schedule filing';
+  const schedule = parseSecSubmissions(payload, { cik: '2045724' })
+    .find((filing) => filing.accessionNumber === payload.filings.recent.accessionNumber[4]);
+  assert.equal(schedule.form, 'SC 13G');
+  assert.equal(schedule.periodEnd, null);
+  assert.equal(schedule.timingBasis, 'filing_date');
+});
+
+test('supported Schedule rows strictly validate accession, filing date, and primary document', () => {
+  for (const mutate of [
+    (value) => { value.filings.recent.accessionNumber[4] = 'bad'; },
+    (value) => { value.filings.recent.filingDate[4] = '2026-02-31'; },
+    (value) => { value.filings.recent.primaryDocument[4] = '../escape.htm'; },
+  ]) {
+    const payload = structuredClone(SUBMISSIONS);
+    mutate(payload);
+    assert.throws(() => parseSecSubmissions(payload, { cik: '2045724' }), {
+      code: 'schema_invalid',
+    });
+  }
 });
 
 test('SEC submissions reject mismatched CIKs, malformed parallel arrays, and impossible calendar dates', () => {
@@ -168,6 +200,28 @@ test('SEC snapshot uses bounded transport with an identified user agent and info
   assert.equal(snapshot.holdings[0].ticker, null);
   assert.equal(jsonCalls[0].options.requestOptions.headers['User-Agent'], 'CommsDashboard/1.0 compliance@monitored-contact.co');
   assert.match(textCalls[1].url, /infotable\.xml$/);
+
+  const right = SOURCE_RIGHTS.find((row) => row.id === 'sec-edgar');
+  const expand = (template, values) => Object.entries(values).reduce(
+    (value, [key, replacement]) => value.replace(`{${key}}`, replacement), template,
+  );
+  assert.equal(jsonCalls[0].url, expand(right.endpointTemplates[0], { cik10: '0002045724' }));
+  assert.equal(textCalls[0].url, expand(right.endpointTemplates[1], {
+    registrantCik: '2045724', accessionNoDashes: '000204572426000002',
+  }));
+  assert.equal(textCalls[1].url, expand(right.endpointTemplates[2], {
+    registrantCik: '2045724', accessionNoDashes: '000204572426000002',
+    informationTableDocument: 'infotable.xml',
+  }));
+  for (const [prefix, row] of [
+    ['filing', snapshot.filings[0]],
+    ['filing', snapshot.disclosures[0]],
+    ['holding', snapshot.holdings[0]],
+  ]) {
+    for (const field of Object.keys(row)) {
+      assert.equal(right.fieldsUsed.includes(`${prefix}.${field}`), true, `${prefix}.${field}`);
+    }
+  }
 });
 
 test('SEC archive index accepts official text/html only through bounded JSON parsing', async () => {
@@ -191,6 +245,27 @@ test('SEC archive index accepts official text/html only through bounded JSON par
     'application/json', 'text/json', 'text/html',
   ]);
   assert.equal(textCalls[0].options.maxBytes, 1_000_000);
+});
+
+test('selected 13F filings fail closed when the archive index has no unique information table', async () => {
+  for (const items of [
+    [{ name: 'primary.xml' }],
+    [{ name: 'infotable.xml' }, { name: 'information_table.xml' }],
+  ]) {
+    let xmlRequests = 0;
+    await assert.rejects(fetchSecSnapshot({
+      cik: '2045724', maxFilings: 1,
+      userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
+    }, {
+      fetchProviderJson: async () => SUBMISSIONS,
+      fetchProviderText: async (url) => {
+        if (url.endsWith('/index.json')) return JSON.stringify({ directory: { item: items } });
+        xmlRequests += 1;
+        return INFORMATION_TABLE_XML;
+      },
+    }), { code: 'schema_invalid' });
+    assert.equal(xmlRequests, 0);
+  }
 });
 
 test('SEC snapshots bound the number of filing index and XML requests', async () => {

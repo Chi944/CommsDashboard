@@ -1,4 +1,4 @@
-import { canonicalJournalCursorId, readJournal } from '../../lib/smart-money/journal.js';
+import { parseJournalCursor, readJournal } from '../../lib/smart-money/journal.js';
 
 const DAY_MS = 86_400_000;
 
@@ -8,18 +8,10 @@ function canonicalInstant(value) {
   return Number.isFinite(date.getTime()) && date.toISOString() === value ? value : null;
 }
 
-function validCursor(value, since) {
+function validCursor(value, since, now) {
   if (value === undefined) return true;
-  if (typeof value !== 'string' || value.length < 1 || value.length > 2_000
-      || !/^[A-Za-z0-9_-]+$/.test(value)) return false;
   try {
-    const text = Buffer.from(value, 'base64url').toString('utf8');
-    if (Buffer.from(text, 'utf8').toString('base64url') !== value) return false;
-    const row = JSON.parse(text);
-    const keys = Object.keys(row || {});
-    if (keys.length !== 2 || keys[0] !== 'observedAt' || keys[1] !== 'id'
-        || canonicalInstant(row.observedAt) === null || row.observedAt < since) return false;
-    return canonicalJournalCursorId(row.id) === row.id;
+    return parseJournalCursor(value, { since, now }) !== null;
   } catch {
     return false;
   }
@@ -35,7 +27,7 @@ function queryInput(query, now) {
       || !Number.isInteger(limit) || limit < 1 || limit > 500
       || Date.parse(since) > now.getTime()
       || Date.parse(since) < now.getTime() - 400 * DAY_MS
-      || !validCursor(query?.cursor, since)) return null;
+      || !validCursor(query?.cursor, since, now)) return null;
   return { since, limit, ...(query?.cursor === undefined ? {} : { cursor: query.cursor }) };
 }
 

@@ -146,7 +146,10 @@ test('history forwards inclusive since, bounded limit, and opaque cursor and ret
     readJournal: async (input) => { query = input; return structuredClone(ACCEPTED_HISTORY); },
   });
   const cursor = Buffer.from(JSON.stringify({
-    observedAt: '2026-08-26T11:00:00.000Z', id: ACCEPTED_SNAPSHOT.signals[0].id,
+    through: '2026-08-28T11:59:00.000Z',
+    timestamp: '2026-08-26T11:00:00.000Z',
+    type: 'signal',
+    id: ACCEPTED_SNAPSHOT.signals[0].id,
   }), 'utf8').toString('base64url');
   const { req, res } = mockRequest(`/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=200&cursor=${cursor}`);
   await handler(req, res);
@@ -176,7 +179,8 @@ test('history enforces required canonical since, limit 1-500, 400 days, and stri
     '/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&secret=x',
     '/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&limit=2',
     '/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&cursor=not-opaque',
-    `/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&cursor=${Buffer.from(JSON.stringify({ observedAt: '2026-08-26T11:00:00.000Z', id: 'bad\u0000id' })).toString('base64url')}`,
+    `/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&cursor=${Buffer.from(JSON.stringify({ through: '2026-08-28T11:59:00.000Z', timestamp: '2026-08-26T11:00:00.000Z', type: 'signal', id: 'bad\u0000id' })).toString('base64url')}`,
+    `/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=1&cursor=${Buffer.from(JSON.stringify({ timestamp: '2026-08-26T11:00:00.000Z', type: 'signal', id: ACCEPTED_SNAPSHOT.signals[0].id })).toString('base64url')}`,
   ];
   for (const path of invalid) {
     const { req, res } = mockRequest(path);

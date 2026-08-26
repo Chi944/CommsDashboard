@@ -714,6 +714,126 @@ test('market refresh returns a retryable degraded response when no durable write
   });
 });
 
+test('scheduled market refresh runs market and Smart Money services and reports bounded durable outcomes', async () => {
+  const calls = [];
+  const handler = refreshModule.createRefreshHandler({
+    cronSecret: 'server-secret',
+    refreshMarket: async () => {
+      calls.push('market');
+      return { persisted: true, partial: false, errorCode: null, privateRows: ['not-public'] };
+    },
+    refreshSmartMoney: async (input) => {
+      calls.push(`smart-money:${input.trigger}`);
+      return {
+        persisted: true, partial: false, errorCode: null,
+        signalsAccepted: [{ private: 'not-public' }], providerStatuses: [{ private: 'not-public' }],
+      };
+    },
+  });
+  const response = createResponse();
+
+  await handler({
+    method: 'GET', headers: { authorization: 'Bearer server-secret' }, query: {},
+  }, response);
+
+  assert.deepEqual(calls, ['market', 'smart-money:cron']);
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body, {
+    ok: true,
+    partial: false,
+    market: { ok: true, persisted: true, partial: false, errorCode: null },
+    smartMoney: { ok: true, persisted: true, partial: false, errorCode: null },
+  });
+});
+
+test('scheduled refresh treats a fulfilled partial subsystem as a retryable failure', async () => {
+  const cases = [
+    {
+      degraded: 'market',
+      expectedCode: 'market_refresh_failed',
+      market: { persisted: true, partial: true, errorCode: null },
+      smartMoney: { persisted: true, partial: false, errorCode: null },
+    },
+    {
+      degraded: 'smartMoney',
+      expectedCode: 'smart_money_refresh_failed',
+      market: { persisted: true, partial: false, errorCode: null },
+      smartMoney: { persisted: true, partial: true, errorCode: null },
+    },
+  ];
+  for (const row of cases) {
+    const handler = refreshModule.createRefreshHandler({
+      cronSecret: 'server-secret',
+      refreshMarket: async () => row.market,
+      refreshSmartMoney: async () => row.smartMoney,
+    });
+    const response = createResponse();
+    await handler({
+      method: 'GET', headers: { authorization: 'Bearer server-secret' }, query: {},
+    }, response);
+    assert.equal(response.statusCode, 503, row.degraded);
+    assert.equal(response.body.ok, false, row.degraded);
+    assert.equal(response.body.partial, true, row.degraded);
+    assert.equal(response.body[row.degraded].errorCode, row.expectedCode, row.degraded);
+  }
+});
+
+test('scheduled refresh still runs Smart Money and returns 503 when market refresh fails', async () => {
+  let smartMoneyCalls = 0;
+  const handler = refreshModule.createRefreshHandler({
+    cronSecret: 'server-secret',
+    refreshMarket: () => { throw new Error('private market credential'); },
+    refreshSmartMoney: async () => {
+      smartMoneyCalls += 1;
+      return { persisted: true, partial: false, errorCode: null };
+    },
+  });
+  const response = createResponse();
+
+  await handler({
+    method: 'GET', headers: { authorization: 'Bearer server-secret' }, query: {},
+  }, response);
+
+  assert.equal(smartMoneyCalls, 1);
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.body, {
+    ok: false,
+    partial: true,
+    market: { ok: false, persisted: false, partial: true, errorCode: 'market_refresh_failed' },
+    smartMoney: { ok: true, persisted: true, partial: false, errorCode: null },
+  });
+  assert.equal(JSON.stringify(response.body).includes('credential'), false);
+});
+
+test('scheduled refresh still runs market and returns 503 when Smart Money refresh fails', async () => {
+  let marketCalls = 0;
+  const handler = refreshModule.createRefreshHandler({
+    cronSecret: 'server-secret',
+    refreshMarket: async () => {
+      marketCalls += 1;
+      return { persisted: true, partial: false, errorCode: null };
+    },
+    refreshSmartMoney: async () => { throw new Error('private Smart Money provider body'); },
+  });
+  const response = createResponse();
+
+  await handler({
+    method: 'GET', headers: { authorization: 'Bearer server-secret' }, query: {},
+  }, response);
+
+  assert.equal(marketCalls, 1);
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.body, {
+    ok: false,
+    partial: true,
+    market: { ok: true, persisted: true, partial: false, errorCode: null },
+    smartMoney: {
+      ok: false, persisted: false, partial: true, errorCode: 'smart_money_refresh_failed',
+    },
+  });
+  assert.equal(JSON.stringify(response.body).includes('provider body'), false);
+});
+
 test('market refresh marks configured write failures partial even when another durable store succeeds', async () => {
   assert.equal(typeof refreshModule.createRefreshHandler, 'function');
   const handler = refreshModule.createRefreshHandler({
