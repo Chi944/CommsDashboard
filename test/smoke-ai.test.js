@@ -148,7 +148,12 @@ async function withServer(responses, run) {
   }
 }
 
-async function runSmoke(baseUrl, { secret = 'smoke-test-secret', timeoutMs = 500 } = {}) {
+async function runSmoke(baseUrl, {
+  secret = 'smoke-test-secret',
+  timeoutMs = 500,
+  expectedCommitSha,
+  expectedDeploymentEnvironment,
+} = {}) {
   try {
     const result = await execFileAsync(process.execPath, ['scripts/smoke-ai.mjs'], {
       cwd: new URL('..', import.meta.url),
@@ -159,6 +164,8 @@ async function runSmoke(baseUrl, { secret = 'smoke-test-secret', timeoutMs = 500
         AI_SMOKE_TICKER: 'NVDA',
         AI_SMOKE_SECRET: secret,
         AI_SMOKE_TIMEOUT_MS: String(timeoutMs),
+        AI_SMOKE_EXPECTED_COMMIT_SHA: expectedCommitSha,
+        AI_SMOKE_EXPECTED_DEPLOYMENT_ENVIRONMENT: expectedDeploymentEnvironment,
       },
     });
     return { code: 0, ...result };
@@ -188,6 +195,77 @@ test('smoke script checks briefing and configured per-asset AI endpoints', async
     assert.doesNotMatch(seen.map(({ url }) => url).join('\n'), /smoke-test-secret/);
     assert.match(result.stdout, /AI and Smart Money smoke check passed/);
     assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /smoke-test-secret/);
+  });
+});
+
+test('smoke script accepts the exact expected production deployment identity', async () => {
+  await withServer({
+    '/api/briefing': completeBriefing,
+    '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+    '/api/smart-money/health': {
+      ...completeSmartMoneyHealth,
+      deployment: { commitSha: 'abc123def456', environment: 'production' },
+    },
+  }, async (baseUrl) => {
+    const result = await runSmoke(baseUrl, {
+      expectedCommitSha: 'abc123def456',
+      expectedDeploymentEnvironment: 'production',
+    });
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /deployment abc123def456 \(production\)/i);
+  });
+});
+
+test('smoke script rejects a mismatched deployment identity', async (t) => {
+  const cases = [
+    {
+      name: 'commit SHA',
+      deployment: { commitSha: 'old456', environment: 'production' },
+      expectedError: /deployment commit.*old456.*expected abc123/i,
+    },
+    {
+      name: 'environment',
+      deployment: { commitSha: 'abc123', environment: 'preview' },
+      expectedError: /deployment environment.*preview.*expected production/i,
+    },
+  ];
+
+  for (const fixture of cases) {
+    await t.test(fixture.name, async () => {
+      await withServer({
+        '/api/briefing': completeBriefing,
+        '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+        '/api/smart-money/health': {
+          ...completeSmartMoneyHealth,
+          deployment: fixture.deployment,
+        },
+      }, async (baseUrl) => {
+        const result = await runSmoke(baseUrl, {
+          expectedCommitSha: 'abc123',
+          expectedDeploymentEnvironment: 'production',
+        });
+
+        assert.equal(result.code, 1);
+        assert.match(result.stderr, fixture.expectedError);
+      });
+    });
+  }
+});
+
+test('smoke script rejects a missing deployment identity when commit binding is enabled', async () => {
+  await withServer({
+    '/api/briefing': completeBriefing,
+    '/api/analysis?ticker=NVDA': { ok: true, ai: completeAnalysis, aiStatus: { state: 'ready', source: 'generated' } },
+    '/api/smart-money/health': completeSmartMoneyHealth,
+  }, async (baseUrl) => {
+    const result = await runSmoke(baseUrl, {
+      expectedCommitSha: 'abc123',
+      expectedDeploymentEnvironment: 'production',
+    });
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /health did not report deployment commit and environment/i);
   });
 });
 

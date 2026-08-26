@@ -1,6 +1,10 @@
 const baseUrl = (process.env.AI_SMOKE_BASE_URL || process.argv[2] || 'https://comms-dashboard-navy.vercel.app').replace(/\/$/, '');
 const ticker = (process.env.AI_SMOKE_TICKER || process.argv[3] || 'NVDA').trim().toUpperCase();
 const smokeSecret = process.env.AI_SMOKE_SECRET;
+const expectedCommitSha = process.env.AI_SMOKE_EXPECTED_COMMIT_SHA?.trim() || null;
+const expectedDeploymentEnvironment = expectedCommitSha
+  ? (process.env.AI_SMOKE_EXPECTED_DEPLOYMENT_ENVIRONMENT?.trim() || 'production')
+  : null;
 const configuredTimeout = Number(process.env.AI_SMOKE_TIMEOUT_MS);
 const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
   ? configuredTimeout
@@ -189,7 +193,25 @@ try {
     throw new Error('/api/smart-money/health did not report all seven enabled providers fresh');
   }
 
-  console.log(`AI and Smart Money smoke check passed for ${baseUrl} (${ticker}; 7/7 providers fresh)`);
+  if (expectedCommitSha) {
+    const deploymentCommitSha = smartMoneyHealth?.deployment?.commitSha;
+    const deploymentEnvironment = smartMoneyHealth?.deployment?.environment;
+    if (typeof deploymentCommitSha !== 'string' || !deploymentCommitSha
+        || typeof deploymentEnvironment !== 'string' || !deploymentEnvironment) {
+      throw new Error('/api/smart-money/health did not report deployment commit and environment');
+    }
+    if (deploymentCommitSha !== expectedCommitSha) {
+      throw new Error(`/api/smart-money/health deployment commit ${deploymentCommitSha} did not match expected ${expectedCommitSha}`);
+    }
+    if (deploymentEnvironment !== expectedDeploymentEnvironment) {
+      throw new Error(`/api/smart-money/health deployment environment ${deploymentEnvironment} did not match expected ${expectedDeploymentEnvironment}`);
+    }
+  }
+
+  const deploymentSummary = expectedCommitSha
+    ? `; deployment ${expectedCommitSha} (${expectedDeploymentEnvironment})`
+    : '';
+  console.log(`AI and Smart Money smoke check passed for ${baseUrl} (${ticker}; 7/7 providers fresh${deploymentSummary})`);
 } catch (error) {
   console.error(`AI smoke check failed: ${error?.message || 'unknown error'}`);
   process.exitCode = 1;

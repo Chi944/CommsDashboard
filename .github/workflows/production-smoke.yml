@@ -18,6 +18,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Resolve checked-out main commit
+        id: checked-out-main
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -26,3 +32,5 @@ jobs:
           AI_SMOKE_BASE_URL: https://comms-dashboard-navy.vercel.app
           AI_SMOKE_SECRET: ${{ secrets.AI_SMOKE_SECRET }}
           AI_SMOKE_TIMEOUT_MS: '35000'
+          AI_SMOKE_EXPECTED_COMMIT_SHA: ${{ steps.checked-out-main.outputs.sha }}
+          AI_SMOKE_EXPECTED_DEPLOYMENT_ENVIRONMENT: production
