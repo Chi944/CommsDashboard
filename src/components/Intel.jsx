@@ -2,6 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { categoryColor } from '../data/mockData.js';
 import { useLiveData } from '../state/LiveData.jsx';
 import EconomicCalendar from './EconomicCalendar.jsx';
+import SegmentedTabs from './SegmentedTabs.jsx';
+import SmartMoneyView from './smart-money/SmartMoneyView.jsx';
 
 const FILTERS = ['All', 'Breaking', 'Shipping', 'Energy', 'Metals', 'Agri', 'Geopolitical', 'Tech', 'Data', 'Finance', 'Currency', 'Crypto'];
 
@@ -17,7 +19,7 @@ const severityLabel = (s) => ({
   MODERATE: 'NOTABLE',
 }[s] || null);
 
-export default function Intel() {
+function NewsFeed() {
   const { intel, newsLive, newsUpdatedAt, newsLoading, refresh } = useLiveData();
   const [filter, setFilter] = useState('All');
   const [query, setQuery] = useState('');
@@ -173,6 +175,32 @@ export default function Intel() {
 
       {/* Economic calendar — below the news feed */}
       <EconomicCalendar />
+    </div>
+  );
+}
+
+export default function Intel({
+  view = 'news', recordId = null, onViewChange, onRecordChange, onOpenPrices,
+}) {
+  const activeView = view === 'smart-money' ? 'smart-money' : 'news';
+  return (
+    <div className="space-y-5 sm:space-y-6">
+      <SegmentedTabs
+        label="Intel view"
+        value={activeView}
+        onChange={(nextView) => onViewChange?.(nextView)}
+        tabs={[
+          { id: 'news', label: 'News Feed' },
+          { id: 'smart-money', label: 'Smart Money' },
+        ]}
+      />
+      {activeView === 'smart-money' ? (
+        <SmartMoneyView
+          recordId={recordId}
+          onRecordChange={onRecordChange}
+          onOpenPrices={onOpenPrices}
+        />
+      ) : <NewsFeed />}
     </div>
   );
 }

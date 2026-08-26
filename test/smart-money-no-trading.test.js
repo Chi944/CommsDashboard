@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -21,13 +21,20 @@ import {
 
 const FORBIDDEN_EXPORT = /(?:create|prepare|route|submit|place|execute|sign)(?:Real)?(?:Order|Trade|Allocation|Withdrawal|Deposit)|(?:Broker|Exchange|Wallet)(?:Credential|Secret|Token|PrivateKey)/i;
 const FORBIDDEN_FIELD = /^(?:orderPayload|orderType|timeInForce|targetAllocation|walletSignature|walletPrivateKey|exchangeApiKey|exchangeSecret|brokerToken|depositAddress|withdrawalAddress)$/i;
+const SOURCE_EXTENSIONS = /\.(?:js|jsx|ts|tsx)$/;
+const FORBIDDEN_SOURCE = Object.freeze([
+  /\b(?:create|prepare|route|submit|place|execute|sign)(?:Real)?(?:Order|Trade|Allocation|Withdrawal|Deposit)\b/i,
+  /["'`]\/(?:api\/)?(?:orders?|trades?|broker|exchange|wallet|withdraw|deposit)(?:\/|[?"'`])/i,
+  /\b(?:orderPayload|timeInForce|targetAllocation|walletSignature|walletPrivateKey|exchangeApiKey|exchangeSecret|brokerToken)\b/i,
+  /(?:from\s*|require\s*\()["'`](?:ethers|web3|wagmi|viem|ccxt|@alpacahq\/|coinbase|binance|ibkr)/i,
+]);
 
 async function javascriptFiles(root) {
   const rows = [];
   for (const entry of await readdir(root, { withFileTypes: true })) {
     const absolute = path.join(root, entry.name);
     if (entry.isDirectory()) rows.push(...await javascriptFiles(absolute));
-    else if (entry.isFile() && entry.name.endsWith('.js')) rows.push(absolute);
+    else if (entry.isFile() && SOURCE_EXTENSIONS.test(entry.name)) rows.push(absolute);
   }
   return rows.sort();
 }
@@ -59,6 +66,53 @@ test('every Smart Money library and API module exposes no trading or credential 
       inspectData(value);
     }
   }
+});
+
+test('all production JS, JSX, TS, and TSX surfaces contain no execution path or trading SDK', async () => {
+  const explicitFiles = [
+    path.resolve('api/smart-money.js'),
+    path.resolve('src/App.jsx'),
+  ];
+  const roots = [
+    path.resolve('lib/smart-money'),
+    path.resolve('api/smart-money'),
+    path.resolve('src/state'),
+    path.resolve('src/lib'),
+    path.resolve('src/components/smart-money'),
+  ];
+  const files = [
+    ...explicitFiles,
+    ...(await Promise.all(roots.map(javascriptFiles))).flat(),
+  ];
+  assert.ok(files.some((file) => file.endsWith(`${path.sep}SmartMoney.jsx`)));
+  for (const file of files) {
+    const source = await readFile(file, 'utf8');
+    for (const forbidden of FORBIDDEN_SOURCE) {
+      assert.doesNotMatch(source, forbidden, file);
+    }
+  }
+
+  const packageJson = JSON.parse(await readFile(path.resolve('package.json'), 'utf8'));
+  const dependencies = Object.keys({
+    ...packageJson.dependencies,
+    ...packageJson.devDependencies,
+  }).join('\n');
+  assert.doesNotMatch(dependencies, /^(?:ethers|web3|wagmi|viem|ccxt|@alpacahq\/|coinbase|binance|ibkr)$/im);
+});
+
+test('the built browser bundle contains no order endpoint, credential DTO, or trading SDK', async (t) => {
+  let files;
+  try {
+    files = (await readdir(path.resolve('dist/assets'), { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && /\.js$/.test(entry.name))
+      .map((entry) => path.resolve('dist/assets', entry.name));
+  } catch {
+    t.skip('run npm run build before the release bundle audit');
+    return;
+  }
+  assert.ok(files.length > 0);
+  const source = (await Promise.all(files.map((file) => readFile(file, 'utf8')))).join('\n');
+  for (const forbidden of FORBIDDEN_SOURCE) assert.doesNotMatch(source, forbidden);
 });
 
 test('dormant Polymarket and Hyperliquid production entries make zero network calls', async () => {

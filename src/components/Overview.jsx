@@ -4,6 +4,7 @@ import { categoryColor, assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
 import SectorHeatmap from './SectorHeatmap.jsx';
 import Briefing from './Briefing.jsx';
+import SmartMoneyPulse from './smart-money/SmartMoneyPulse.jsx';
 import FearGreed from './FearGreed.jsx';
 import { dataModeLabel } from '../lib/marketDisplay.js';
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
@@ -192,7 +193,7 @@ const HeadlinesPreview = ({ intel, newsLive }) => {
   );
 };
 
-export default function Overview({ onSelectAsset }) {
+export default function Overview({ onSelectAsset, onOpenSmartMoney }) {
   const {
     commodities, rankingCommodities, intel, newsLive, dataMode,
     pricesUpdatedAt, refresh,
@@ -272,6 +273,8 @@ export default function Overview({ onSelectAsset }) {
       </div>
 
       <Briefing />
+
+      <SmartMoneyPulse onOpen={onOpenSmartMoney} />
 
       {/* Stat cards with sparkline range toggle */}
       <div>

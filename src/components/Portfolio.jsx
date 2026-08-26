@@ -5,6 +5,9 @@ import Sparkline from './Sparkline.jsx';
 import { downloadCSV } from '../utils/csv.js';
 import CorrelationMatrix from './CorrelationMatrix.jsx';
 import { dataModeLabel } from '../lib/marketDisplay.js';
+import { useSmartMoney } from '../state/SmartMoney.jsx';
+import SegmentedTabs from './SegmentedTabs.jsx';
+import SimulationReadiness from './smart-money/SimulationReadiness.jsx';
 
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
@@ -88,7 +91,7 @@ const AddRow = ({ commodities, onAdd }) => {
   );
 };
 
-export default function Portfolio({ onSelectAsset }) {
+function HoldingsView({ onSelectAsset }) {
   const {
     commodities, positions, upsertPosition, removePosition,
     formatAssetPrice, dashboardCurrency, convert, dataMode,
@@ -246,3 +249,26 @@ const SummaryCard = ({ label, value, sub, accent }) => (
     {sub && <div className="mt-1 text-[11px] sm:text-xs text-gray-400">{sub}</div>}
   </div>
 );
+
+export default function Portfolio({
+  view = 'holdings', onViewChange, onSelectAsset,
+}) {
+  const { simulationCapability } = useSmartMoney();
+  const activeView = view === 'simulation-readiness' ? 'simulation-readiness' : 'holdings';
+  return (
+    <div className="space-y-5 sm:space-y-6">
+      <SegmentedTabs
+        label="Portfolio view"
+        value={activeView}
+        onChange={(nextView) => onViewChange?.(nextView)}
+        tabs={[
+          { id: 'holdings', label: 'Holdings' },
+          { id: 'simulation-readiness', label: 'Simulation readiness' },
+        ]}
+      />
+      {activeView === 'simulation-readiness'
+        ? <SimulationReadiness capability={simulationCapability} />
+        : <HoldingsView onSelectAsset={onSelectAsset} />}
+    </div>
+  );
+}
