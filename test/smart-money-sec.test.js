@@ -170,7 +170,7 @@ test('SEC snapshots bound the number of filing index and XML requests', async ()
 test('SEC adapter identity rejects a CIK mismatch before transport', async () => {
   let requests = 0;
   await assert.rejects(fetchSecSnapshot({
-    providerId: 'strategy-disclosures', cik: '2045724', userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
+    providerId: 'institutional-strategy', cik: '2045724', userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
   }, {
     fetchProviderJson: async () => { requests += 1; return SUBMISSIONS; },
   }), { code: 'configuration_missing' });

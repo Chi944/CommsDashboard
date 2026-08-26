@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getEntity, listEntities } from '../lib/smart-money/entities.js';
+import { getEntity, listConfiguredAdapters, listEntities } from '../lib/smart-money/entities.js';
 
 test('Leopold and Situational Awareness are separate related entities', () => {
   const person = getEntity('leopold-aschenbrenner');
@@ -18,4 +18,16 @@ test('the initial static roster has unique stable IDs', () => {
   const ids = listEntities().map((entity) => entity.id);
   assert.equal(new Set(ids).size, ids.length);
   assert.ok(ids.includes('bitwise-bitb'));
+});
+
+test('institutional adapter IDs remain distinct from their source-rights IDs', () => {
+  const adapters = listConfiguredAdapters({ now: new Date('2026-08-26T00:00:00.000Z') });
+  assert.deepEqual(adapters.filter((adapter) => adapter.id.startsWith('institutional-')).map((adapter) => [adapter.id, adapter.rightsId]), [
+    ['institutional-strategy', 'strategy-disclosures'],
+    ['institutional-tesla', 'tesla-disclosures'],
+    ['institutional-ibit', 'ibit-disclosures'],
+    ['institutional-fbtc', 'fbtc-disclosures'],
+    ['institutional-arkb', 'arkb-disclosures'],
+    ['institutional-bitb', 'bitb-disclosures'],
+  ]);
 });
