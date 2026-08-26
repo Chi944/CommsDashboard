@@ -1006,12 +1006,23 @@ test('a no-signal refresh still journals daily marks for retained assets and ben
 
 test('journal nondurability accepts no signal and performs zero snapshot writes', async () => {
   const { deps, calls } = createRefreshDeps({ journalDurable: false });
-  const result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+  const messages = [];
+  const originalError = console.error;
+  console.error = (...args) => messages.push(args.join(' '));
+  let result;
+  try {
+    result = await createSmartMoneyRefresher(deps)({ trigger: 'cron' });
+  } finally {
+    console.error = originalError;
+  }
   assert.equal(result.persisted, false);
   assert.deepEqual(result.signalsAccepted, []);
   assert.equal(result.errorCode, 'journal_persistence_failed');
   assert.equal(calls.appendJournal, 1);
   assert.equal(calls.writeSnapshot, 0);
+  assert.deepEqual(messages, [
+    '[smart-money] {"event":"journal_persistence_failed","manifest":{"ok":false,"errorCode":"manifest_write_failed"},"partitions":[]}',
+  ]);
 });
 
 test('snapshot nondurability leaves the journal row but accepts no signal', async () => {
