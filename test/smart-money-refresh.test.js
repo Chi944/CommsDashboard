@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { createSmartMoneyHandler } from '../api/smart-money.js';
+import { createSmartMoneyHistoryHandler } from '../api/smart-money/history.js';
+import {
+  publishJournalGeneration,
+  readAcceptedSmartMoneySnapshot,
+  readJournal,
+  stageJournal,
+} from '../lib/smart-money/journal.js';
 import {
   buildSecHoldingChanges,
   buildSmartMoneyPrivateSnapshot,
@@ -9,6 +17,8 @@ import {
   normalizeSmartMoneySettledState,
   validateSmartMoneyPrivateSnapshot,
 } from '../lib/smart-money/refresh.js';
+import { mockRequest } from './helpers/api.js';
+import { memoryJournalAdapter } from './fixtures/smart-money/journal.js';
 import {
   ACCEPTED_SNAPSHOT,
   ACCEPTED_PENDING_CONFIRMATION,
@@ -84,6 +94,32 @@ test('fulfilled empty or malformed children preserve only their own LKG while su
   );
   assert.equal(result.providerStatuses[3].status, 'unavailable');
   assert.equal(result.changes.length, 0);
+});
+
+test('sec-edgar sourceAsOf uses the latest accepted 13F period and survives LKG failure', () => {
+  const { previous, deps } = createRefreshDeps({ signals: [] });
+  const secAdapter = deps.adapters[0];
+  const acceptedSource = structuredClone(previous.adapterState.adapters[0].source.snapshot);
+  const accepted = normalizeSmartMoneySettledState({
+    adapters: deps.adapters,
+    dueAdapters: [secAdapter],
+    settled: [{ adapter: secAdapter, result: { status: 'fulfilled', value: acceptedSource } }],
+    previous,
+    now: new Date('2026-08-28T12:00:00.000Z'),
+  });
+  assert.equal(accepted.providerStatuses[0].sourceAsOf, '2026-06-30T00:00:00.000Z');
+  assert.equal(accepted.providerStatuses[0].freshnessBasis, 'retrieval_time');
+
+  const failed = normalizeSmartMoneySettledState({
+    adapters: deps.adapters,
+    dueAdapters: [secAdapter],
+    settled: [{ adapter: secAdapter, result: { status: 'rejected', reason: { code: 'timeout' } } }],
+    previous: { adapterState: accepted.adapterState },
+    now: new Date('2026-08-28T13:00:00.000Z'),
+  });
+  assert.equal(failed.providerStatuses[0].status, 'unavailable');
+  assert.equal(failed.providerStatuses[0].sourceAsOf, '2026-06-30T00:00:00.000Z');
+  assert.deepEqual(failed.adapterState.adapters[0].source, accepted.adapterState.adapters[0].source);
 });
 
 test('a partial refresh preserves valid signals derived from successful settled siblings', async () => {
@@ -338,8 +374,88 @@ test('accepted snapshot generation publishes after snapshot durability and marke
   assert.deepEqual(result.signalsAccepted, []);
   assert.deepEqual(captured.publicationInput, {
     refreshStartedAt: '2026-08-28T12:00:00.000Z',
+    snapshot: captured.writtenSnapshot,
   });
   assert.ok(calls.events.indexOf('snapshot') < calls.events.indexOf('publication'));
+});
+
+test('snapshot and history share one acceptance gate across marker failure and retry without re-derivation', async () => {
+  let failAcceptance = false;
+  let adapter;
+  adapter = memoryJournalAdapter({
+    beforeWrite: async ({ pathname, data }) => {
+      if (failAcceptance && pathname === 'smart-money/v1/journal/publications.json'
+          && data.current?.refreshStartedAt === '2026-08-28T12:00:00.000Z') {
+        failAcceptance = false;
+        adapter.failNext(pathname);
+      }
+    },
+  });
+  const fixture = createRefreshDeps({ echoJournalSignals: true });
+  const baseline = buildSmartMoneyPrivateSnapshot({
+    refreshStartedAt: fixture.previous.refreshStartedAt,
+    publicSnapshot: { ...structuredClone(fixture.previous.publicSnapshot), signals: [] },
+    adapterState: fixture.previous.adapterState,
+  }, { now: new Date('2026-08-28T12:00:00.000Z') });
+  await stageJournal({
+    refreshStartedAt: baseline.refreshStartedAt, signals: [], dailyMarks: [],
+  }, { adapter, now: new Date('2026-08-28T12:00:00.000Z') });
+  await publishJournalGeneration({
+    refreshStartedAt: baseline.refreshStartedAt, snapshot: baseline,
+  }, { adapter, now: new Date('2026-08-28T12:00:00.000Z') });
+
+  let durableCandidate = null;
+  fixture.deps.readSnapshot = () => readAcceptedSmartMoneySnapshot({ adapter });
+  fixture.deps.readCandidateSnapshot = async () => structuredClone(durableCandidate);
+  fixture.deps.appendJournal = (input) => stageJournal(input, {
+    adapter, now: new Date('2026-08-28T12:00:00.000Z'),
+  });
+  fixture.deps.writeSnapshot = async (snapshot) => {
+    fixture.calls.events.push('snapshot');
+    fixture.calls.writeSnapshot += 1;
+    fixture.captured.writtenSnapshot = structuredClone(snapshot);
+    durableCandidate = structuredClone(snapshot);
+    return { snapshot, durableWriteSucceeded: true };
+  };
+  fixture.deps.publishJournalGeneration = (input) => publishJournalGeneration(input, {
+    adapter, now: new Date('2026-08-28T12:00:00.000Z'),
+  });
+  failAcceptance = true;
+
+  const snapshotHandler = createSmartMoneyHandler({
+    readSnapshot: () => readAcceptedSmartMoneySnapshot({ adapter }),
+    now: () => new Date('2026-08-28T12:00:00.000Z'),
+  });
+  const historyHandler = createSmartMoneyHistoryHandler({
+    readJournal: (query) => readJournal(query, {
+      adapter, now: new Date('2026-08-28T12:00:00.000Z'),
+    }),
+    now: () => new Date('2026-08-28T12:00:00.000Z'),
+  });
+  async function readPublicRoutes() {
+    const snapshotRequest = mockRequest('/api/smart-money');
+    await snapshotHandler(snapshotRequest.req, snapshotRequest.res);
+    const historyRequest = mockRequest('/api/smart-money/history?since=2026-08-25T00%3A00%3A00.000Z&limit=20');
+    await historyHandler(historyRequest.req, historyRequest.res);
+    return { snapshot: snapshotRequest.res, history: historyRequest.res };
+  }
+
+  const first = await createSmartMoneyRefresher(fixture.deps)({ trigger: 'cron' });
+  assert.equal(first.persisted, false);
+  assert.equal(first.errorCode, 'journal_publication_failed');
+  const beforeRetry = await readPublicRoutes();
+  assert.deepEqual(beforeRetry.snapshot.body.signals, []);
+  assert.deepEqual(beforeRetry.history.body.signals, []);
+
+  const fetchesBeforeRetry = structuredClone(fixture.calls.fetchByAdapter);
+  const derivationsBeforeRetry = fixture.calls.events.filter((event) => event === 'derive').length;
+  const retry = await createSmartMoneyRefresher(fixture.deps)({ trigger: 'cron' });
+  assert.equal(retry.persisted, true);
+  assert.deepEqual(fixture.calls.fetchByAdapter, fetchesBeforeRetry);
+  assert.equal(fixture.calls.events.filter((event) => event === 'derive').length, derivationsBeforeRetry);
+  const afterRetry = await readPublicRoutes();
+  assert.deepEqual(afterRetry.snapshot.body.signals, [ACCEPTED_SNAPSHOT.signals[0]]);
+  assert.deepEqual(afterRetry.history.body.signals, [ACCEPTED_SNAPSHOT.signals[0]]);
 });
 
 test('snapshot publication uses only journal committedSignals', async () => {
@@ -398,6 +514,16 @@ test('private envelope constructor computes its digest internally and rejects ca
     adapterState: previous.adapterState,
     stateDigest: 'sha256:caller-controlled',
   }, { now: new Date('2026-08-28T12:00:00.000Z') }), /schema_invalid/);
+});
+
+test('private envelope digest rejects refresh generation timestamp tampering', () => {
+  const { previous } = createRefreshDeps({ signals: [] });
+  const tampered = structuredClone(previous);
+  tampered.refreshStartedAt = '2026-08-26T10:58:00.000Z';
+  assert.throws(
+    () => validateSmartMoneyPrivateSnapshot(tampered, { now: new Date('2026-08-28T12:00:00.000Z') }),
+    /snapshot_invalid|schema_invalid/,
+  );
 });
 
 test('a private wrapper round-trips as the next accepted previous state', async () => {

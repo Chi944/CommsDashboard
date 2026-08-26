@@ -1,4 +1,5 @@
 import { buildSmartMoneyHealth } from '../../lib/smart-money/health.js';
+import { readAcceptedSmartMoneySnapshot } from '../../lib/smart-money/journal.js';
 import { ENABLED_SMART_MONEY_ADAPTER_IDS } from '../../lib/smart-money/refresh.js';
 import { SOURCE_RIGHTS, validateRightsMatrix } from '../../lib/smart-money/rights.js';
 import { readSmartMoneySnapshot } from '../../lib/smart-money/store.js';
@@ -16,7 +17,21 @@ function sanitize(value) {
 }
 
 export function createSmartMoneyHealthHandler(deps = {}) {
-  const read = deps.readSnapshot || (() => readSmartMoneySnapshot({ withDiagnostics: true }));
+  const read = deps.readSnapshot || (async () => {
+    const [accepted, raw] = await Promise.allSettled([
+      readAcceptedSmartMoneySnapshot(),
+      readSmartMoneySnapshot({ withDiagnostics: true }),
+    ]);
+    const diagnostics = raw.status === 'fulfilled' ? raw.value.diagnostics : {
+      blob: false, redis: false, blobError: 'blob_read_failed', redisError: 'redis_read_failed',
+      selectedSource: null,
+    };
+    if (accepted.status === 'rejected') diagnostics.blobError = 'journal_read_failed';
+    return {
+      snapshot: accepted.status === 'fulfilled' ? accepted.value : null,
+      diagnostics,
+    };
+  });
   const build = deps.buildHealth || buildSmartMoneyHealth;
   return async function smartMoneyHealthHandler(req, res) {
     res.setHeader('Cache-Control', 'no-store');

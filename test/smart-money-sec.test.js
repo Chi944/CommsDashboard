@@ -309,6 +309,27 @@ test('institutional profiles accept identical exact-target duplicates but reject
   ), { code: 'schema_invalid' });
 });
 
+test('institutional profiles reject exact target facts relocated outside their reviewed structural container', () => {
+  const providers = [
+    'institutional-strategy', 'institutional-tesla', 'institutional-ibit',
+    'institutional-fbtc', 'institutional-arkb', 'institutional-bitb',
+  ];
+  for (const providerId of providers) {
+    assert.throws(() => parseSecInstitutionalDisclosureDocument(
+      institutionalInlineXbrl(providerId, { relocateQuantity: true }),
+      providerId,
+      { reportDate: '2026-06-30' },
+    ), { code: 'schema_invalid' }, `${providerId} relocated quantity`);
+    if (providerId !== 'institutional-tesla') {
+      assert.throws(() => parseSecInstitutionalDisclosureDocument(
+        institutionalInlineXbrl(providerId, { relocateValue: true }),
+        providerId,
+        { reportDate: '2026-06-30' },
+      ), { code: 'schema_invalid' }, `${providerId} relocated value`);
+    }
+  }
+});
+
 test('institutional excerpts retain exact official SEC archive attribution', () => {
   for (const providerId of [
     'institutional-strategy', 'institutional-tesla', 'institutional-ibit',
@@ -415,6 +436,31 @@ test('institutional filing selection fails closed when the newest applicable tup
       } },
     }),
     fetchProviderText: async () => { archiveCalls += 1; return institutionalInlineXbrl('institutional-ibit'); },
+  }), { code: 'schema_invalid' });
+  assert.equal(archiveCalls, 0);
+});
+
+test('institutional filing selection orders strict dates rather than trusting submissions row order', async () => {
+  const filing = institutionalFiling('institutional-ibit');
+  let archiveCalls = 0;
+  await assert.rejects(fetchSecInstitutionalDisclosure({
+    providerId: 'institutional-ibit', cik: filing.cik,
+    userAgent: 'CommsDashboard/1.0 compliance@monitored-contact.co',
+  }, {
+    fetchProviderJson: async () => ({
+      cik: filing.cik,
+      filings: { recent: {
+        accessionNumber: [filing.accessionNumber, 'malformed-newest'],
+        filingDate: [filing.filingDate, '2026-08-20'],
+        reportDate: [filing.reportDate, '2026-09-30'],
+        form: ['10-Q', '10-Q'],
+        primaryDocument: [filing.primaryDocument, 'latest.txt'],
+      } },
+    }),
+    fetchProviderText: async () => {
+      archiveCalls += 1;
+      return institutionalInlineXbrl('institutional-ibit');
+    },
   }), { code: 'schema_invalid' });
   assert.equal(archiveCalls, 0);
 });

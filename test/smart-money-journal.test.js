@@ -7,6 +7,7 @@ import {
   listTrackedTickers,
   publishJournalGeneration,
   pruneJournal,
+  readAcceptedSmartMoneySnapshot,
   readJournal,
   stageJournal,
 } from '../lib/smart-money/journal.js';
@@ -16,6 +17,16 @@ const MANIFEST = 'smart-money/v1/journal/manifest.json';
 const PARTITION = 'smart-money/v1/journal/2026-08-26.json';
 const PUBLICATIONS = 'smart-money/v1/journal/publications.json';
 const GENERATION = '2026-08-27T00:00:00.000Z';
+
+function acceptedPrivateSnapshot(generation = GENERATION, signals = []) {
+  return {
+    schemaVersion: 1,
+    refreshStartedAt: generation,
+    publicSnapshot: { signals: structuredClone(signals) },
+    adapterState: {},
+    stateDigest: `sha256:${(generation === GENERATION ? 'a' : 'b').repeat(64)}`,
+  };
+}
 
 function signalAt(id, observedAt, ticker = 'BTC') {
   const observedMs = Date.parse(observedAt);
@@ -60,7 +71,10 @@ async function publishRows(adapter, { signals = [], dailyMarks = [], generation 
   const now = new Date(generation);
   const staged = await stageJournal({ refreshStartedAt: generation, signals, dailyMarks }, { adapter, now });
   assert.equal(staged.durableWriteSucceeded, true);
-  const published = await publishJournalGeneration({ refreshStartedAt: generation }, { adapter, now });
+  const published = await publishJournalGeneration({
+    refreshStartedAt: generation,
+    snapshot: acceptedPrivateSnapshot(generation, signals),
+  }, { adapter, now });
   assert.equal(published.durableWriteSucceeded, true);
 }
 
@@ -82,6 +96,7 @@ test('staged rows stay private until their exact snapshot generation is durably 
 
   const published = await publishJournalGeneration({
     refreshStartedAt: GENERATION,
+    snapshot: acceptedPrivateSnapshot(GENERATION, [SIGNAL]),
   }, { adapter, now: new Date(GENERATION) });
   assert.deepEqual(published, { durableWriteSucceeded: true, skipped: false, error: null });
   const afterPublication = await readJournal({
@@ -90,6 +105,10 @@ test('staged rows stay private until their exact snapshot generation is durably 
   }, { adapter, now: new Date(GENERATION) });
   assert.deepEqual(afterPublication.signals, [SIGNAL]);
   assert.deepEqual(afterPublication.dailyMarks, [mark]);
+  assert.deepEqual(
+    await readAcceptedSmartMoneySnapshot({ adapter }),
+    acceptedPrivateSnapshot(GENERATION, [SIGNAL]),
+  );
 });
 
 test('publication marker retry is idempotent for the same generation and exact IDs', async () => {
@@ -99,7 +118,10 @@ test('publication marker retry is idempotent for the same generation and exact I
     signals: [SIGNAL],
     dailyMarks: [],
   }, { adapter, now: new Date(GENERATION) });
-  const input = { refreshStartedAt: GENERATION };
+  const input = {
+    refreshStartedAt: GENERATION,
+    snapshot: acceptedPrivateSnapshot(GENERATION, [SIGNAL]),
+  };
   assert.deepEqual(await publishJournalGeneration(input, { adapter, now: new Date(GENERATION) }), {
     durableWriteSucceeded: true, skipped: false, error: null,
   });
@@ -107,6 +129,36 @@ test('publication marker retry is idempotent for the same generation and exact I
     durableWriteSucceeded: true, skipped: true, error: null,
   });
   assert.deepEqual(Object.keys(adapter.inspect(PUBLICATIONS).published), [GENERATION]);
+  assert.deepEqual(Object.keys(adapter.inspect(PUBLICATIONS).staged), []);
+});
+
+test('a lost acceptance response is reread as durable without splitting snapshot and history', async () => {
+  const underlying = memoryJournalAdapter();
+  let loseAcceptanceResponse = true;
+  const adapter = {
+    ...underlying,
+    async write(pathname, data, expectedEtag) {
+      const result = await underlying.write(pathname, data, expectedEtag);
+      if (pathname === PUBLICATIONS && data.current !== null && loseAcceptanceResponse) {
+        loseAcceptanceResponse = false;
+        throw new Error('simulated lost response containing secret=never-return');
+      }
+      return result;
+    },
+  };
+  await stageJournal({
+    refreshStartedAt: GENERATION, signals: [SIGNAL], dailyMarks: [],
+  }, { adapter, now: new Date(GENERATION) });
+  const snapshot = acceptedPrivateSnapshot(GENERATION, [SIGNAL]);
+  assert.deepEqual(await publishJournalGeneration({
+    refreshStartedAt: GENERATION, snapshot,
+  }, { adapter, now: new Date(GENERATION) }), {
+    durableWriteSucceeded: true, skipped: false, error: null,
+  });
+  assert.deepEqual(await readAcceptedSmartMoneySnapshot({ adapter }), snapshot);
+  assert.deepEqual((await readJournal({ since: SIGNAL.observedAt, limit: 10 }, {
+    adapter, now: new Date(GENERATION),
+  })).signals, [SIGNAL]);
 });
 
 test('journal append returns the exact durable contract and rereads committed rows', async () => {
@@ -416,10 +468,18 @@ test('history ignores partition-only rows when the manifest maps only authoritat
     dailyMarks: [],
   });
   adapter.seed(PUBLICATIONS, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     staged: {},
     published: {
-      [GENERATION]: { signalIds: [authoritative.id], dailyMarkIds: [] },
+      [GENERATION]: {
+        signalIds: [authoritative.id], dailyMarkIds: [],
+        snapshotDigest: `sha256:${'a'.repeat(64)}`,
+      },
+    },
+    current: {
+      refreshStartedAt: GENERATION,
+      snapshotDigest: `sha256:${'a'.repeat(64)}`,
+      snapshot: acceptedPrivateSnapshot(GENERATION, [authoritative]),
     },
   });
   const history = await readJournal({ since: '2026-08-26T00:00:00.000Z', limit: 20 }, {
@@ -427,6 +487,54 @@ test('history ignores partition-only rows when the manifest maps only authoritat
     now: new Date('2026-08-27T00:00:00.000Z'),
   });
   assert.deepEqual(history.signals.map((row) => row.id), [authoritative.id]);
+});
+
+test('prune compacts accepted metadata and expires abandoned staging without deleting current retry work', async () => {
+  const adapter = memoryJournalAdapter();
+  const oldGeneration = '2025-07-20T00:00:00.000Z';
+  const abandonedGeneration = '2025-07-21T00:00:00.000Z';
+  const currentRetryGeneration = '2026-08-26T11:00:00.000Z';
+  const current = acceptedPrivateSnapshot(GENERATION, []);
+  adapter.seed(PUBLICATIONS, {
+    schemaVersion: 2,
+    staged: {
+      [abandonedGeneration]: { signalIds: [], dailyMarkIds: [] },
+      [currentRetryGeneration]: { signalIds: [], dailyMarkIds: [] },
+    },
+    published: {
+      [oldGeneration]: {
+        signalIds: ['hyperliquid-account-details:expired'], dailyMarkIds: [],
+        snapshotDigest: `sha256:${'b'.repeat(64)}`,
+      },
+      [GENERATION]: {
+        signalIds: [], dailyMarkIds: [], snapshotDigest: current.stateDigest,
+      },
+    },
+    current: {
+      refreshStartedAt: GENERATION,
+      snapshotDigest: current.stateDigest,
+      snapshot: current,
+    },
+  });
+
+  const result = await pruneJournal({ now: new Date('2026-08-27T00:00:00.000Z') }, { adapter });
+  assert.equal(result.durableWriteSucceeded, true);
+  assert.deepEqual(adapter.inspect(PUBLICATIONS), {
+    schemaVersion: 2,
+    staged: {
+      [currentRetryGeneration]: { signalIds: [], dailyMarkIds: [] },
+    },
+    published: {
+      [GENERATION]: {
+        signalIds: [], dailyMarkIds: [], snapshotDigest: current.stateDigest,
+      },
+    },
+    current: {
+      refreshStartedAt: GENERATION,
+      snapshotDigest: current.stateDigest,
+      snapshot: current,
+    },
+  });
 });
 
 test('prune commits manifest removal before deletion and performs zero deletes on manifest failure', async () => {

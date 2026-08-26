@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  readDurableSmartMoneyCandidate,
   readSmartMoneySnapshot,
   selectNewestSmartMoneySnapshot,
   writeNewestSmartMoneyBlob,
@@ -21,6 +22,28 @@ test('snapshot selection uses refresh generation rather than later completion ti
   ]);
   assert.equal(selected.source, 'blob');
   assert.equal(selected.data.marker, 'newer-fast');
+});
+
+test('candidate recovery requires exact agreement from every configured durable store and ignores memory', async () => {
+  const candidate = snapshot('2026-08-26T02:00:00.000Z', 'candidate');
+  assert.deepEqual(await readDurableSmartMoneyCandidate({
+    blobConfigured: true,
+    redisConfigured: true,
+    memory: snapshot('2026-08-26T03:00:00.000Z', 'memory-only'),
+    readBlob: async () => ({ data: structuredClone(candidate), error: null }),
+    readRedis: async () => ({ data: structuredClone(candidate), error: null }),
+  }), candidate);
+  assert.equal(await readDurableSmartMoneyCandidate({
+    blobConfigured: true,
+    redisConfigured: true,
+    readBlob: async () => ({ data: structuredClone(candidate), error: null }),
+    readRedis: async () => ({
+      data: snapshot('2026-08-26T02:00:00.000Z', 'conflict'), error: null,
+    }),
+  }), null);
+  assert.equal(await readDurableSmartMoneyCandidate({
+    blobConfigured: false, redisConfigured: false, memory: candidate,
+  }), null);
 });
 
 test('equal snapshot generations preserve the first accepted candidate', () => {
