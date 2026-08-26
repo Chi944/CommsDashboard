@@ -183,6 +183,280 @@ test('publication marker retry is idempotent for the same generation and exact I
   });
   assert.deepEqual(Object.keys(adapter.inspect(PUBLICATIONS).published), [GENERATION]);
   assert.deepEqual(Object.keys(adapter.inspect(PUBLICATIONS).staged), []);
+  assert.deepEqual(adapter.inspect(MANIFEST).claims, {});
+});
+
+test('exact current publication retry is read-only across maintenance and claim-retirement cleanup', async () => {
+  const maintenanceCases = [
+    ['unexpired', '2026-08-27T00:01:00.000Z'],
+    ['expired', '2026-08-27T00:20:00.000Z'],
+  ];
+  for (const [name, retryAt] of maintenanceCases) {
+    const adapter = memoryJournalAdapter();
+    await publishRows(adapter, { signals: [SIGNAL] });
+    const manifest = adapter.inspect(MANIFEST);
+    manifest.maintenance = {
+      token: 'claim:00000000-0000-4000-8000-000000000010',
+      claimedAt: '2026-08-27T00:00:00.000Z',
+      leaseUntil: '2026-08-27T00:02:00.000Z',
+    };
+    adapter.seed(MANIFEST, manifest);
+
+    assert.deepEqual(await publishJournalGeneration({
+      refreshStartedAt: GENERATION,
+      snapshot: acceptedPrivateSnapshot(GENERATION, [SIGNAL]),
+    }, { adapter, now: new Date(retryAt) }), {
+      durableWriteSucceeded: true, skipped: true, error: null,
+    }, name);
+  }
+
+  const cleanupAdapter = memoryJournalAdapter();
+  await publishRows(cleanupAdapter, { signals: [SIGNAL] });
+  const publications = cleanupAdapter.inspect(PUBLICATIONS);
+  publications.cleanup = {
+    staged: {},
+    claims: {
+      [GENERATION]: {
+        token: 'claim:00000000-0000-4000-8000-000000000011',
+        state: 'writing',
+        claimedAt: '2026-08-27T00:00:00.000Z',
+        leaseUntil: '2026-08-27T00:02:00.000Z',
+        signalIds: { [SIGNAL.id]: SIGNAL.observedAt.slice(0, 10) },
+        dailyMarkIds: {},
+      },
+    },
+    signalIds: {},
+    dailyMarkIds: {},
+  };
+  cleanupAdapter.seed(PUBLICATIONS, publications);
+  assert.deepEqual(await publishJournalGeneration({
+    refreshStartedAt: GENERATION,
+    snapshot: acceptedPrivateSnapshot(GENERATION, [SIGNAL]),
+  }, { adapter: cleanupAdapter, now: new Date('2026-08-27T00:20:00.000Z') }), {
+    durableWriteSucceeded: true, skipped: true, error: null,
+  });
+
+  const unpublishedAdapter = memoryJournalAdapter();
+  const unpublishedGeneration = '2026-08-27T01:00:00.000Z';
+  await stageJournal({
+    refreshStartedAt: unpublishedGeneration, signals: [SIGNAL], dailyMarks: [],
+  }, { adapter: unpublishedAdapter, now: new Date(unpublishedGeneration) });
+  const unpublishedManifest = unpublishedAdapter.inspect(MANIFEST);
+  unpublishedManifest.maintenance = {
+    token: 'claim:00000000-0000-4000-8000-000000000012',
+    claimedAt: '2026-08-27T01:00:00.000Z',
+    leaseUntil: '2026-08-27T01:02:00.000Z',
+  };
+  unpublishedAdapter.seed(MANIFEST, unpublishedManifest);
+  const unpublished = await publishJournalGeneration({
+    refreshStartedAt: unpublishedGeneration,
+    snapshot: acceptedPrivateSnapshot(unpublishedGeneration, [SIGNAL]),
+  }, { adapter: unpublishedAdapter, now: new Date('2026-08-27T01:20:00.000Z') });
+  assert.equal(unpublished.durableWriteSucceeded, false);
+  assert.equal(unpublished.error, 'publication_rows_unavailable');
+});
+
+test('publication rejects accepted signal content that differs from its staged journal row', async () => {
+  const variants = [
+    {
+      name: 'reference price',
+      mutate(signal) {
+        signal.referencePrice.price += 123;
+      },
+    },
+    {
+      name: 'source evidence',
+      mutate(signal) {
+        signal.sourceUrl = 'https://app.hyperliquid.xyz/explorer/address/0x0000000000000000000000000000000000000abc';
+      },
+    },
+    {
+      name: 'direction',
+      mutate(signal) {
+        signal.direction = 'short';
+      },
+    },
+  ];
+  for (const variant of variants) {
+    const adapter = memoryJournalAdapter();
+    await stageJournal({
+      refreshStartedAt: GENERATION, signals: [SIGNAL], dailyMarks: [],
+    }, { adapter, now: new Date(GENERATION) });
+    const changed = structuredClone(SIGNAL);
+    variant.mutate(changed);
+
+    const published = await publishJournalGeneration({
+      refreshStartedAt: GENERATION,
+      snapshot: acceptedPrivateSnapshot(GENERATION, [changed]),
+    }, { adapter, now: new Date(GENERATION) });
+
+    assert.equal(published.durableWriteSucceeded, false, variant.name);
+    assert.equal(published.error, 'publication_rows_unavailable', variant.name);
+    assert.equal(await readAcceptedSmartMoneySnapshot({
+      adapter, now: new Date(GENERATION),
+    }), null, variant.name);
+    assert.ok(adapter.inspect(PUBLICATIONS).staged[GENERATION], variant.name);
+  }
+});
+
+test('publication binds staged signals by canonical ID while preserving idempotent retries', async () => {
+  const adapter = memoryJournalAdapter();
+  const first = signalAt(
+    'hyperliquid-account-details:publication-order-a', '2026-08-26T01:00:00.000Z',
+  );
+  const second = signalAt(
+    'hyperliquid-account-details:publication-order-b', '2026-08-26T02:00:00.000Z',
+  );
+  const staged = await stageJournal({
+    refreshStartedAt: GENERATION, signals: [second, first], dailyMarks: [],
+  }, { adapter, now: new Date(GENERATION) });
+  assert.equal(staged.durableWriteSucceeded, true);
+  const snapshot = acceptedPrivateSnapshot(GENERATION, [first, second]);
+  const input = { refreshStartedAt: GENERATION, snapshot };
+
+  assert.deepEqual(await publishJournalGeneration(input, {
+    adapter, now: new Date(GENERATION),
+  }), { durableWriteSucceeded: true, skipped: false, error: null });
+  assert.deepEqual(await publishJournalGeneration(input, {
+    adapter, now: new Date(GENERATION),
+  }), { durableWriteSucceeded: true, skipped: true, error: null });
+  assert.deepEqual(
+    (await readAcceptedSmartMoneySnapshot({ adapter, now: new Date(GENERATION) }))
+      .publicSnapshot.signals.map((signal) => signal.id),
+    [first.id, second.id],
+  );
+});
+
+test('more than the manifest claim limit of empty cron generations publish without claim accumulation', async () => {
+  const adapter = memoryJournalAdapter();
+  const baseMs = Date.parse('2026-08-27T00:00:00.000Z');
+  const template = acceptedPrivateSnapshot(new Date(baseMs).toISOString(), []);
+  for (let index = 0; index < 2_050; index += 1) {
+    const generation = new Date(baseMs + index * 1_000).toISOString();
+    const staged = await stageJournal({
+      refreshStartedAt: generation, signals: [], dailyMarks: [],
+    }, { adapter, now: new Date(generation) });
+    assert.equal(staged.durableWriteSucceeded, true, `stage ${index}`);
+    const published = await publishJournalGeneration({
+      refreshStartedAt: generation,
+      snapshot: buildSmartMoneyPrivateSnapshot({
+        refreshStartedAt: generation,
+        publicSnapshot: { ...template.publicSnapshot, fetchedAt: generation },
+        adapterState: template.adapterState,
+      }, { now: new Date(generation) }),
+    }, { adapter, now: new Date(generation) });
+    assert.equal(published.durableWriteSucceeded, true, `publish ${index}`);
+    assert.equal(Object.keys(adapter.inspect(MANIFEST).claims).length, 0, `claims ${index}`);
+    if (index % 64 === 63) {
+      const pruned = await pruneJournal({ now: generation }, { adapter });
+      assert.equal(pruned.durableWriteSucceeded, true, `prune ${index}`);
+    }
+  }
+});
+
+test('manifest claim count, per-claim IDs, and total claim IDs fail closed above their bounds', async () => {
+  const claimedAt = '2026-08-27T00:00:00.000Z';
+  const leaseUntil = '2026-08-27T00:02:00.000Z';
+  function claim(signalIds = {}) {
+    return {
+      token: 'claim:00000000-0000-4000-8000-000000000000',
+      state: 'writing',
+      claimedAt,
+      leaseUntil,
+      signalIds,
+      dailyMarkIds: {},
+    };
+  }
+  const variants = [];
+  variants.push(Object.fromEntries(Array.from({ length: 2_049 }, (_, index) => [
+    new Date(Date.parse(claimedAt) + index * 1_000).toISOString(), claim(),
+  ])));
+  variants.push({
+    [claimedAt]: claim(Object.fromEntries(Array.from({ length: 10_001 }, (_, index) => [
+      `hyperliquid-account-details:per-claim-${index}`, '2026-08-26',
+    ]))),
+  });
+  const totalClaims = {};
+  let totalIndex = 0;
+  for (let claimIndex = 0; claimIndex < 11; claimIndex += 1) {
+    const count = claimIndex < 10 ? 10_000 : 1;
+    const signalIds = {};
+    for (let idIndex = 0; idIndex < count; idIndex += 1) {
+      signalIds[`hyperliquid-account-details:total-${totalIndex}`] = '2026-08-26';
+      totalIndex += 1;
+    }
+    totalClaims[new Date(Date.parse(claimedAt) + claimIndex * 1_000).toISOString()] = claim(signalIds);
+  }
+  variants.push(totalClaims);
+
+  for (const claims of variants) {
+    const adapter = memoryJournalAdapter();
+    adapter.seed(MANIFEST, {
+      schemaVersion: 2,
+      partitions: [],
+      signalIds: {},
+      dailyMarkIds: {},
+      claims,
+      maintenance: null,
+    });
+    const pruned = await pruneJournal({ now: '2026-08-27T00:03:00.000Z' }, { adapter });
+    assert.equal(pruned.durableWriteSucceeded, false);
+    assert.equal(adapter.inspect(MANIFEST).maintenance, null);
+  }
+});
+
+test('accepted publication stays durable when its claim retirement cleanup fails', async () => {
+  const adapter = memoryJournalAdapter();
+  await stageJournal({
+    refreshStartedAt: GENERATION,
+    signals: [SIGNAL],
+    dailyMarks: [],
+  }, { adapter, now: new Date(GENERATION) });
+  adapter.failNext(MANIFEST);
+
+  const published = await publishJournalGeneration({
+    refreshStartedAt: GENERATION,
+    snapshot: acceptedPrivateSnapshot(GENERATION, [SIGNAL]),
+  }, { adapter, now: new Date(GENERATION) });
+
+  assert.deepEqual(published, { durableWriteSucceeded: true, skipped: false, error: null });
+  assert.deepEqual(
+    await readAcceptedSmartMoneySnapshot({ adapter, now: new Date(GENERATION) }),
+    acceptedPrivateSnapshot(GENERATION, [SIGNAL]),
+  );
+  assert.equal(Object.hasOwn(adapter.inspect(MANIFEST).claims, GENERATION), true);
+
+  const pruned = await pruneJournal({ now: new Date(GENERATION) }, { adapter });
+  assert.equal(pruned.durableWriteSucceeded, true);
+  assert.equal(Object.hasOwn(adapter.inspect(MANIFEST).claims, GENERATION), false);
+});
+
+test('prune rejects cleanup and reconciliation mappings that overlap published IDs', async () => {
+  for (const kind of ['cleanup', 'reconciliation']) {
+    const adapter = memoryJournalAdapter();
+    await publishRows(adapter, { signals: [SIGNAL] });
+    const publications = adapter.inspect(PUBLICATIONS);
+    if (kind === 'reconciliation') {
+      publications.reconciliation = {
+        signalIds: { [SIGNAL.id]: SIGNAL.observedAt.slice(0, 10) }, dailyMarkIds: {},
+      };
+    } else {
+      const orphanGeneration = '2026-08-27T12:01:00.000Z';
+      const ids = { signalIds: [SIGNAL.id], dailyMarkIds: [] };
+      publications.staged[orphanGeneration] = ids;
+      publications.cleanup = {
+        staged: { [orphanGeneration]: ids },
+        signalIds: { [SIGNAL.id]: SIGNAL.observedAt.slice(0, 10) },
+        dailyMarkIds: {},
+      };
+    }
+    adapter.seed(PUBLICATIONS, publications);
+
+    const pruned = await pruneJournal({ now: new Date(GENERATION) }, { adapter });
+    assert.equal(pruned.durableWriteSucceeded, false, kind);
+    assert.equal(adapter.inspect(PARTITION).signals.some((row) => row.id === SIGNAL.id), true, kind);
+    assert.equal(adapter.inspect(MANIFEST).signalIds[SIGNAL.id], SIGNAL.observedAt.slice(0, 10), kind);
+  }
 });
 
 test('final acceptance rejects forged and incomplete private envelopes', async () => {
@@ -363,6 +637,39 @@ test('journal retry preserves the original immutable signal and reference price'
   }, { adapter, now: new Date('2026-08-27T00:00:00.000Z') });
   assert.deepEqual(result.signals.map((row) => row.id), [SIGNAL.id]);
   assert.equal(retry.committedSignals[0].referencePrice.price, SIGNAL.referencePrice.price);
+});
+
+test('stage claim identity is canonical across nonlexicographic input and reordered retry', async () => {
+  const adapter = memoryJournalAdapter();
+  const first = signalAt(
+    'hyperliquid-account-details:z-claim-order', '2026-08-26T10:00:00.000Z',
+  );
+  const second = signalAt(
+    'hyperliquid-account-details:a-claim-order', '2026-08-26T11:00:00.000Z',
+  );
+  const initial = await stageJournal({
+    refreshStartedAt: GENERATION, signals: [first, second], dailyMarks: [],
+  }, { adapter, now: new Date(GENERATION) });
+  assert.equal(initial.durableWriteSucceeded, true);
+
+  const retried = await stageJournal({
+    refreshStartedAt: GENERATION, signals: [second, first], dailyMarks: [],
+  }, { adapter, now: new Date(GENERATION) });
+  assert.equal(retried.durableWriteSucceeded, true);
+  assert.deepEqual(retried.committedSignals, [second, first]);
+  assert.deepEqual(Object.keys(adapter.inspect(MANIFEST).claims[GENERATION].signalIds), [
+    second.id, first.id,
+  ]);
+  const input = {
+    refreshStartedAt: GENERATION,
+    snapshot: acceptedPrivateSnapshot(GENERATION, [first, second]),
+  };
+  assert.deepEqual(await publishJournalGeneration(input, {
+    adapter, now: new Date(GENERATION),
+  }), { durableWriteSucceeded: true, skipped: false, error: null });
+  assert.deepEqual(await publishJournalGeneration(input, {
+    adapter, now: new Date(GENERATION),
+  }), { durableWriteSucceeded: true, skipped: true, error: null });
 });
 
 test('journal retry preserves the original immutable completed daily mark', async () => {
@@ -720,6 +1027,7 @@ test('an unresolved staged generation newer than current survives a long outage 
   await stageJournal({
     refreshStartedAt: unresolvedGeneration, signals: [], dailyMarks: [],
   }, { adapter, now: new Date(unresolvedGeneration) });
+  const unresolvedToken = adapter.inspect(MANIFEST).claims[unresolvedGeneration].token;
 
   const recoveryNow = new Date('2026-09-06T00:00:00.000Z');
   const pruned = await pruneJournal({ now: recoveryNow }, { adapter });
@@ -727,6 +1035,7 @@ test('an unresolved staged generation newer than current survives a long outage 
   assert.deepEqual(adapter.inspect(PUBLICATIONS).staged, {
     [unresolvedGeneration]: { signalIds: [], dailyMarkIds: [] },
   });
+  assert.equal(adapter.inspect(MANIFEST).claims[unresolvedGeneration].token, unresolvedToken);
   assert.deepEqual(await publishJournalGeneration({
     refreshStartedAt: unresolvedGeneration,
     snapshot: unresolved,
@@ -737,6 +1046,310 @@ test('an unresolved staged generation newer than current survives a long outage 
     await readAcceptedSmartMoneySnapshot({ adapter, now: recoveryNow }),
     unresolved,
   );
+  assert.equal(Object.hasOwn(adapter.inspect(MANIFEST).claims, unresolvedGeneration), false);
+});
+
+test('proof-bound abandonment waits for claim grace then preserves accepted shared rows for the retry', async () => {
+  const adapter = memoryJournalAdapter();
+  const generationP = '2026-08-27T00:00:00.000Z';
+  const generationG1 = '2026-08-27T01:00:00.000Z';
+  const generationG2 = '2026-08-27T01:13:00.000Z';
+  const abandonmentThrough = '2026-08-27T01:05:00.000Z';
+  const acceptedP = signalAt(
+    'hyperliquid-account-details:abandonment-accepted', '2026-08-26T09:00:00.000Z',
+  );
+  const failedG1 = signalAt(
+    'hyperliquid-account-details:abandonment-retry', '2026-08-26T10:00:00.000Z',
+  );
+  await publishRows(adapter, { generation: generationP, signals: [acceptedP] });
+  await stageJournal({
+    refreshStartedAt: generationG1, signals: [failedG1], dailyMarks: [],
+  }, { adapter, now: new Date(generationG1) });
+  const current = adapter.inspect(PUBLICATIONS).current;
+  const evidence = {
+    candidateStatus: 'absent',
+    current: {
+      refreshStartedAt: current.refreshStartedAt,
+      snapshotDigest: current.snapshotDigest,
+    },
+  };
+
+  const pending = await pruneJournal({
+    now: '2026-08-27T01:05:00.000Z',
+    abandonment: { mode: 'expired', through: abandonmentThrough, evidence },
+  }, { adapter });
+  assert.equal(pending.durableWriteSucceeded, false);
+  assert.deepEqual(pending.abandonment, {
+    ok: false, pending: true, error: 'journal_generation_pending',
+  });
+  assert.ok(adapter.inspect(PUBLICATIONS).staged[generationG1]);
+
+  const abandoned = await pruneJournal({
+    now: '2026-08-27T01:12:00.001Z',
+    abandonment: { mode: 'expired', through: abandonmentThrough, evidence },
+  }, { adapter });
+  assert.equal(abandoned.durableWriteSucceeded, true);
+  assert.deepEqual(abandoned.abandonment, { ok: true, pending: false, error: null });
+  assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS).staged, generationG1), false);
+  assert.equal(adapter.inspect(PARTITION).signals.some((row) => row.id === acceptedP.id), true);
+  assert.equal(adapter.inspect(PARTITION).signals.some((row) => row.id === failedG1.id), false);
+
+  const retried = await stageJournal({
+    refreshStartedAt: generationG2, signals: [failedG1], dailyMarks: [],
+  }, { adapter, now: new Date(generationG2) });
+  assert.equal(retried.durableWriteSucceeded, true);
+  await publishJournalGeneration({
+    refreshStartedAt: generationG2,
+    snapshot: acceptedPrivateSnapshot(generationG2, [failedG1]),
+  }, { adapter, now: new Date(generationG2) });
+  const history = await readJournal({
+    since: '2026-08-26T00:00:00.000Z', limit: 20,
+  }, { adapter, now: new Date(generationG2) });
+  assert.equal(history.signals.filter((row) => row.id === failedG1.id).length, 1);
+  assert.equal(history.signals.some((row) => row.id === acceptedP.id), true);
+});
+
+test('satisfied abandonment is independent from an unrelated expired partition delete failure', async () => {
+  const adapter = memoryJournalAdapter();
+  const generationP = '2026-08-27T00:00:00.000Z';
+  const oldDate = '2025-07-20';
+  const oldPath = `smart-money/v1/journal/${oldDate}.json`;
+  await publishRows(adapter, { generation: generationP });
+  const manifest = adapter.inspect(MANIFEST);
+  manifest.partitions = [oldDate, ...manifest.partitions].sort();
+  adapter.seed(MANIFEST, manifest);
+  adapter.seed(oldPath, { schemaVersion: 1, date: oldDate, signals: [], dailyMarks: [] });
+  adapter.failNextDelete(oldPath);
+  const current = adapter.inspect(PUBLICATIONS).current;
+
+  const result = await pruneJournal({
+    now: '2026-08-27T01:00:00.000Z',
+    abandonment: {
+      mode: 'expired',
+      through: '2026-08-27T01:00:00.000Z',
+      evidence: {
+        candidateStatus: 'ready',
+        current: {
+          refreshStartedAt: current.refreshStartedAt,
+          snapshotDigest: current.snapshotDigest,
+        },
+      },
+    },
+  }, { adapter });
+
+  assert.equal(result.durableWriteSucceeded, false);
+  assert.deepEqual(result.abandonment, { ok: true, pending: false, error: null });
+  assert.ok(adapter.inspect(oldPath));
+});
+
+test('exact failed-generation abandonment is immediate but cannot target current publication', async () => {
+  const adapter = memoryJournalAdapter();
+  const generationP = '2026-08-27T00:00:00.000Z';
+  const generationG1 = '2026-08-27T01:00:00.000Z';
+  const failedG1 = signalAt(
+    'hyperliquid-account-details:exact-abandonment', '2026-08-26T10:00:00.000Z',
+  );
+  await publishRows(adapter, { generation: generationP });
+  await stageJournal({
+    refreshStartedAt: generationG1, signals: [failedG1], dailyMarks: [],
+  }, { adapter, now: new Date(generationG1) });
+  const current = adapter.inspect(PUBLICATIONS).current;
+  const evidence = {
+    candidateStatus: 'ready',
+    current: {
+      refreshStartedAt: current.refreshStartedAt,
+      snapshotDigest: current.snapshotDigest,
+    },
+  };
+
+  const rejectedCurrent = await pruneJournal({
+    now: '2026-08-27T01:01:00.000Z',
+    abandonment: { mode: 'exact', generation: generationP, evidence },
+  }, { adapter });
+  assert.equal(rejectedCurrent.durableWriteSucceeded, false);
+  assert.ok(adapter.inspect(PUBLICATIONS).published[generationP]);
+
+  const abandoned = await pruneJournal({
+    now: '2026-08-27T01:01:00.000Z',
+    abandonment: { mode: 'exact', generation: generationG1, evidence },
+  }, { adapter });
+  assert.equal(abandoned.durableWriteSucceeded, true);
+  assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS).staged, generationG1), false);
+  assert.equal(Object.hasOwn(adapter.inspect(MANIFEST).claims, generationG1), false);
+});
+
+test('empty generation stage and publish lose to an exact cleanup generation fence', async () => {
+  const base = memoryJournalAdapter();
+  const generationP = '2026-08-27T00:00:00.000Z';
+  const generationG1 = '2026-08-27T01:00:00.000Z';
+  await publishRows(base, { generation: generationP });
+  await stageJournal({
+    refreshStartedAt: generationG1, signals: [], dailyMarks: [],
+  }, { adapter: base, now: new Date(generationG1) });
+  const originalToken = base.inspect(MANIFEST).claims[generationG1].token;
+  const current = base.inspect(PUBLICATIONS).current;
+  const evidence = {
+    candidateStatus: 'ready',
+    current: {
+      refreshStartedAt: current.refreshStartedAt,
+      snapshotDigest: current.snapshotDigest,
+    },
+  };
+  let announcePublishPrecheck;
+  let releasePublishPrecheck;
+  let blockPublishPrecheck = true;
+  const publishPrecheck = new Promise((resolve) => { announcePublishPrecheck = resolve; });
+  const publishRelease = new Promise((resolve) => { releasePublishPrecheck = resolve; });
+  const publishAdapter = {
+    ...base,
+    async read(pathname) {
+      const record = await base.read(pathname);
+      if (blockPublishPrecheck && pathname === MANIFEST) {
+        blockPublishPrecheck = false;
+        announcePublishPrecheck();
+        await publishRelease;
+      }
+      return record;
+    },
+  };
+  let announceCleanupFence;
+  let releaseCleanupFence;
+  let blockCleanupFence = true;
+  const cleanupFence = new Promise((resolve) => { announceCleanupFence = resolve; });
+  const cleanupRelease = new Promise((resolve) => { releaseCleanupFence = resolve; });
+  const pruneAdapter = {
+    ...base,
+    async write(pathname, data, expectedEtag) {
+      if (blockCleanupFence && pathname === MANIFEST
+          && data.maintenance !== null
+          && data.claims[generationG1]?.token !== originalToken) {
+        blockCleanupFence = false;
+        announceCleanupFence();
+        await cleanupRelease;
+      }
+      return base.write(pathname, data, expectedEtag);
+    },
+  };
+  const stalePublish = publishJournalGeneration({
+    refreshStartedAt: generationG1,
+    snapshot: acceptedPrivateSnapshot(generationG1, []),
+  }, { adapter: publishAdapter, now: new Date('2026-08-27T01:01:00.000Z') });
+  await publishPrecheck;
+  const pruning = pruneJournal({
+    now: '2026-08-27T01:01:00.000Z',
+    abandonment: { mode: 'exact', generation: generationG1, evidence },
+  }, { adapter: pruneAdapter });
+  await cleanupFence;
+  releasePublishPrecheck();
+
+  const published = await stalePublish;
+  const restaged = await stageJournal({
+    refreshStartedAt: generationG1, signals: [], dailyMarks: [],
+  }, { adapter: base, now: new Date('2026-08-27T01:01:00.000Z') });
+  assert.equal(published.durableWriteSucceeded, false);
+  assert.equal(restaged.durableWriteSucceeded, false);
+  releaseCleanupFence();
+  assert.equal((await pruning).durableWriteSucceeded, true);
+});
+
+test('an unrelated existing cleanup cannot report a requested exact abandonment satisfied', async () => {
+  const adapter = memoryJournalAdapter();
+  const generationA = '2026-08-27T00:00:00.000Z';
+  const generationP = '2026-08-27T01:00:00.000Z';
+  const generationG1 = '2026-08-27T02:00:00.000Z';
+  const orphanA = signalAt(
+    'hyperliquid-account-details:prior-cleanup', '2026-08-26T09:00:00.000Z',
+  );
+  const failedG1 = signalAt(
+    'hyperliquid-account-details:requested-cleanup', '2026-08-26T10:00:00.000Z',
+  );
+  await stageJournal({
+    refreshStartedAt: generationA, signals: [orphanA], dailyMarks: [],
+  }, { adapter, now: new Date(generationA) });
+  await publishRows(adapter, { generation: generationP });
+  await stageJournal({
+    refreshStartedAt: generationG1, signals: [failedG1], dailyMarks: [],
+  }, { adapter, now: new Date(generationG1) });
+  const publications = adapter.inspect(PUBLICATIONS);
+  const current = publications.current;
+  const fencedA = {
+    ...adapter.inspect(MANIFEST).claims[generationA],
+    token: 'claim:00000000-0000-4000-8000-000000000001',
+    state: 'writing',
+    claimedAt: '2026-08-27T02:01:00.000Z',
+    leaseUntil: '2026-08-27T02:03:00.000Z',
+  };
+  publications.cleanup = {
+    staged: { [generationA]: publications.staged[generationA] },
+    claims: { [generationA]: fencedA },
+    signalIds: { [orphanA.id]: '2026-08-26' },
+    dailyMarkIds: {},
+  };
+  publications.reconciliation = {
+    signalIds: { [orphanA.id]: '2026-08-26' }, dailyMarkIds: {},
+  };
+  adapter.seed(PUBLICATIONS, publications);
+  const abandonment = {
+    mode: 'exact',
+    generation: generationG1,
+    evidence: {
+      candidateStatus: 'ready',
+      current: {
+        refreshStartedAt: current.refreshStartedAt,
+        snapshotDigest: current.snapshotDigest,
+      },
+    },
+  };
+
+  const first = await pruneJournal({
+    now: '2026-08-27T02:01:00.000Z', abandonment,
+  }, { adapter });
+  assert.equal(first.durableWriteSucceeded, false);
+  assert.deepEqual(first.abandonment, {
+    ok: false, pending: true, error: 'journal_generation_pending',
+  });
+  assert.ok(adapter.inspect(PUBLICATIONS).staged[generationG1]);
+
+  const retry = await pruneJournal({
+    now: '2026-08-27T02:01:00.000Z', abandonment,
+  }, { adapter });
+  assert.equal(retry.durableWriteSucceeded, true);
+  assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS).staged, generationG1), false);
+});
+
+test('expired abandonment reconciles a manifest-staged claim missing its publication before changed-row retry', async () => {
+  const adapter = memoryJournalAdapter();
+  const generationG1 = '2026-08-27T01:00:00.000Z';
+  const generationG2 = '2026-08-27T01:13:00.000Z';
+  const failedG1 = signalAt(
+    'hyperliquid-account-details:pre-publication-crash', '2026-08-26T10:00:00.000Z',
+  );
+  await stageJournal({
+    refreshStartedAt: generationG1, signals: [failedG1], dailyMarks: [],
+  }, { adapter, now: new Date(generationG1) });
+  const publications = adapter.inspect(PUBLICATIONS);
+  delete publications.staged[generationG1];
+  adapter.seed(PUBLICATIONS, publications);
+  const changedG2 = structuredClone(failedG1);
+  changedG2.referencePrice.price += 1;
+
+  const abandoned = await pruneJournal({
+    now: '2026-08-27T01:12:00.001Z',
+    abandonment: {
+      mode: 'expired',
+      through: generationG2,
+      evidence: { candidateStatus: 'absent', current: null },
+    },
+  }, { adapter });
+  assert.equal(abandoned.durableWriteSucceeded, true);
+  assert.equal(Object.hasOwn(adapter.inspect(MANIFEST).claims, generationG1), false);
+  assert.equal(adapter.inspect(PARTITION), null);
+
+  const retried = await stageJournal({
+    refreshStartedAt: generationG2, signals: [changedG2], dailyMarks: [],
+  }, { adapter, now: new Date(generationG2) });
+  assert.equal(retried.durableWriteSucceeded, true);
+  assert.deepEqual(retried.committedSignals, [changedG2]);
 });
 
 test('prune removes recent superseded orphan rows but preserves current and newest unresolved work', async () => {
@@ -799,6 +1412,57 @@ test('prune commits manifest removal before deletion and performs zero deletes o
   assert.equal(deletes, 0);
   assert.ok(adapter.inspect(oldPath));
   assert.deepEqual(adapter.inspect(MANIFEST).partitions, [oldDate]);
+});
+
+test('a stale pruner cannot mutate mappings after its maintenance token is rotated', async () => {
+  const oldDate = '2025-07-21';
+  const oldPath = `smart-money/v1/journal/${oldDate}.json`;
+  const base = memoryJournalAdapter();
+  const old = signalAt(
+    'hyperliquid-account-details:stale-maintenance', `${oldDate}T12:00:00.000Z`,
+  );
+  await appendJournal({ signals: [old], dailyMarks: [] }, {
+    adapter: base,
+    now: new Date('2025-07-22T00:00:00.000Z'),
+  });
+  let announceRemoval;
+  let releaseRemoval;
+  let blockRemoval = true;
+  let staleDeletes = 0;
+  const removalReached = new Promise((resolve) => { announceRemoval = resolve; });
+  const removalRelease = new Promise((resolve) => { releaseRemoval = resolve; });
+  const staleAdapter = {
+    ...base,
+    async write(pathname, data, expectedEtag) {
+      if (blockRemoval && pathname === MANIFEST && data.maintenance !== null
+          && !data.partitions.includes(oldDate)) {
+        blockRemoval = false;
+        announceRemoval();
+        await removalRelease;
+      }
+      return base.write(pathname, data, expectedEtag);
+    },
+    async delete(pathname, expectedEtag) {
+      staleDeletes += 1;
+      return base.delete(pathname, expectedEtag);
+    },
+  };
+  const stalePrune = pruneJournal({
+    now: new Date('2026-08-26T12:00:00.000Z'),
+  }, { adapter: staleAdapter });
+  await removalReached;
+
+  const replacement = await pruneJournal({
+    now: new Date('2026-08-26T12:12:00.001Z'),
+  }, { adapter: base });
+  assert.equal(replacement.durableWriteSucceeded, true);
+  releaseRemoval();
+  const stale = await stalePrune;
+
+  assert.equal(stale.durableWriteSucceeded, false);
+  assert.equal(staleDeletes, 0);
+  assert.equal(base.inspect(oldPath), null);
+  assert.equal(Object.hasOwn(base.inspect(MANIFEST).signalIds, old.id), false);
 });
 
 test('prune removes old orphan blobs, tolerates missing partitions, and preserves cutoff/newer paths', async () => {
@@ -1449,7 +2113,7 @@ test('prune removes only expired partitions and a stale manifest ETag cannot era
   const pruneRelease = new Promise((resolve) => { releasePrune = resolve; });
   const adapter = memoryJournalAdapter({
     beforeWrite: async ({ pathname, data }) => {
-      if (armPrune && !blocked && pathname === MANIFEST && !data.partitions.includes('2025-07-21')) {
+      if (armPrune && !blocked && pathname === MANIFEST && data.maintenance !== null) {
         blocked = true;
         announceBlocked();
         await pruneRelease;
@@ -1465,10 +2129,11 @@ test('prune removes only expired partitions and a stale manifest ETag cannot era
   const pruning = pruneJournal({ now: new Date('2026-08-26T12:00:00.000Z') }, { adapter });
   await pruneBlocked;
   const recent = signalAt('hyperliquid-account-details:recent', '2026-08-26T10:00:00.000Z');
-  await appendJournal({ signals: [recent], dailyMarks: [] }, {
+  const appended = await appendJournal({ signals: [recent], dailyMarks: [] }, {
     adapter,
     now: new Date('2026-08-26T12:00:00.000Z'),
   });
+  assert.equal(appended.durableWriteSucceeded, true);
   releasePrune();
   const result = await pruning;
   const manifest = adapter.inspect(MANIFEST);
@@ -1476,6 +2141,62 @@ test('prune removes only expired partitions and a stale manifest ETag cannot era
   assert.deepEqual(manifest.partitions, ['2026-08-26']);
   assert.equal(manifest.signalIds[recent.id], '2026-08-26');
   assert.equal(adapter.inspect('smart-money/v1/journal/2025-07-21.json'), null);
+});
+
+test('legacy append cannot add a manifest mapping while prune owns maintenance', async () => {
+  const base = memoryJournalAdapter();
+  const generationA = '2026-08-27T01:00:00.000Z';
+  const generationB = '2026-08-27T02:00:00.000Z';
+  const orphan = signalAt(
+    'hyperliquid-account-details:legacy-maintenance-orphan', '2026-08-26T10:00:00.000Z',
+  );
+  const contender = signalAt(
+    'hyperliquid-account-details:legacy-maintenance-contender', '2026-08-26T11:00:00.000Z',
+  );
+  await stageJournal({
+    refreshStartedAt: generationA, signals: [orphan], dailyMarks: [],
+  }, { adapter: base, now: new Date(generationA) });
+  await stageJournal({
+    refreshStartedAt: generationB, signals: [], dailyMarks: [],
+  }, { adapter: base, now: new Date(generationB) });
+  await publishJournalGeneration({
+    refreshStartedAt: generationB,
+    snapshot: acceptedPrivateSnapshot(generationB, []),
+  }, { adapter: base, now: new Date(generationB) });
+
+  let blocked = false;
+  let announceBlocked;
+  let releasePrune;
+  const pruneBlocked = new Promise((resolve) => { announceBlocked = resolve; });
+  const pruneRelease = new Promise((resolve) => { releasePrune = resolve; });
+  const adapter = {
+    ...base,
+    async read(pathname) {
+      const manifest = base.inspect(MANIFEST);
+      if (!blocked && pathname === PARTITION && manifest?.maintenance !== null
+          && !Object.hasOwn(manifest.signalIds, orphan.id)) {
+        blocked = true;
+        announceBlocked();
+        await pruneRelease;
+      }
+      return base.read(pathname);
+    },
+  };
+
+  const pruning = pruneJournal({ now: '2026-08-27T04:00:00.000Z' }, { adapter });
+  await pruneBlocked;
+  const appended = await appendJournal({ signals: [contender], dailyMarks: [] }, {
+    adapter,
+    now: new Date('2026-08-27T04:00:00.000Z'),
+  });
+  assert.equal(appended.durableWriteSucceeded, false);
+  assert.equal(appended.manifest.error, 'manifest_collision');
+  releasePrune();
+
+  const pruned = await pruning;
+  assert.equal(pruned.durableWriteSucceeded, true);
+  assert.equal(Object.hasOwn(base.inspect(MANIFEST).signalIds, contender.id), false);
+  assert.equal(base.inspect(PARTITION), null);
 });
 
 test('prune cannot erase a daily mark reused by a concurrently staged newer generation', async () => {
@@ -1588,6 +2309,189 @@ test('a stale-generation restage cannot recreate an orphan after cleanup passes 
   assert.equal(Object.hasOwn(base.inspect(PUBLICATIONS), 'cleanup'), false);
 });
 
+test('same-generation row reread rechecks manifest and publication authority after cleanup', async () => {
+  const base = memoryJournalAdapter();
+  const generationP = '2026-08-28T00:00:00.000Z';
+  const generationA = '2026-08-28T01:00:00.000Z';
+  const generationB = '2026-08-28T02:00:00.000Z';
+  const orphanA = signalAt(
+    'hyperliquid-account-details:reread-authority', '2026-08-26T10:00:00.000Z',
+  );
+  await publishRows(base, { generation: generationP });
+  await stageJournal({
+    refreshStartedAt: generationA, signals: [orphanA], dailyMarks: [],
+  }, { adapter: base, now: new Date(generationA) });
+
+  let announceRowRead;
+  let releaseRowRead;
+  let blockRowRead = true;
+  const rowRead = new Promise((resolve) => { announceRowRead = resolve; });
+  const rowRelease = new Promise((resolve) => { releaseRowRead = resolve; });
+  const adapter = {
+    ...base,
+    async read(pathname) {
+      const record = await base.read(pathname);
+      if (blockRowRead && pathname === PARTITION) {
+        blockRowRead = false;
+        announceRowRead();
+        await rowRelease;
+      }
+      return record;
+    },
+  };
+  const rereading = stageJournal({
+    refreshStartedAt: generationA, signals: [orphanA], dailyMarks: [],
+  }, { adapter, now: new Date('2026-08-28T03:00:00.000Z') });
+  await rowRead;
+
+  await publishRows(base, { generation: generationB });
+  const pruned = await pruneJournal({
+    now: new Date('2026-08-28T03:00:00.000Z'),
+  }, { adapter: base });
+  assert.equal(pruned.durableWriteSucceeded, true);
+  releaseRowRead();
+  const reread = await rereading;
+
+  assert.equal(reread.durableWriteSucceeded, false);
+  assert.equal(Object.hasOwn(base.inspect(MANIFEST).signalIds, orphanA.id), false);
+  assert.equal(Object.hasOwn(base.inspect(PUBLICATIONS).staged, generationA), false);
+});
+
+test('a durable pre-append claim prevents prune from deleting a concurrent new generation', async () => {
+  let announcePrunePartitionRead;
+  let releasePrunePartitionRead;
+  let blockPrunePartitionRead = true;
+  const prunePartitionRead = new Promise((resolve) => { announcePrunePartitionRead = resolve; });
+  const prunePartitionRelease = new Promise((resolve) => { releasePrunePartitionRead = resolve; });
+  const base = memoryJournalAdapter();
+  const generationA = '2026-08-27T01:00:00.000Z';
+  const generationB = '2026-08-27T02:00:00.000Z';
+  const generationC = '2026-08-27T03:00:00.000Z';
+  const orphanA = signalAt(
+    'hyperliquid-account-details:claim-race-a', '2026-08-26T10:00:00.000Z',
+  );
+  const concurrentC = signalAt(
+    'hyperliquid-account-details:claim-race-c', '2026-08-26T11:00:00.000Z',
+  );
+  await stageJournal({
+    refreshStartedAt: generationA, signals: [orphanA], dailyMarks: [],
+  }, { adapter: base, now: new Date(generationA) });
+  await publishRows(base, { generation: generationB });
+
+  let announceInitialPublicationRead;
+  let releaseInitialPublicationRead;
+  let blockInitialPublicationRead = true;
+  const initialPublicationRead = new Promise((resolve) => { announceInitialPublicationRead = resolve; });
+  const initialPublicationRelease = new Promise((resolve) => { releaseInitialPublicationRead = resolve; });
+  const stageAdapter = {
+    ...base,
+    async read(pathname) {
+      if (blockInitialPublicationRead && pathname === PUBLICATIONS) {
+        blockInitialPublicationRead = false;
+        const record = await base.read(pathname);
+        announceInitialPublicationRead();
+        await initialPublicationRelease;
+        return record;
+      }
+      return base.read(pathname);
+    },
+  };
+  const pruneAdapter = {
+    ...base,
+    async read(pathname) {
+      if (blockPrunePartitionRead && pathname === PARTITION) {
+        blockPrunePartitionRead = false;
+        announcePrunePartitionRead();
+        await prunePartitionRelease;
+      }
+      return base.read(pathname);
+    },
+  };
+  const stagingC = stageJournal({
+    refreshStartedAt: generationC, signals: [concurrentC], dailyMarks: [],
+  }, { adapter: stageAdapter, now: new Date(generationC) });
+  await initialPublicationRead;
+  const pruning = pruneJournal({
+    now: new Date('2026-08-27T04:00:00.000Z'),
+  }, { adapter: pruneAdapter });
+  await prunePartitionRead;
+  releaseInitialPublicationRead();
+  const stagedC = await stagingC;
+  releasePrunePartitionRead();
+  const pruned = await pruning;
+  assert.equal(pruned.durableWriteSucceeded, true);
+
+  assert.equal(stagedC.durableWriteSucceeded, false);
+  assert.equal(Object.hasOwn(base.inspect(MANIFEST).signalIds, concurrentC.id), false);
+  assert.equal(Object.hasOwn(base.inspect(PUBLICATIONS).staged, generationC), false);
+  assert.equal(base.inspect(PARTITION), null);
+});
+
+test('an expired writing claim is reclaimed and the exact event can stage in the next generation', async () => {
+  const adapter = memoryJournalAdapter();
+  const generation = '2026-08-27T01:00:00.000Z';
+  const retryGeneration = '2026-08-27T01:12:00.000Z';
+  const row = signalAt(
+    'hyperliquid-account-details:claim-crash-retry', '2026-08-26T10:00:00.000Z',
+  );
+  adapter.failNext(PARTITION);
+  const crashed = await stageJournal({
+    refreshStartedAt: generation, signals: [row], dailyMarks: [],
+  }, { adapter, now: new Date(generation) });
+  assert.equal(crashed.durableWriteSucceeded, false);
+  assert.equal(adapter.inspect(MANIFEST).claims[generation].state, 'writing');
+
+  const recoveryNow = new Date('2026-08-27T01:12:00.001Z');
+  const pruned = await pruneJournal({ now: recoveryNow }, { adapter });
+  assert.equal(pruned.durableWriteSucceeded, true);
+  assert.equal(Object.hasOwn(adapter.inspect(MANIFEST).claims, generation), false);
+  assert.equal(adapter.inspect(PUBLICATIONS).reconciliation.signalIds[row.id], '2026-08-26');
+
+  const retried = await stageJournal({
+    refreshStartedAt: retryGeneration, signals: [row], dailyMarks: [],
+  }, { adapter, now: recoveryNow });
+  assert.equal(retried.durableWriteSucceeded, true);
+  assert.equal(adapter.inspect(MANIFEST).signalIds[row.id], '2026-08-26');
+  assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS), 'reconciliation'), false);
+});
+
+test('a later prune reconciles a stale post-fence row on a recent shared partition', async () => {
+  const adapter = memoryJournalAdapter();
+  const generationA = '2026-08-27T01:00:00.000Z';
+  const generationB = '2026-08-27T02:00:00.000Z';
+  const orphanA = signalAt(
+    'hyperliquid-account-details:late-fenced-write', '2026-08-26T10:00:00.000Z',
+  );
+  const acceptedB = signalAt(
+    'hyperliquid-account-details:late-fenced-accepted', '2026-08-26T11:00:00.000Z',
+  );
+  adapter.failNext(PARTITION);
+  const crashed = await stageJournal({
+    refreshStartedAt: generationA, signals: [orphanA], dailyMarks: [],
+  }, { adapter, now: new Date(generationA) });
+  assert.equal(crashed.durableWriteSucceeded, false);
+  const reclaimed = await pruneJournal({
+    now: new Date('2026-08-27T01:12:00.001Z'),
+  }, { adapter });
+  assert.equal(reclaimed.durableWriteSucceeded, true);
+
+  await publishRows(adapter, { signals: [acceptedB], generation: generationB });
+  const partition = adapter.inspect(PARTITION);
+  adapter.seed(PARTITION, {
+    ...partition,
+    signals: [...partition.signals, orphanA].sort((left, right) => (
+      left.observedAt.localeCompare(right.observedAt) || left.id.localeCompare(right.id)
+    )),
+  });
+  const reconciled = await pruneJournal({
+    now: new Date('2026-08-27T03:00:00.000Z'),
+  }, { adapter });
+
+  assert.equal(reconciled.durableWriteSucceeded, true);
+  assert.equal(adapter.inspect(PARTITION).signals.some((row) => row.id === orphanA.id), false);
+  assert.equal(adapter.inspect(PARTITION).signals.some((row) => row.id === acceptedB.id), true);
+});
+
 test('publication fails closed when a staged ID is no longer manifest-and-partition durable', async () => {
   const adapter = memoryJournalAdapter();
   const mark = dailyMark();
@@ -1639,11 +2543,14 @@ test('failed recent row cleanup restores manifest retry metadata before compacti
   assert.deepEqual(adapter.inspect(PUBLICATIONS).staged[generationA], {
     signalIds: [orphanA.id], dailyMarkIds: [],
   });
-  assert.deepEqual(adapter.inspect(PUBLICATIONS).cleanup, {
-    staged: { [generationA]: { signalIds: [orphanA.id], dailyMarkIds: [] } },
-    signalIds: { [orphanA.id]: '2026-08-26' },
-    dailyMarkIds: {},
+  const cleanup = adapter.inspect(PUBLICATIONS).cleanup;
+  assert.deepEqual(cleanup.staged, {
+    [generationA]: { signalIds: [orphanA.id], dailyMarkIds: [] },
   });
+  assert.deepEqual(cleanup.signalIds, { [orphanA.id]: '2026-08-26' });
+  assert.deepEqual(cleanup.dailyMarkIds, {});
+  assert.deepEqual(cleanup.claims[generationA].signalIds, { [orphanA.id]: '2026-08-26' });
+  assert.equal(cleanup.claims[generationA].state, 'writing');
   assert.equal(adapter.inspect(PARTITION).signals.some((row) => row.id === orphanA.id), true);
 
   const retry = await pruneJournal({
@@ -1707,6 +2614,47 @@ test('durable cleanup ID-to-date metadata survives both row and manifest-restore
   assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS), 'cleanup'), false);
 });
 
+test('cleanup retries publication compaction after its fenced manifest claim is already gone', async () => {
+  const generationA = '2026-08-27T01:00:00.000Z';
+  const generationB = '2026-08-27T02:00:00.000Z';
+  const orphanA = signalAt(
+    'hyperliquid-account-details:claim-compaction-retry', '2026-08-26T10:00:00.000Z',
+  );
+  let armFailure = false;
+  let failureArmed = false;
+  let adapter;
+  adapter = memoryJournalAdapter({
+    beforeWrite: async ({ pathname, data }) => {
+      if (armFailure && !failureArmed && pathname === MANIFEST && data.maintenance !== null
+          && !Object.hasOwn(data.claims, generationA)
+          && !Object.hasOwn(data.signalIds, orphanA.id)) {
+        failureArmed = true;
+        adapter.failNext(PUBLICATIONS);
+      }
+    },
+  });
+  await stageJournal({
+    refreshStartedAt: generationA, signals: [orphanA], dailyMarks: [],
+  }, { adapter, now: new Date(generationA) });
+  await publishRows(adapter, { generation: generationB });
+  armFailure = true;
+
+  const first = await pruneJournal({
+    now: new Date('2026-08-27T04:00:00.000Z'),
+  }, { adapter });
+  assert.equal(first.durableWriteSucceeded, false);
+  assert.equal(Object.hasOwn(adapter.inspect(MANIFEST).claims, generationA), false);
+  assert.ok(adapter.inspect(PUBLICATIONS).cleanup);
+  assert.ok(adapter.inspect(PUBLICATIONS).staged[generationA]);
+
+  const retry = await pruneJournal({
+    now: new Date('2026-08-27T04:00:00.000Z'),
+  }, { adapter });
+  assert.equal(retry.durableWriteSucceeded, true);
+  assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS), 'cleanup'), false);
+  assert.equal(Object.hasOwn(adapter.inspect(PUBLICATIONS).staged, generationA), false);
+});
+
 test('failed expired cleanup retains stage retry metadata until the physical delete succeeds', async () => {
   const adapter = memoryJournalAdapter();
   const oldDate = '2025-07-20';
@@ -1735,11 +2683,14 @@ test('failed expired cleanup retains stage retry metadata until the physical del
   assert.deepEqual(adapter.inspect(PUBLICATIONS).staged[oldGeneration], {
     signalIds: [oldSignal.id], dailyMarkIds: [],
   });
-  assert.deepEqual(adapter.inspect(PUBLICATIONS).cleanup, {
-    staged: { [oldGeneration]: { signalIds: [oldSignal.id], dailyMarkIds: [] } },
-    signalIds: { [oldSignal.id]: oldDate },
-    dailyMarkIds: {},
+  const cleanup = adapter.inspect(PUBLICATIONS).cleanup;
+  assert.deepEqual(cleanup.staged, {
+    [oldGeneration]: { signalIds: [oldSignal.id], dailyMarkIds: [] },
   });
+  assert.deepEqual(cleanup.signalIds, { [oldSignal.id]: oldDate });
+  assert.deepEqual(cleanup.dailyMarkIds, {});
+  assert.deepEqual(cleanup.claims[oldGeneration].signalIds, { [oldSignal.id]: oldDate });
+  assert.equal(cleanup.claims[oldGeneration].state, 'writing');
   assert.ok(adapter.inspect(oldPath));
 
   const retry = await pruneJournal({
