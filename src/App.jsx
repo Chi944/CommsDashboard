@@ -5,15 +5,15 @@ import Nav from './components/Nav.jsx';
 import BottomNav from './components/BottomNav.jsx';
 import NotificationsDrawer from './components/NotificationsDrawer.jsx';
 import CommandPalette from './components/CommandPalette.jsx';
+import { buildDashboardSearch, parseDashboardSearch } from './lib/dashboardRoute.js';
 import { LiveDataProvider } from './state/LiveData.jsx';
+import { SmartMoneyProvider } from './state/SmartMoney.jsx';
 
 const Overview   = lazy(() => import('./components/Overview.jsx'));
 const Prices     = lazy(() => import('./components/Prices.jsx'));
 const Currency   = lazy(() => import('./components/Currency.jsx'));
 const Portfolio  = lazy(() => import('./components/Portfolio.jsx'));
 const Intel      = lazy(() => import('./components/Intel.jsx'));
-
-const VALID_TABS = ['Overview', 'Prices', 'Currency', 'Portfolio', 'Intel'];
 
 const TabSkeleton = () => (
   <div className="space-y-4 animate-pulse">
@@ -32,29 +32,34 @@ const TabSkeleton = () => (
   </div>
 );
 
-function readShareParams() {
-  if (typeof window === 'undefined') return {};
-  try {
-    const sp = new URLSearchParams(window.location.search);
-    const tab = sp.get('tab');
-    const t = sp.get('t');
-    return {
-      tab: VALID_TABS.includes(tab) ? tab : null,
-      ticker: t ? t.toUpperCase() : null,
-    };
-  } catch { return {}; }
+function readInitialRoute() {
+  return typeof window === 'undefined'
+    ? parseDashboardSearch('')
+    : parseDashboardSearch(window.location.search);
 }
 
-export default function App() {
-  const initial = readShareParams();
-  const [tab, setTab] = useState(initial.tab || 'Overview');
+export function Dashboard() {
+  const initial = readInitialRoute();
+  const [tab, setTab] = useState(initial.tab);
+  const [view, setView] = useState(initial.view);
+  const [recordId, setRecordId] = useState(initial.recordId);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [pendingTicker, setPendingTicker] = useState(initial.ticker || null);
+  const [ticker, setTicker] = useState(initial.ticker);
 
-  const openInPrices = (ticker) => {
-    setPendingTicker(ticker);
+  const switchTab = (nextTab) => {
+    setTab(nextTab);
+    setRecordId(null);
+    if (nextTab === 'Intel') setView('news');
+    else if (nextTab === 'Portfolio') setView('holdings');
+    else setView(null);
+  };
+
+  const openInPrices = (nextTicker) => {
+    setTicker(nextTicker);
     setTab('Prices');
+    setView(null);
+    setRecordId(null);
   };
 
   // Keyboard shortcuts: ⌘K / Ctrl+K opens command palette anywhere.
@@ -69,24 +74,23 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Reflect tab + selected ticker in the URL so it's shareable.
+  // Reflect the complete research route in the URL so evidence links are durable.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const sp = new URLSearchParams(window.location.search);
-    sp.set('tab', tab);
-    if (pendingTicker) sp.set('t', pendingTicker); else sp.delete('t');
-    const next = `${window.location.pathname}?${sp.toString()}`;
+    const search = buildDashboardSearch(window.location.search, {
+      tab, view, recordId, ticker,
+    });
+    const next = `${window.location.pathname}${search}`;
     window.history.replaceState(null, '', next);
-  }, [tab, pendingTicker]);
+  }, [recordId, tab, ticker, view]);
 
   return (
-    <LiveDataProvider>
       <div className="min-h-screen text-gray-100">
         <div className="sticky top-0 z-30">
           <Ticker />
           <Nav
             active={tab}
-            setActive={setTab}
+            setActive={switchTab}
             onOpenAlerts={() => setAlertsOpen(true)}
             onOpenPalette={() => setPaletteOpen(true)}
           />
@@ -95,20 +99,37 @@ export default function App() {
         <main className="px-4 sm:px-6 py-5 sm:py-7 max-w-[1600px] mx-auto pb-24 md:pb-10 animate-fade-in">
           <Suspense fallback={<TabSkeleton />}>
             {tab === 'Overview'   && <Overview onSelectAsset={openInPrices} />}
-            {tab === 'Prices'     && <Prices initialTicker={pendingTicker} onTickerConsumed={() => setPendingTicker(null)} />}
+            {tab === 'Prices'     && <Prices initialTicker={ticker} onTickerChange={setTicker} />}
             {tab === 'Currency'   && <Currency />}
-            {tab === 'Portfolio'  && <Portfolio onSelectAsset={openInPrices} />}
-            {tab === 'Intel'      && <Intel />}
+            {tab === 'Portfolio'  && (
+              <Portfolio
+                view={view || 'holdings'}
+                onViewChange={(nextView) => setView(nextView)}
+                onSelectAsset={openInPrices}
+              />
+            )}
+            {tab === 'Intel'      && (
+              <Intel
+                view={view || 'news'}
+                recordId={recordId}
+                onViewChange={(nextView) => {
+                  setView(nextView);
+                  if (nextView !== 'smart-money') setRecordId(null);
+                }}
+                onRecordChange={setRecordId}
+                onOpenPrices={openInPrices}
+              />
+            )}
           </Suspense>
         </main>
 
         <NotificationsDrawer open={alertsOpen} onClose={() => setAlertsOpen(false)} />
-        <BottomNav active={tab} setActive={setTab} />
+        <BottomNav active={tab} setActive={switchTab} />
         <CommandPalette
           open={paletteOpen}
           onClose={() => setPaletteOpen(false)}
           onSelectAsset={(t) => openInPrices(t)}
-          onSwitchTab={(t) => setTab(t)}
+          onSwitchTab={switchTab}
         />
         <Analytics />
 
@@ -117,6 +138,15 @@ export default function App() {
           <span className="font-mono">v0.14.0</span>
         </footer>
       </div>
+  );
+}
+
+export default function App() {
+  return (
+    <LiveDataProvider>
+      <SmartMoneyProvider>
+        <Dashboard />
+      </SmartMoneyProvider>
     </LiveDataProvider>
   );
 }
