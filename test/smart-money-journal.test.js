@@ -153,6 +153,8 @@ test('partition or manifest partial failures never report durable success or lea
     adapter: partitionFailureAdapter,
   });
   assert.equal(partitionFailure.durableWriteSucceeded, false);
+  assert.deepEqual(partitionFailure.committedSignals, []);
+  assert.deepEqual(partitionFailure.committedDailyMarks, []);
   assert.equal(JSON.stringify(partitionFailure).includes('secret'), false);
 
   const manifestFailureAdapter = memoryJournalAdapter();
@@ -162,7 +164,211 @@ test('partition or manifest partial failures never report durable success or lea
   });
   assert.equal(manifestFailure.durableWriteSucceeded, false);
   assert.equal(manifestFailureAdapter.inspect(PARTITION).signals.length, 1);
+  assert.deepEqual(manifestFailure.committedSignals, []);
+  assert.deepEqual(manifestFailure.committedDailyMarks, []);
   assert.equal(JSON.stringify(manifestFailure).includes('secret'), false);
+});
+
+test('journal reread failure returns no committed rows after partition and manifest writes', async () => {
+  const memory = memoryJournalAdapter();
+  let manifestReads = 0;
+  const adapter = {
+    ...memory,
+    async read(pathname) {
+      if (pathname === MANIFEST) {
+        manifestReads += 1;
+        if (manifestReads === 4) throw new Error('reread failed with secret=never-return');
+      }
+      return memory.read(pathname);
+    },
+  };
+  const result = await appendJournal({ signals: [SIGNAL], dailyMarks: [] }, { adapter });
+  assert.equal(result.durableWriteSucceeded, false);
+  assert.deepEqual(result.committedSignals, []);
+  assert.deepEqual(result.committedDailyMarks, []);
+  assert.equal(JSON.stringify(result).includes('never-return'), false);
+
+  const corruptMemory = memoryJournalAdapter();
+  let partitionReads = 0;
+  const corruptRereadAdapter = {
+    ...corruptMemory,
+    async read(pathname) {
+      if (pathname === PARTITION) {
+        partitionReads += 1;
+        if (partitionReads === 3) {
+          return {
+            data: { schemaVersion: 1, date: '2026-08-26', signals: 'private-corruption' },
+            etag: 'corrupt',
+          };
+        }
+      }
+      return corruptMemory.read(pathname);
+    },
+  };
+  const corruptResult = await appendJournal(
+    { signals: [SIGNAL], dailyMarks: [] },
+    { adapter: corruptRereadAdapter },
+  );
+  assert.equal(corruptResult.durableWriteSucceeded, false);
+  assert.deepEqual(corruptResult.committedSignals, []);
+  assert.deepEqual(corruptResult.committedDailyMarks, []);
+  assert.equal(JSON.stringify(corruptResult).includes('private-corruption'), false);
+});
+
+test('a concurrent cross-date ID loser returns nondurable, cleans its orphan, and does not poison history', async () => {
+  const winner = signalAt('hyperliquid-account-details:cross-date', '2026-08-25T23:59:59.000Z');
+  const loser = signalAt('hyperliquid-account-details:cross-date', '2026-08-26T00:00:01.000Z');
+  const loserCompanion = signalAt('hyperliquid-account-details:loser-companion', '2026-08-26T00:30:00.000Z');
+  const later = signalAt('hyperliquid-account-details:later', '2026-08-26T01:00:00.000Z');
+  let announceLoserManifest;
+  let releaseLoserManifest;
+  let blocked = false;
+  const loserAtManifest = new Promise((resolve) => { announceLoserManifest = resolve; });
+  const loserManifestGate = new Promise((resolve) => { releaseLoserManifest = resolve; });
+  const adapter = memoryJournalAdapter({
+    beforeWrite: async ({ pathname, data }) => {
+      if (!blocked && pathname === MANIFEST
+          && data.signalIds[loser.id] === '2026-08-26') {
+        blocked = true;
+        announceLoserManifest();
+        await loserManifestGate;
+      }
+    },
+  });
+  const options = { adapter, now: new Date('2026-08-27T00:00:00.000Z') };
+  const loserWrite = appendJournal({ signals: [loser, loserCompanion], dailyMarks: [] }, options);
+  await loserAtManifest;
+  const winnerResult = await appendJournal({ signals: [winner], dailyMarks: [] }, options);
+  releaseLoserManifest();
+  const loserResult = await loserWrite;
+
+  assert.equal(winnerResult.durableWriteSucceeded, true);
+  assert.equal(loserResult.durableWriteSucceeded, false);
+  assert.deepEqual(loserResult.committedSignals, []);
+  assert.deepEqual(loserResult.committedDailyMarks, []);
+  assert.equal(JSON.stringify(loserResult).includes('secret'), false);
+  const rejectedPartition = adapter.inspect('smart-money/v1/journal/2026-08-26.json');
+  assert.equal(rejectedPartition?.signals.some((row) => row.id === loser.id), false);
+  assert.equal(rejectedPartition?.signals.some((row) => row.id === loserCompanion.id), true);
+
+  const laterResult = await appendJournal({ signals: [later], dailyMarks: [] }, options);
+  assert.equal(laterResult.durableWriteSucceeded, true);
+  const history = await readJournal({ since: winner.observedAt, limit: 20 }, options);
+  assert.deepEqual(history.signals.map((row) => row.id), [winner.id, later.id]);
+});
+
+test('history ignores partition-only rows when the manifest maps only authoritative IDs', async () => {
+  const adapter = memoryJournalAdapter();
+  const authoritative = signalAt('hyperliquid-account-details:authoritative', '2026-08-26T01:00:00.000Z');
+  const orphan = signalAt('hyperliquid-account-details:orphan', '2026-08-26T02:00:00.000Z');
+  adapter.seed(MANIFEST, {
+    schemaVersion: 1,
+    partitions: ['2026-08-26'],
+    signalIds: { [authoritative.id]: '2026-08-26' },
+    dailyMarkIds: {},
+  });
+  adapter.seed(PARTITION, {
+    schemaVersion: 1,
+    date: '2026-08-26',
+    signals: [authoritative, orphan],
+    dailyMarks: [],
+  });
+  const history = await readJournal({ since: '2026-08-26T00:00:00.000Z', limit: 20 }, {
+    adapter,
+    now: new Date('2026-08-27T00:00:00.000Z'),
+  });
+  assert.deepEqual(history.signals.map((row) => row.id), [authoritative.id]);
+});
+
+test('prune commits manifest removal before deletion and performs zero deletes on manifest failure', async () => {
+  const oldDate = '2025-07-21';
+  const oldPath = `smart-money/v1/journal/${oldDate}.json`;
+  let deletes = 0;
+  const adapter = memoryJournalAdapter({ beforeDelete: async () => { deletes += 1; } });
+  const old = signalAt('hyperliquid-account-details:old-prune-failure', `${oldDate}T12:00:00.000Z`);
+  await appendJournal({ signals: [old], dailyMarks: [] }, {
+    adapter,
+    now: new Date('2025-07-22T00:00:00.000Z'),
+  });
+  adapter.failNext(MANIFEST);
+  const result = await pruneJournal({ now: new Date('2026-08-26T12:00:00.000Z') }, { adapter });
+  assert.equal(result.durableWriteSucceeded, false);
+  assert.equal(deletes, 0);
+  assert.ok(adapter.inspect(oldPath));
+  assert.deepEqual(adapter.inspect(MANIFEST).partitions, [oldDate]);
+});
+
+test('prune removes old orphan blobs, tolerates missing partitions, and preserves cutoff/newer paths', async () => {
+  const adapter = memoryJournalAdapter();
+  const missingDate = '2025-07-20';
+  const oldDate = '2025-07-21';
+  const cutoffDate = '2025-07-22';
+  const newerDate = '2026-08-26';
+  const oldPath = `smart-money/v1/journal/${oldDate}.json`;
+  const cutoffPath = `smart-money/v1/journal/${cutoffDate}.json`;
+  const newerPath = `smart-money/v1/journal/${newerDate}.json`;
+  const invalidDatePath = 'smart-money/v1/journal/2025-13-40.json';
+  adapter.seed(MANIFEST, {
+    schemaVersion: 1,
+    partitions: [missingDate],
+    signalIds: { 'hyperliquid-account-details:missing-old': missingDate },
+    dailyMarkIds: {},
+  });
+  adapter.seed(oldPath, {
+    schemaVersion: 1, date: oldDate,
+    signals: [signalAt('hyperliquid-account-details:orphan-old', `${oldDate}T12:00:00.000Z`)],
+    dailyMarks: [],
+  });
+  adapter.seed(cutoffPath, { schemaVersion: 1, date: cutoffDate, signals: [], dailyMarks: [] });
+  adapter.seed(newerPath, { schemaVersion: 1, date: newerDate, signals: [], dailyMarks: [] });
+  adapter.seed(invalidDatePath, { private: 'unrecognized-shape' });
+
+  const result = await pruneJournal({ now: new Date('2026-08-26T12:00:00.000Z') }, { adapter });
+  assert.equal(result.durableWriteSucceeded, true);
+  assert.equal(adapter.inspect(oldPath), null);
+  assert.ok(adapter.inspect(cutoffPath));
+  assert.ok(adapter.inspect(newerPath));
+  assert.ok(adapter.inspect(invalidDatePath));
+  assert.deepEqual(adapter.inspect(MANIFEST).partitions, []);
+});
+
+test('prune reports delete and stale-ETag failures after authoritative manifest removal', async () => {
+  const oldDate = '2025-07-21';
+  const deleteFailurePath = `smart-money/v1/journal/${oldDate}.json`;
+  const deleteFailureAdapter = memoryJournalAdapter();
+  deleteFailureAdapter.seed(deleteFailurePath, {
+    schemaVersion: 1, date: oldDate, signals: [], dailyMarks: [],
+  });
+  deleteFailureAdapter.failNextDelete(deleteFailurePath);
+  const deleteFailure = await pruneJournal(
+    { now: new Date('2026-08-26T12:00:00.000Z') },
+    { adapter: deleteFailureAdapter },
+  );
+  assert.equal(deleteFailure.durableWriteSucceeded, false);
+  assert.deepEqual(deleteFailureAdapter.inspect(MANIFEST).partitions, []);
+  assert.ok(deleteFailureAdapter.inspect(deleteFailurePath));
+
+  let staleAdapter;
+  let mutated = false;
+  staleAdapter = memoryJournalAdapter({
+    beforeDelete: async ({ pathname }) => {
+      if (!mutated) {
+        mutated = true;
+        staleAdapter.seed(pathname, {
+          schemaVersion: 1, date: oldDate, signals: [], dailyMarks: [],
+        });
+      }
+    },
+  });
+  staleAdapter.seed(deleteFailurePath, {
+    schemaVersion: 1, date: oldDate, signals: [], dailyMarks: [],
+  });
+  const stale = await pruneJournal(
+    { now: new Date('2026-08-26T12:00:00.000Z') },
+    { adapter: staleAdapter },
+  );
+  assert.equal(stale.durableWriteSucceeded, false);
+  assert.ok(staleAdapter.inspect(deleteFailurePath));
 });
 
 test('journal append returns its exact sanitized failure contract when storage is unavailable', async () => {
