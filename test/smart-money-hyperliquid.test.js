@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   buildHyperliquidInfoRequest,
   buildHyperliquidLeaderboardRequest,
+  createHyperliquidProtectedMaintenanceAdapter,
   fetchHyperliquidAccountState,
   fetchHyperliquidLeaderboard,
   fetchHyperliquidPortfolio,
@@ -28,6 +29,15 @@ test('Hyperliquid normalizes provider-scoped performance windows', () => {
   assert.equal(rows[0].providerId, 'hyperliquid-leaderboard');
   assert.equal(rows[0].notComparableAcrossProviders, true);
   assert.equal(normalizeHyperliquidLeaderboard([{ address: 'bad', pnl: 1 }], {}).length, 0);
+  assert.equal(normalizeHyperliquidLeaderboard([{ ...LEADERBOARD[0], userName: 'Private', displayUsernamePublic: false }], {
+    window: 'month', retrievedAt: '2026-08-26T00:00:00.000Z',
+  })[0].displayName, '0x0000…0def');
+  assert.equal(normalizeHyperliquidLeaderboard([
+    { ...LEADERBOARD[0], accountValue: null },
+    { ...LEADERBOARD[0], volume: -1 },
+    { ...LEADERBOARD[0], rank: 1.5 },
+    { ...LEADERBOARD[0], pnl: -20, roi: -4 },
+  ], { window: 'month', retrievedAt: '2026-08-26T00:00:00.000Z' }).length, 1);
 });
 
 test('Hyperliquid read adapter rejects trading info types', () => {
@@ -59,6 +69,46 @@ test('Hyperliquid protected refresh caps candidates, concurrency, and weighted r
   assert.ok(plan.weightedRequests < 1200);
   assert.equal(plan.detailRequests.length, 20);
   assert.equal(PORTFOLIO.accountValueHistory.length, 1);
+});
+
+test('Hyperliquid protected planning accepts normalized rows and deduplicates wallets before its cap', () => {
+  const normalized = normalizeHyperliquidLeaderboard(LEADERBOARD, {
+    window: 'month', retrievedAt: '2026-08-26T00:00:00.000Z',
+  });
+  const plan = planHyperliquidProtectedRefresh([
+    ...normalized,
+    { ...normalized[0], wallet: normalized[0].wallet.toUpperCase() },
+  ]);
+  assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.detailRequests.length, 2);
+  assert.equal(planHyperliquidProtectedRefresh([{
+    ...LEADERBOARD[0], providerId: 'polymarket-leaderboard', venue: 'polymarket', wallet: WALLET,
+  }]).candidates.length, 0);
+});
+
+test('Hyperliquid ordinary helpers deny forged maintenance context while the protected factory runs bounded details', async () => {
+  let requests = 0;
+  const ordinary = await fetchHyperliquidLeaderboard({
+    refreshContext: 'protected', fetchProviderJson: async () => { requests += 1; return LEADERBOARD; },
+  });
+  assert.deepEqual(ordinary, { providerId: 'hyperliquid-leaderboard', records: [], linkOnly: true });
+  assert.equal(requests, 0);
+
+  const adapter = createHyperliquidProtectedMaintenanceAdapter();
+  const requestsToRun = planHyperliquidProtectedRefresh(Array.from({ length: 8 }, (_, index) => ({
+    ...LEADERBOARD[0], address: `0x${index.toString(16).padStart(40, '0')}`,
+  }))).detailRequests;
+  let active = 0;
+  let peak = 0;
+  const results = await adapter.executeDetailRequests(requestsToRun, async (request) => {
+    active += 1;
+    peak = Math.max(peak, active);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    active -= 1;
+    return request.url;
+  });
+  assert.equal(results.length, 16);
+  assert.ok(peak <= 4);
 });
 
 test('Hyperliquid production fetch entries are rights-gated before every transport call', async () => {
