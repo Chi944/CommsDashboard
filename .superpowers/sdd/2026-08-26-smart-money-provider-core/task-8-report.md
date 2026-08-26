@@ -285,3 +285,64 @@ refresh recovery gate, shared private-envelope validation/digest module,
 journal acceptance/pruning boundaries, fully valid journal fixtures, focused
 regressions, and this report. The exact seven enabled SEC adapters and all
 zero-network/no-trading boundaries are unchanged. No known concerns remain.
+
+## Review fix round 4 TDD evidence
+
+All round-4 regressions were written before the corresponding production
+changes. The initial combined RED command was:
+
+```text
+node --test test/smart-money-sec.test.js test/smart-money-refresh.test.js test/smart-money-journal.test.js
+```
+
+It exited `1`: 90 tests were discovered, 83 passed, and 7 failed. The failures
+covered live-shaped unsupported SEC rows with blank report dates, private
+institutional source ownership swaps, SEC source CIK ownership, and the same
+ownership checks at journal publication/accepted-read boundaries. A subsequent
+focused RED exposed that current 13F primary documents may be nested paths, and
+the live probe exposed that SEC serves the bounded archive `index.json` body as
+official `text/html`; a dedicated archive-index transport regression was added
+RED before that compatibility change. The final combined focused set reached
+90/90, and the SEC-only set reached 27/27.
+
+`parseSecSubmissions` now preserves global CIK, parallel-array length, and
+primitive-string validation, but canonicalizes and filters unsupported forms
+before applying strict 13F tuple validation. Thus live SCHEDULE 13D/G rows with
+blank report dates are ignored, while malformed supported 13F rows still fail
+closed. The newest valid 13F primary document remains bound to the registrant
+archive directory and may use a bounded safe nested path.
+
+The private-envelope validator now binds every canonical source record to its
+enclosing configured identity. SEC filings and holdings bind to
+`sec-edgar`/CIK 2045724 and internally matching filing periods/accessions. Each
+institutional record binds its exact provider ID, entity ID, legal entity,
+vehicle, configured CIK, and SEC archive directory. Recomputed-digest
+Strategy/Tesla source swaps and SEC CIK/identity swaps are rejected by direct
+validation, stage/publish, accepted snapshot, and history reads.
+
+The round-4 live production probe used the identified
+`CommsDashboard/1.0 compliance@monitored-contact.co` User-Agent and the actual
+bounded SEC transport. It returned only this summary (no filing or response
+body was retained): one current `13F-HR`, accession
+`0000935836-26-000418`, 26 holdings, period/sourceAsOf `2026-06-30`, filed
+2026-08-14, normalized child status `live`. The archive index response was
+bounded to 1 MB and accepted as JSON only on the exact SEC archive-index path;
+the filing document remains subject to its separate bounded transport.
+
+## Review fix round 4 final verification
+
+- Provider Core focused command: exit `0`; 244 tests, 244 passed, 0 failed.
+- `npm test`: exit `0`; 368 Node unit tests plus 33 UI tests, 401 total, all
+  passed (2/2 UI test files). Fresh split reruns independently confirmed both
+  component counts after the combined command.
+- `npm run build`: exit `0`; Vite transformed 623 modules and completed the
+  production build.
+- `git diff --check`: exit `0`; no whitespace errors. Git emitted only the
+  repository's expected LF-to-CRLF working-copy notices.
+
+Round-4 changed scope is limited to SEC submissions/archive-index compatibility,
+private source-ownership validation, the bounded SEC submissions fixture,
+focused regressions, and this report. Publication recovery, exact-seven
+configuration, zero production Yahoo/Polymarket/Hyperliquid traffic, private
+response stripping, and every no-trading boundary remain unchanged. No known
+concerns remain.

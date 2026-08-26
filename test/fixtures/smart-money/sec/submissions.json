@@ -2,11 +2,11 @@
   "cik": "0002045724",
   "filings": {
     "recent": {
-      "accessionNumber": ["0002045724-26-000001", "0002045724-26-000002", "0002045724-26-000003", "0002045724-26-000004"],
-      "filingDate": ["2026-08-14", "2026-08-20", "2026-08-21", "2026-08-22"],
-      "reportDate": ["2026-06-30", "2026-06-30", "2026-06-30", "2026-06-30"],
-      "form": ["13F-HR", "13F-HR/A", "SC 13D", "8-K"],
-      "primaryDocument": ["primary.xml", "amendment.xml", "schedule13d.htm", "report.htm"]
+      "accessionNumber": ["0002045724-26-000001", "0002045724-26-000002", "0002045724-26-000003", "0002045724-26-000004", "0002045724-26-000005", "0002045724-26-000006"],
+      "filingDate": ["2026-08-14", "2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23", "2026-08-24"],
+      "reportDate": ["2026-06-30", "2026-06-30", "2026-06-30", "2026-06-30", "", ""],
+      "form": ["13F-HR", "13F-HR/A", "SC 13D", "8-K", "SCHEDULE 13G", "SCHEDULE 13G/A"],
+      "primaryDocument": ["xslForm13F_X02/primary_doc.xml", "xslForm13F_X02/amendment.xml", "schedule13d.htm", "report.htm", "schedule13g.htm", "schedule13ga.htm"]
     }
   }
 }
