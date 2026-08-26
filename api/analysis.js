@@ -12,6 +12,7 @@
 import { findSymbol } from '../lib/symbols.js';
 import { getGroqModel, GroqProviderError, requestGroqCompletion } from '../lib/groq.js';
 import { fetchWithTimeout } from '../lib/market/fetch.js';
+import { parseFeed } from '../lib/feeds.js';
 import {
   AiQuotaError,
   degradedAiStatus,
@@ -200,20 +201,16 @@ async function fetchHeadlines(name, limit = 5) {
     });
     if (!r.ok) return [];
     const xml = await r.text();
-    const items = [];
-    const re = /<item>([\s\S]*?)<\/item>/g;
-    let m;
-    while ((m = re.exec(xml)) !== null && items.length < limit) {
-      const block = m[1];
-      const title = (block.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || '';
-      const link  = (block.match(/<link>([\s\S]*?)<\/link>/)   || [])[1] || '';
-      const date  = (block.match(/<pubDate>([\s\S]*?)<\/pubDate>/) || [])[1] || '';
-      const sm    = block.match(/<source[^>]*>([\s\S]*?)<\/source>/);
-      const cleaned = title.replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '').trim();
-      const source = sm ? sm[1].replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '').trim() : 'Google News';
-      if (cleaned && link) items.push({ title: cleaned, url: link, source, pubDate: date });
-    }
-    return items;
+    return parseFeed(xml, {
+      maxItems: limit,
+      allowedOrigins: ['https://news.google.com'],
+      allowExternalHttpsLinks: true,
+    }).map((item) => ({
+      title: item.title,
+      url: item.url,
+      source: item.source || 'Google News',
+      pubDate: item.pubDate,
+    }));
   } catch {
     return [];
   }

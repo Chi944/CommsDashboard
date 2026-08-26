@@ -1,32 +1,9 @@
 // Vercel serverless function: news for a single asset, by name/symbol query.
 // GET /api/asset-news?q=Nvidia&limit=6 -> { ok, items: [...] }
 
+import { parseFeed } from '../lib/feeds.js';
+
 const PER_QUERY_LIMIT = 8;
-
-const stripCdata = (s) => (s || '').replace(/^\s*<!\[CDATA\[/, '').replace(/\]\]>\s*$/, '').trim();
-const get = (block, tag) => {
-  const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`);
-  const m = block.match(re);
-  return m ? stripCdata(m[1]) : '';
-};
-const stripHtml = (s) => (s || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-
-function parseRSS(xml) {
-  const items = [];
-  const re = /<item>([\s\S]*?)<\/item>/g;
-  let m;
-  while ((m = re.exec(xml)) !== null) {
-    const block = m[1];
-    const title = stripHtml(get(block, 'title'));
-    const link = get(block, 'link');
-    const pubDate = get(block, 'pubDate');
-    const description = stripHtml(get(block, 'description'));
-    const sm = block.match(/<source[^>]*>([\s\S]*?)<\/source>/);
-    const source = sm ? stripCdata(sm[1]) : '';
-    if (title && link) items.push({ title, link, pubDate, description, source });
-  }
-  return items;
-}
 
 function timeAgo(date) {
   const t = Date.parse(date);
@@ -62,7 +39,11 @@ export default async function handler(req, res) {
       return;
     }
     const xml = await r.text();
-    const items = parseRSS(xml).slice(0, PER_QUERY_LIMIT).map((it, i) => {
+    const items = parseFeed(xml, {
+      maxItems: PER_QUERY_LIMIT,
+      allowedOrigins: ['https://news.google.com'],
+      allowExternalHttpsLinks: true,
+    }).map((it, i) => {
       const ts = Date.parse(it.pubDate) || 0;
       return {
         id: `${ts}-${i}`,
@@ -70,7 +51,7 @@ export default async function handler(req, res) {
         time: timeAgo(it.pubDate),
         headline: it.title,
         desc: it.description.slice(0, 160),
-        url: it.link,
+        url: it.url,
         ts,
       };
     }).sort((a, b) => b.ts - a.ts).slice(0, limit);

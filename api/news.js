@@ -4,6 +4,8 @@
 //
 // GET /api/news -> { ok, fetchedAt, items: [...] }
 
+import { parseFeed } from '../lib/feeds.js';
+
 const QUERIES = [
   { category: 'Shipping',     q: 'shipping disruption red sea suez container' },
   { category: 'Energy',       q: 'crude oil prices brent wti opec' },
@@ -19,43 +21,6 @@ const QUERIES = [
 
 const PER_QUERY = 4;
 const TOTAL_LIMIT = 36;
-
-const stripCdata = (s) => (s || '').replace(/^\s*<!\[CDATA\[/, '').replace(/\]\]>\s*$/, '').trim();
-const get = (block, tag) => {
-  const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`);
-  const m = block.match(re);
-  return m ? stripCdata(m[1]) : '';
-};
-// Google News RSS encodes the description body as escaped HTML inside
-// the <description> CDATA. Decode named + numeric entities before we
-// strip tags, otherwise we render literal "&lt;a href=..." text.
-const decodeEntities = (s) => (s || '')
-  .replace(/&lt;/gi, '<')
-  .replace(/&gt;/gi, '>')
-  .replace(/&quot;/gi, '"')
-  .replace(/&apos;/gi, "'")
-  .replace(/&#39;/gi, "'")
-  .replace(/&nbsp;/gi, ' ')
-  .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
-  .replace(/&amp;/gi, '&');
-const stripHtml = (s) => decodeEntities(s || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-
-function parseRSS(xml) {
-  const items = [];
-  const re = /<item>([\s\S]*?)<\/item>/g;
-  let m;
-  while ((m = re.exec(xml)) !== null) {
-    const block = m[1];
-    const title = stripHtml(get(block, 'title'));
-    const link = get(block, 'link');
-    const pubDate = get(block, 'pubDate');
-    const description = stripHtml(get(block, 'description'));
-    const sm = block.match(/<source[^>]*>([\s\S]*?)<\/source>/);
-    const source = sm ? stripCdata(sm[1]) : '';
-    if (title && link) items.push({ title, link, pubDate, description, source });
-  }
-  return items;
-}
 
 function timeAgo(date) {
   const t = Date.parse(date);
@@ -80,7 +45,11 @@ async function fetchTopic({ category, q }) {
   });
   if (!r.ok) throw new Error(`${category} ${r.status}`);
   const xml = await r.text();
-  const items = parseRSS(xml).slice(0, PER_QUERY);
+  const items = parseFeed(xml, {
+    maxItems: PER_QUERY,
+    allowedOrigins: ['https://news.google.com'],
+    allowExternalHttpsLinks: true,
+  });
   return items.map((it, i) => {
     const ts = Date.parse(it.pubDate) || 0;
     return {
@@ -90,7 +59,7 @@ async function fetchTopic({ category, q }) {
       time: timeAgo(it.pubDate),
       headline: it.title,
       desc: it.description.slice(0, 200),
-      url: it.link,
+      url: it.url,
       ts,
     };
   });
