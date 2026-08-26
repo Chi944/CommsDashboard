@@ -30,7 +30,7 @@ export default function DataModeBadge({
         {mode}
       </span>
       {updatedLabel && (
-        <span className="hidden md:inline font-mono text-[10px] text-[#737373] tabular-nums tracking-tight">
+        <span className="hidden lg:inline font-mono text-[10px] text-[#737373] tabular-nums tracking-tight">
           {updatedLabel}
         </span>
       )}
