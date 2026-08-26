@@ -30,6 +30,12 @@ test('Polymarket joins MONTH and ALL by wallet without crossing providers', () =
   const normalizedAll = normalizePolymarketLeaderboard(ALL_TIME, { window: 'allTime', retrievedAt: '2026-08-26T00:00:00Z' });
   const joinedNormalizedRows = joinPolymarketWindows(normalizedMonth, normalizedAll, { retrievedAt: '2026-08-26T00:00:00Z' });
   assert.equal(joinedNormalizedRows[0].windows.allTime.pnlUsd, 200000);
+  assert.deepEqual(joinPolymarketWindows([{
+    ...normalizedMonth[0], providerId: 'hyperliquid-leaderboard', venue: 'hyperliquid',
+  }], []), []);
+  assert.deepEqual(joinPolymarketWindows([{
+    proxyWallet: WALLET, pnl: 1, vol: 1, rank: 1, providerId: 'other-provider',
+  }], []), []);
 });
 
 test('Polymarket hides a username that is not public and rejects malformed records', () => {
@@ -46,6 +52,11 @@ test('Polymarket hides a username that is not public and rejects malformed recor
   assert.equal(rows.length, 1);
   assert.equal(rows[0].displayName, '0x0000…0abc');
   assert.equal(rows[0].sourceAsOf, null);
+  assert.equal(normalizePolymarketLeaderboard([
+    { proxyWallet: WALLET, pnl: null, vol: 1, rank: 1 },
+    { proxyWallet: WALLET, pnl: 1, vol: -1, rank: 1 },
+    { proxyWallet: WALLET, pnl: 1, vol: 1, rank: 1.5 },
+  ], { window: 'month', retrievedAt: '2026-08-26T00:00:00Z' }).length, 0);
 });
 
 test('Polymarket request descriptors stay on the documented GET paths and cap pagination', () => {
