@@ -13,6 +13,7 @@ import { fetchCoinGeckoVolumes } from '../lib/market/providers/coingecko-volumes
 import { fetchCoinGeckoPrices } from '../lib/market/providers/coingecko.js';
 import { eiaRowsFromCache, fetchEiaEnergy } from '../lib/market/providers/eia.js';
 import { fetchWithTimeout } from '../lib/market/fetch.js';
+import { mergeMarketSnapshot } from '../lib/market/merge.js';
 import { fromAvSeries, fromCoinGecko, fromEiaRows } from '../lib/market/normalize.js';
 import * as marketStore from '../lib/market/store.js';
 import { getStorageDiagnostics, readProviderCache, writeProviderCache } from '../lib/market/store.js';
@@ -1179,6 +1180,91 @@ test('market snapshot rejects unsupported queries and methods before cache or pr
   assert.equal(methodResponse.headers.Allow, 'GET');
   assert.equal(methodResponse.headers['Cache-Control'], 'no-store');
   assert.equal(fanoutCalls, 0);
+});
+
+test('market snapshot merge returns only source-tagged provider rows', () => {
+  const result = mergeMarketSnapshot(
+    [{
+      ticker: 'BTC', price: 123_000, changePct: 2, source: 'coingecko',
+      stale: false, asOf: '2026-08-28T10:00:00.000Z',
+    }],
+    [
+      { ticker: 'BTC', name: 'Bitcoin', history: [{ price: 120_000 }] },
+      { ticker: 'CL', name: 'WTI Crude', price: 82.5, history: [{ price: 82 }] },
+    ],
+  );
+
+  assert.deepEqual(result.commodities.map((row) => row.ticker), ['BTC']);
+  assert.ok(result.commodities.every((row) => typeof row.source === 'string' && row.source.length > 0));
+  assert.deepEqual(result.commodities[0].history, [{ price: 120_000 }]);
+});
+
+test('market snapshot merge reports fresh, stale, fallback, and coverage counts explicitly', () => {
+  const result = mergeMarketSnapshot([
+    { ticker: 'BTC', source: 'coingecko', stale: false },
+    { ticker: 'NG', source: 'eia', stale: true },
+  ], [
+    { ticker: 'BTC', name: 'Bitcoin' },
+    { ticker: 'NG', name: 'Natural Gas' },
+    { ticker: 'CL', name: 'WTI Crude' },
+  ]);
+
+  assert.deepEqual(result.meta.counts, {
+    expected: 17,
+    returned: 2,
+    covered: 2,
+    live: 1,
+    stale: 1,
+    fallback: 0,
+    missing: 15,
+  });
+  assert.deepEqual(result.meta.coverage, {
+    covered: 2,
+    expected: 17,
+    ratio: 0.12,
+  });
+});
+
+test('market snapshot response exposes the merge coverage contract', async () => {
+  const counts = {
+    expected: 17, returned: 2, covered: 2, live: 2, stale: 0, fallback: 0, missing: 15,
+  };
+  const coverage = { covered: 2, expected: 17, ratio: 0.12 };
+  const handler = snapshotModule.createSnapshotHandler({
+    now: () => new Date('2026-08-28T12:00:00.000Z'),
+    fallbackCommodities: [],
+    readProviderCache: async () => ({
+      cache: null,
+      diagnostics: {
+        blob: true, blobHit: true, blobError: null,
+        redis: true, redisHit: true, redisError: null,
+        kv: false, memoryHit: false, selectedSource: 'redis',
+        durableHit: true, readDegraded: false,
+      },
+    }),
+    fetchCoinGeckoPrices: async () => ({
+      rows: [{ ticker: 'BTC', source: 'coingecko', stale: false }], errors: [],
+    }),
+    fetchCoinGeckoVolumes: async () => ({ volumes: {}, errors: [] }),
+    eiaRowsFromCache: () => ({
+      rows: [{ ticker: 'NG', source: 'eia', stale: false }], stale: false,
+    }),
+    mergeMarketSnapshot: (rows) => ({
+      commodities: rows,
+      meta: {
+        liveSymbolCount: 2,
+        liveTickers: ['BTC', 'NG'],
+        sources: { coingecko: 1, alphavantage: 0, eia: 1 },
+        staleProviders: [], counts, coverage,
+      },
+    }),
+  });
+  const response = createResponse();
+
+  await handler({ method: 'GET', query: {} }, response);
+
+  assert.deepEqual(response.body.counts, counts);
+  assert.deepEqual(response.body.coverage, coverage);
 });
 
 test('market snapshot quarantines Alpha Vantage by default instead of serving stale overlays', async () => {

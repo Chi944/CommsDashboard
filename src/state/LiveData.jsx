@@ -21,6 +21,8 @@ const YAHOO_PRICES_URL = '/api/prices';
 const MARKET_V2_URL = '/api/market/snapshot';
 const PRICE_INTERVAL_MS = 60_000;
 const NEWS_INTERVAL_MS = 5 * 60_000;
+const NEWS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const NEWS_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const CCY_KEY = 'comms.displayCurrency';
 const INITIAL_COMMODITIES = mergeYahooPriceRows(fallbackCommodities, { commodities: [] });
 
@@ -36,6 +38,19 @@ const classifySeverity = (text) => {
     if (rule.keywords.some((k) => t.includes(k))) return rule.tier;
   }
   return 'LOW';
+};
+
+const newsTimestamp = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isFreshNewsTimestamp = (value, referenceMs) => {
+  const publishedAt = newsTimestamp(value);
+  return Number.isFinite(publishedAt)
+    && publishedAt <= referenceMs + NEWS_MAX_FUTURE_SKEW_MS
+    && referenceMs - publishedAt <= NEWS_MAX_AGE_MS;
 };
 
 const Ctx = createContext(null);
@@ -57,7 +72,8 @@ export function LiveDataProvider({ children }) {
   const [v2Counts, setV2Counts] = useState({ received: 0, stale: 0 });
   const [marketRefreshing, setMarketRefreshing] = useState(false);
   const [clockTick, setClockTick] = useState(0);
-  const [newsLive, setNewsLive] = useState(false);
+  const [newsFetchLive, setNewsFetchLive] = useState(false);
+  const [newsNewestPublishedAt, setNewsNewestPublishedAt] = useState(null);
   const [pricesUpdatedAt, setPricesUpdatedAt] = useState(null);
   const [newsUpdatedAt, setNewsUpdatedAt] = useState(null);
   const [pricesLoading, setPricesLoading] = useState(true);
@@ -295,16 +311,28 @@ export function LiveDataProvider({ children }) {
       const r = await fetch('/api/news', { cache: 'no-store' });
       if (!r.ok) throw new Error(`status ${r.status}`);
       const j = await r.json();
-      if (j?.ok && Array.isArray(j.items) && j.items.length) {
-        const items = j.items.map((it) => ({
+      const referenceMs = Date.now();
+      const freshItems = Array.isArray(j?.items)
+        ? j.items.filter((item) => isFreshNewsTimestamp(item?.ts, referenceMs))
+        : [];
+      const contentFresh = j?.ok === true
+        && j?.freshness?.isFresh === true
+        && isFreshNewsTimestamp(j.freshness.newestPublishedAt, referenceMs)
+        && freshItems.length > 0;
+      if (contentFresh) {
+        const items = freshItems.map((it) => ({
           ...it,
           severity: classifySeverity(`${it.headline} ${it.desc}`),
         }));
         setIntel(items);
         setNewsUpdatedAt(j.fetchedAt);
-        setNewsLive(true);
+        setNewsNewestPublishedAt(j.freshness.newestPublishedAt);
+        setNewsFetchLive(true);
+      } else {
+        setNewsFetchLive(false);
       }
     } catch {
+      setNewsFetchLive(false);
       /* keep last good state */
     } finally {
       setNewsLoading(false);
@@ -352,6 +380,8 @@ export function LiveDataProvider({ children }) {
     })
     : yahooDataMode;
   const pricesLive = yahooDataMode === 'LIVE';
+  const newsLive = newsFetchLive
+    && isFreshNewsTimestamp(newsNewestPublishedAt, Date.now());
 
   const marketUpdatedLabel = useMemo(() => {
     const iso = USE_MARKET_V2 && !supplementalFallbackCovered ? v2FetchedAt : pricesUpdatedAt;

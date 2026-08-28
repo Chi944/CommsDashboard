@@ -3,7 +3,7 @@
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 let LiveDataProvider;
@@ -79,6 +79,26 @@ function degradedV2Payload() {
   };
 }
 
+function newsPayload({ publishedAt = Date.now() - 60 * 60 * 1000, isFresh = true } = {}) {
+  const iso = new Date(publishedAt).toISOString();
+  return {
+    ok: true,
+    fetchedAt: freshIso(),
+    freshness: {
+      isFresh,
+      maxAgeHours: 168,
+      ageMs: Math.max(0, Date.now() - publishedAt),
+      newestPublishedAt: iso,
+      oldestPublishedAt: iso,
+    },
+    items: [{
+      id: 'news-1', category: 'Finance', source: 'Example Wire',
+      time: '1 hr ago', headline: 'Fresh market headline', desc: 'Market details',
+      url: 'https://publisher.example/story', ts: publishedAt,
+    }],
+  };
+}
+
 function MarketState() {
   const data = useLiveData();
   const crude = data.commodities.find((row) => row.ticker === 'CL');
@@ -92,6 +112,17 @@ function MarketState() {
       <output aria-label="natural gas price">{resolvedNaturalGas?.price}</output>
       <output aria-label="market updated">{data.marketUpdatedLabel}</output>
       <button type="button" onClick={data.refreshMarketSnapshot}>Refresh market</button>
+    </>
+  );
+}
+
+function NewsState() {
+  const data = useLiveData();
+  return (
+    <>
+      <output aria-label="news live">{String(data.newsLive)}</output>
+      <output aria-label="news headline">{data.intel[0]?.headline}</output>
+      <button type="button" onClick={data.refresh}>Refresh all</button>
     </>
   );
 }
@@ -197,5 +228,87 @@ describe('LiveData market fetch isolation', () => {
     await waitFor(() => expect(calls.filter((url) => url === '/api/prices')).toHaveLength(2));
     await waitFor(() => expect(screen.getByRole('status', { name: /market mode/i })).toHaveTextContent('LIVE'));
     expect(calls.filter((url) => url === '/api/market/snapshot')).toHaveLength(2);
+  });
+});
+
+describe('LiveData news freshness', () => {
+  it('clears LIVE after a failed refresh while retaining the last good headline', async () => {
+    const user = userEvent.setup();
+    let manual = false;
+    const newsCalls = [];
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url === '/api/prices') return response(yahooPayload());
+      if (url === '/api/market/snapshot') return response(v2Payload());
+      if (url === '/api/news') {
+        newsCalls.push(url);
+        return manual
+          ? response({}, { ok: false, status: 502 })
+          : response(newsPayload());
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(<LiveDataProvider><NewsState /></LiveDataProvider>);
+    await waitFor(() => expect(screen.getByRole('status', { name: /news live/i })).toHaveTextContent('true'));
+    manual = true;
+
+    await user.click(screen.getByRole('button', { name: /refresh all/i }));
+
+    await waitFor(() => expect(newsCalls).toHaveLength(2));
+    expect(screen.getByRole('status', { name: /news live/i })).toHaveTextContent('false');
+    expect(screen.getByRole('status', { name: /news headline/i })).toHaveTextContent('Fresh market headline');
+  });
+
+  it('does not mark a freshly fetched payload LIVE when its newest article is expired', async () => {
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url === '/api/prices') return response(yahooPayload());
+      if (url === '/api/market/snapshot') return response(v2Payload());
+      if (url === '/api/news') {
+        return response(newsPayload({
+          publishedAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
+          isFresh: false,
+        }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    render(<LiveDataProvider><NewsState /></LiveDataProvider>);
+
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith('/api/news', { cache: 'no-store' }));
+    expect(screen.getByRole('status', { name: /news live/i })).toHaveTextContent('false');
+  });
+
+  it('expires LIVE when the newest article crosses the seven-day boundary', async () => {
+    vi.useFakeTimers();
+    const now = Date.parse('2026-08-28T12:00:00.000Z');
+    vi.setSystemTime(now);
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url === '/api/prices') return response(yahooPayload());
+      if (url === '/api/market/snapshot') return response(v2Payload());
+      if (url === '/api/news') {
+        return response(newsPayload({
+          publishedAt: now - 7 * 24 * 60 * 60 * 1000 + 1_000,
+          isFresh: true,
+        }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    try {
+      render(<LiveDataProvider><NewsState /></LiveDataProvider>);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.getByRole('status', { name: /news live/i })).toHaveTextContent('true');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+
+      expect(screen.getByRole('status', { name: /news live/i })).toHaveTextContent('false');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

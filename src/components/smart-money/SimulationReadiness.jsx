@@ -1,6 +1,6 @@
 import React from 'react';
 
-const PRIMARY_COPY = 'No rights-cleared free market-price source is currently enabled. Signals remain research-only; no simulated transaction was created.';
+const PRIMARY_COPY = 'No rights-cleared free market-price source is currently enabled for simulation entry or daily marking. Dashboard market data remains display-only; signals are research-only, and no simulated transaction was created.';
 
 export default function SimulationReadiness({ capability }) {
   const researchOnly = capability?.status === 'research_only'

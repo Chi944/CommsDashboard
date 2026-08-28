@@ -4,6 +4,7 @@
 // Allowed ranges: 1d, 5d, 1mo, 3mo, 6mo, 1y, ytd
 
 import { SYMBOLS, ALLOWED_RANGES, findSymbol } from '../lib/symbols.js';
+import { fetchWithTimeout } from '../lib/market/fetch.js';
 
 const round2 = (n) => Math.round(n * 100) / 100;
 const round4 = (n) => Math.round(n * 10000) / 10000;
@@ -30,7 +31,7 @@ export default async function handler(req, res) {
     }
 
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym.yahoo)}?interval=${cfg.interval}&range=${cfg.range}`;
-    const r = await fetch(url, {
+    const r = await fetchWithTimeout(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; CommsDashboard/1.0)',
         'Accept': 'application/json',
@@ -72,6 +73,6 @@ export default async function handler(req, res) {
       points,
     });
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+    res.status(502).json({ ok: false, error: 'history upstream unavailable' });
   }
 }

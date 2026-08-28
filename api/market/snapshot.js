@@ -157,6 +157,8 @@ export function createSnapshotHandler(dependencies = {}) {
           persistenceDegraded,
         },
         liveSymbolCount,
+        counts: meta.counts,
+        coverage: meta.coverage,
         staleProviders,
         disabledProviders: alphaVantageEnabled ? [] : ['alphavantage'],
         marketVolumes: cgVol.volumes || {},

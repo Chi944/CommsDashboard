@@ -5,6 +5,7 @@
 // GET /api/news -> { ok, fetchedAt, items: [...] }
 
 import { parseGoogleNewsFeed } from '../lib/feeds.js';
+import { fetchWithTimeout } from '../lib/market/fetch.js';
 
 const QUERIES = [
   { category: 'Shipping',     q: 'shipping disruption red sea suez container' },
@@ -21,6 +22,8 @@ const QUERIES = [
 
 const PER_QUERY = 4;
 const TOTAL_LIMIT = 36;
+const MAX_NEWS_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 function timeAgo(date) {
   const t = Date.parse(date);
@@ -35,9 +38,9 @@ function timeAgo(date) {
   return `${d}d ago`;
 }
 
-async function fetchTopic({ category, q }) {
+async function fetchTopic({ category, q }, referenceMs) {
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
-  const r = await fetch(url, {
+  const r = await fetchWithTimeout(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (compatible; CommsDashboard/1.0)',
       'Accept': 'application/rss+xml, application/xml, text/xml',
@@ -60,12 +63,15 @@ async function fetchTopic({ category, q }) {
       url: it.url,
       ts,
     };
-  });
+  }).filter((item) => item.ts > 0
+    && item.ts <= referenceMs + MAX_FUTURE_SKEW_MS
+    && referenceMs - item.ts <= MAX_NEWS_AGE_MS);
 }
 
 export default async function handler(req, res) {
   try {
-    const settled = await Promise.allSettled(QUERIES.map(fetchTopic));
+    const referenceMs = Date.now();
+    const settled = await Promise.allSettled(QUERIES.map((topic) => fetchTopic(topic, referenceMs)));
     const all = settled
       .filter((r) => r.status === 'fulfilled')
       .flatMap((r) => r.value);
@@ -85,12 +91,22 @@ export default async function handler(req, res) {
     }
 
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=900');
+    const publishedTimes = items.map((item) => item.ts);
+    const newestPublishedAtMs = Math.max(...publishedTimes);
+    const oldestPublishedAtMs = Math.min(...publishedTimes);
     res.status(200).json({
       ok: true,
       fetchedAt: new Date().toISOString(),
+      freshness: {
+        isFresh: true,
+        maxAgeHours: MAX_NEWS_AGE_MS / (60 * 60 * 1000),
+        ageMs: Math.max(0, referenceMs - newestPublishedAtMs),
+        newestPublishedAt: new Date(newestPublishedAtMs).toISOString(),
+        oldestPublishedAt: new Date(oldestPublishedAtMs).toISOString(),
+      },
       items,
     });
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+    res.status(500).json({ ok: false, error: 'news service unavailable' });
   }
 }

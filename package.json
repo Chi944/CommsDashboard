@@ -11,9 +11,11 @@
     "build": "vite build",
     "test": "npm run build && npm run test:unit && npm run test:ui",
     "test:unit": "node --test",
-    "test:ui": "vitest run test/live-data.test.jsx test/ui-accessibility.test.jsx test/briefing-ui.test.jsx test/smart-money-provider.test.jsx test/smart-money-ui.test.jsx",
+    "test:ui": "vitest run",
+    "test:e2e:production": "playwright test",
     "verify:vercel-routes": "node scripts/verify-vercel-routes.mjs",
     "smoke:ai": "node scripts/smoke-ai.mjs",
+    "smoke:production": "node scripts/smoke-production.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -27,6 +29,7 @@
     "recharts": "^2.12.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.6",
