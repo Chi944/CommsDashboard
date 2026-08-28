@@ -38,6 +38,13 @@ const FRED_EMPTY_HTML = `<!doctype html><html><body>
 <div id="release-dates-pager">No release dates are available for the selected options.</div>
 </body></html>`;
 
+const FRED_2027_HTML = `<!doctype html><html><body>
+<div id="release-dates-pager"><table><tbody>
+<tr class="odd"><td colspan="2"><span style="font-weight: bold;">Friday January 08, 2027</span></td></tr>
+<tr><td>7:30 am</td><td><a href="/release?rid=50">Employment Situation</a></td></tr>
+</tbody></table></div>
+</body></html>`;
+
 const BEA_ICS = `BEGIN:VCALENDAR
 VERSION:2.0
 TZID:America/New_York
@@ -242,6 +249,50 @@ test('the BLS fallback chain is bounded below the browser request deadline', asy
   assert.equal(snapshot.state, 'live');
   assert.equal(snapshot.providers.find(({ id }) => id === 'bls')?.shortName, 'FRED/BLS');
   assert.ok(Date.now() - startedAt < 100, 'fallback should not await every slow direct BLS request');
+});
+
+test('a slower serverless FRED response still completes before the browser deadline', { timeout: 7_500 }, async () => {
+  const { buildCalendarSnapshot } = await calendarModule('../lib/calendar/index.js');
+  const startedAt = Date.now();
+  const snapshot = await buildCalendarSnapshot({
+    now: new Date('2026-08-28T15:00:00.000Z'),
+    fetchText: async (url) => {
+      if (url.includes('bls.gov')) return new Promise(() => {});
+      if (url.includes('fred.stlouisfed.org')) {
+        await new Promise((resolve) => setTimeout(resolve, 3_200));
+        return { text: FRED_BLS_HTML, sourceLastModifiedAt: null };
+      }
+      if (url.includes('bea.gov')) return { text: BEA_ICS, sourceLastModifiedAt: null };
+      if (url.includes('federalreserve.gov')) return { text: FED_HTML, sourceLastModifiedAt: null };
+      throw new Error('unexpected source');
+    },
+  });
+
+  assert.equal(snapshot.state, 'live');
+  assert.equal(snapshot.providers.find(({ id }) => id === 'bls')?.shortName, 'FRED/BLS');
+  assert.ok(Date.now() - startedAt < 7_000, 'fallback must complete before the 8-second UI deadline');
+});
+
+test('an incomplete cross-year annual schedule yields to usable upcoming FRED releases', async () => {
+  const { buildCalendarSnapshot } = await calendarModule('../lib/calendar/index.js');
+  const snapshot = await buildCalendarSnapshot({
+    now: new Date('2026-12-31T15:00:00.000Z'),
+    fetchText: async (url) => {
+      if (url.endsWith('/bls.ics')) throw Object.assign(new Error('blocked'), { code: 'upstream_unavailable' });
+      if (url.endsWith('/schedule/2026/')) return { text: BLS_HTML, sourceLastModifiedAt: null };
+      if (url.endsWith('/schedule/2027/')) throw Object.assign(new Error('blocked'), { code: 'upstream_unavailable' });
+      if (url.includes('fred.stlouisfed.org')) return { text: FRED_2027_HTML, sourceLastModifiedAt: null };
+      if (url.includes('bea.gov')) return { text: BEA_ICS, sourceLastModifiedAt: null };
+      if (url.includes('federalreserve.gov')) return { text: FED_HTML, sourceLastModifiedAt: null };
+      throw new Error('unexpected source');
+    },
+  });
+
+  const provider = snapshot.providers.find(({ id }) => id === 'bls');
+  assert.equal(snapshot.state, 'live');
+  assert.equal(provider?.shortName, 'FRED/BLS');
+  assert.equal(provider?.eventCount, 1);
+  assert.equal(snapshot.events.find(({ sourceId }) => sourceId === 'bls')?.date, '2027-01-08');
 });
 
 test('BEA ICS parsing unfolds continuation lines and converts escaped punctuation', async () => {
