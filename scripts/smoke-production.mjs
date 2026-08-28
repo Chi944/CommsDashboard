@@ -12,6 +12,64 @@ const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
   ? configuredTimeout
   : 10_000;
 
+function approvedCalendarUrl(value, { provider = false, sourceId } = {}) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
+    if (url.hash) return false;
+    if (url.origin === 'https://www.bls.gov') {
+      return sourceId === 'bls' && !url.search && (
+        url.pathname === '/schedule/news_release/bls.ics'
+        || /^\/schedule\/20\d{2}\/$/.test(url.pathname)
+      );
+    }
+    if (url.origin === 'https://www.bea.gov') {
+      return sourceId === 'bea'
+        && !url.search
+        && url.pathname === '/news/schedule/ics/online-calendar-subscription.ics';
+    }
+    if (url.origin === 'https://www.federalreserve.gov') {
+      return sourceId === 'federal-reserve'
+        && !url.search
+        && url.pathname === '/monetarypolicy/fomccalendars.htm';
+    }
+    if (url.origin === 'https://fred.stlouisfed.org') {
+      if (sourceId !== 'bls') return false;
+      if (url.pathname !== '/releases/calendar') return false;
+      if (provider) return !url.search;
+      if (!url.search) return true;
+      const keys = [...url.searchParams.keys()];
+      return keys.length === 5
+        && new Set(keys).size === 5
+        && ['10', '11', '46', '47', '50', '188', '192'].includes(url.searchParams.get('rid'))
+        && /^20\d{2}-\d{2}-\d{2}$/.test(url.searchParams.get('vs') || '')
+        && /^20\d{2}-\d{2}-\d{2}$/.test(url.searchParams.get('ve') || '')
+        && url.searchParams.get('ob') === 'rd'
+        && url.searchParams.get('od') === 'asc';
+    }
+    if (url.origin === 'https://www.census.gov') {
+      return sourceId === 'bls'
+        && !url.search
+        && /^\/economic-indicators\/econcards\/assets\/pdf\/censusreleaseglance_20\d{2}\.pdf$/.test(url.pathname);
+    }
+    return provider
+      && sourceId === 'bls'
+      && url.origin === 'https://www.whitehouse.gov'
+      && !url.search
+      && url.pathname === '/omb/information-resources/guidance/us-principal-federal-economic-indicators/';
+  } catch {
+    return false;
+  }
+}
+
+function isCensusCalendarUrl(value) {
+  try {
+    return new URL(value).origin === 'https://www.census.gov';
+  } catch {
+    return false;
+  }
+}
+
 async function fetchJson(path) {
   const controller = new AbortController();
   let timedOut = false;
@@ -92,9 +150,7 @@ try {
     throw new Error('/api/fear-greed returned a stale or invalid observation');
   }
 
-  const calendarProviders = Array.isArray(calendar?.providers)
-    ? calendar.providers
-    : calendar?.providerStatuses;
+  const calendarProviders = calendar?.providers;
   const expectedCalendarProviderIds = new Set(['bls', 'bea', 'federal-reserve']);
   const reportedCalendarProviderIds = new Set(
     Array.isArray(calendarProviders) ? calendarProviders.map((provider) => provider?.id) : [],
@@ -105,15 +161,45 @@ try {
     && calendarProviders.every((provider) => (
       expectedCalendarProviderIds.has(provider?.id)
       && (provider?.status || provider?.state) === 'live'
+      && approvedCalendarUrl(provider?.sourceUrl, { provider: true, sourceId: provider?.id })
     ));
+  const calendarEventsAreOfficial = Array.isArray(calendar?.events)
+    && calendar.events.length > 0
+    && calendar.events.every((event) => (
+      expectedCalendarProviderIds.has(event?.sourceId)
+      && Number.isFinite(Date.parse(event?.startsAt || `${event?.date}T00:00:00.000Z`))
+      && approvedCalendarUrl(event?.sourceUrl, { sourceId: event?.sourceId })
+    ));
+  const blsProvider = Array.isArray(calendarProviders)
+    ? calendarProviders.find((provider) => provider?.id === 'bls')
+    : null;
+  const censusEvents = Array.isArray(calendar?.events)
+    ? calendar.events.filter((event) => isCensusCalendarUrl(event?.sourceUrl))
+    : [];
+  const usesOmbFallback = blsProvider?.shortName === 'OMB/BLS' || censusEvents.length > 0;
+  const blsEvents = Array.isArray(calendar?.events)
+    ? calendar.events.filter((event) => event?.sourceId === 'bls')
+    : [];
+  const ombFallbackIsTruthful = !usesOmbFallback || (
+    blsProvider?.name === 'BLS principal releases via OMB/OIRA'
+    && blsProvider?.shortName === 'OMB/BLS'
+    && censusEvents.length > 0
+    && blsEvents.length > 0
+    && blsEvents.every((event) => (
+      event?.sourceName === 'BLS principal releases via OMB/OIRA'
+      && event?.sourceShortName === 'OMB/BLS'
+      && isCensusCalendarUrl(event?.sourceUrl)
+      && event?.startsAt === null
+      && event?.timeZone === null
+      && event?.timeStatus === 'date-only'
+      && event?.timeLabel === 'Date only'
+    ))
+  );
   if (calendar?.partial !== false
       || calendar?.state !== 'live'
       || !calendarHasAllLiveSources
-      || !Array.isArray(calendar?.events) || calendar.events.length === 0
-      || calendar.events.some((event) => (
-        !Number.isFinite(Date.parse(event?.startsAt || `${event?.date}T00:00:00.000Z`))
-        || !/^https:\/\/(?:www\.)?(?:bls\.gov|bea\.gov|federalreserve\.gov|fred\.stlouisfed\.org)\//i.test(event?.sourceUrl || '')
-      ))) {
+      || !calendarEventsAreOfficial
+      || !ombFallbackIsTruthful) {
     throw new Error('/api/calendar did not return a live official-source schedule');
   }
 

@@ -16,6 +16,48 @@ const VIEWPORTS = [
   ['desktop', { width: 1440, height: 900 }],
 ];
 
+function approvedCalendarUrl(value, { provider = false } = {}) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash) return false;
+    if (url.origin === 'https://www.bls.gov') {
+      return !url.search && (
+        url.pathname === '/schedule/news_release/bls.ics'
+        || /^\/schedule\/20\d{2}\/$/.test(url.pathname)
+      );
+    }
+    if (url.origin === 'https://www.bea.gov') {
+      return !url.search && url.pathname === '/news/schedule/ics/online-calendar-subscription.ics';
+    }
+    if (url.origin === 'https://www.federalreserve.gov') {
+      return !url.search && url.pathname === '/monetarypolicy/fomccalendars.htm';
+    }
+    if (url.origin === 'https://fred.stlouisfed.org') {
+      if (url.pathname !== '/releases/calendar') return false;
+      if (provider) return !url.search;
+      if (!url.search) return true;
+      const keys = [...url.searchParams.keys()];
+      return keys.length === 5
+        && new Set(keys).size === 5
+        && ['10', '11', '46', '47', '50', '188', '192'].includes(url.searchParams.get('rid'))
+        && /^20\d{2}-\d{2}-\d{2}$/.test(url.searchParams.get('vs') || '')
+        && /^20\d{2}-\d{2}-\d{2}$/.test(url.searchParams.get('ve') || '')
+        && url.searchParams.get('ob') === 'rd'
+        && url.searchParams.get('od') === 'asc';
+    }
+    if (url.origin === 'https://www.census.gov') {
+      return !url.search
+        && /^\/economic-indicators\/econcards\/assets\/pdf\/censusreleaseglance_20\d{2}\.pdf$/.test(url.pathname);
+    }
+    return provider
+      && url.origin === 'https://www.whitehouse.gov'
+      && !url.search
+      && url.pathname === '/omb/information-resources/guidance/us-principal-federal-economic-indicators/';
+  } catch {
+    return false;
+  }
+}
+
 async function visitSurface(page, path) {
   const consoleErrors = [];
   const pageErrors = [];
@@ -71,9 +113,24 @@ test('live economic calendar exposes an official source instead of static estima
   const heading = page.getByText('Economic Calendar', { exact: true });
   await expect(heading).toBeVisible();
   const card = heading.locator('xpath=ancestor::section[1]');
-  await expect(card.locator(
-    'a[href*="bls.gov"], a[href*="bea.gov"], a[href*="federalreserve.gov"]',
-  ).first()).toBeVisible();
+  const links = await card.locator('a[href]').evaluateAll((anchors) => anchors.map((anchor) => ({
+    href: anchor.href,
+    provider: Boolean(anchor.closest('[aria-label="Economic calendar sources"]')),
+  })));
+  expect(links.length).toBeGreaterThan(0);
+  for (const link of links) {
+    expect(
+      approvedCalendarUrl(link.href, { provider: link.provider }),
+      `unapproved calendar source ${link.href}`,
+    ).toBe(true);
+  }
+  if ((await card.textContent()).includes('OMB/BLS')) {
+    expect(links.some(({ href, provider }) => !provider && new URL(href).origin === 'https://www.census.gov')).toBe(true);
+    expect(links.some(({ href, provider }) => provider && [
+      'https://www.census.gov',
+      'https://www.whitehouse.gov',
+    ].includes(new URL(href).origin))).toBe(true);
+  }
   await expect(card).not.toContainText(/forecast|prior/i);
 });
 

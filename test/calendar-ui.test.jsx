@@ -3,7 +3,7 @@
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import EconomicCalendar from '../src/components/EconomicCalendar.jsx';
 
@@ -17,7 +17,7 @@ function response(payload, { ok = true, status = 200 } = {}) {
   };
 }
 
-function provider(id, shortName, status = 'live') {
+function provider(id, shortName, status = 'live', overrides = {}) {
   const metadata = {
     bls: ['U.S. Bureau of Labor Statistics', 'https://www.bls.gov/schedule/news_release/bls.ics'],
     bea: ['U.S. Bureau of Economic Analysis', 'https://www.bea.gov/news/schedule/ics/online-calendar-subscription.ics'],
@@ -32,6 +32,7 @@ function provider(id, shortName, status = 'live') {
     eventCount: status === 'live' ? 1 : 0,
     fetchedAt: status === 'live' ? '2026-08-28T15:00:00.000Z' : null,
     sourceLastModifiedAt: null,
+    ...overrides,
   };
 }
 
@@ -93,7 +94,7 @@ describe('official economic calendar', () => {
       'href',
       'https://www.bls.gov/schedule/news_release/bls.ics',
     );
-    expect(screen.getByText('8:30 AM ET')).toBeInTheDocument();
+    expect(screen.getAllByText('8:30 AM ET')).toHaveLength(2);
     expect(screen.getByRole('link', { name: /U.S. Bureau of Labor Statistics/i })).toHaveAttribute(
       'href',
       'https://www.bls.gov/schedule/news_release/bls.ics',
@@ -102,6 +103,43 @@ describe('official economic calendar', () => {
     expect(screen.queryByRole('columnheader', { name: /prior/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: /impact/i })).not.toBeInTheDocument();
     expect(globalThis.fetch).toHaveBeenCalledWith('/api/calendar', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it('renders the OMB/OIRA fallback as date-only with its exact Census source', async () => {
+    const sourceUrl = 'https://www.census.gov/economic-indicators/econcards/assets/pdf/censusreleaseglance_2026.pdf';
+    globalThis.fetch = vi.fn(async () => response(payload({
+      providers: [
+        provider('bls', 'OMB/BLS', 'live', {
+          name: 'BLS principal releases via OMB/OIRA',
+          sourceUrl,
+        }),
+        provider('bea', 'BEA'),
+        provider('federal-reserve', 'Fed'),
+      ],
+      events: [event({
+        id: 'bls:2026-09-04:the-employment-situation',
+        title: 'The Employment Situation',
+        sourceName: 'BLS principal releases via OMB/OIRA',
+        sourceShortName: 'OMB/BLS',
+        sourceUrl,
+        date: '2026-09-04',
+        endDate: '2026-09-04',
+        startsAt: null,
+        timeZone: null,
+        timeStatus: 'date-only',
+        timeLabel: 'Date only',
+      })],
+    })));
+
+    render(<EconomicCalendar />);
+
+    const eventLink = await screen.findByRole('link', { name: 'The Employment Situation' });
+    const eventRow = eventLink.closest('tr');
+    expect(eventLink).toHaveAttribute('href', sourceUrl);
+    expect(within(eventRow).getAllByText('Date only').length).toBeGreaterThan(0);
+    expect(within(eventRow).getByText('OMB/BLS')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /BLS principal releases via OMB\/OIRA source/i })).toHaveAttribute('href', sourceUrl);
+    expect(screen.queryByText('8:30 AM ET')).not.toBeInTheDocument();
   });
 
   it('keeps available events visible and names a failed provider in degraded mode', async () => {
