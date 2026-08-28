@@ -119,14 +119,14 @@ export default function EconomicCalendar() {
       ) : state === 'loading' ? (
         <div className="px-4 py-8 text-center text-xs text-gray-500">Loading official schedules…</div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] text-xs">
+        <div className="overflow-x-auto" role="region" aria-label="Official economic release schedule" tabIndex={0}>
+          <table className="w-full min-w-[480px] text-xs sm:min-w-[560px]">
             <thead>
               <tr className="border-b border-gray-800 text-[10px] uppercase tracking-widest text-gray-500">
                 <th className="px-4 py-2 text-left font-medium">Date</th>
                 <th className="px-4 py-2 text-left font-medium">Event</th>
                 <th className="px-3 py-2 text-left font-medium">Source</th>
-                <th className="px-4 py-2 text-right font-medium">Time (ET)</th>
+                <th className="hidden px-4 py-2 text-right font-medium sm:table-cell">Release time</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/60">
@@ -140,12 +140,13 @@ export default function EconomicCalendar() {
                     <td className="px-4 py-2.5 font-mono whitespace-nowrap">
                       <div className="text-gray-100">{formatDateRange(event)}</div>
                       <div className={`mt-0.5 text-[10px] ${relative === 'Today' ? 'text-cyan-400 font-semibold' : 'text-gray-500'}`}>{relative}</div>
+                      <div className={`mt-0.5 text-[10px] font-mono sm:hidden ${event.timeStatus === 'scheduled' ? 'text-gray-300' : 'text-gray-500'}`}>{event.timeLabel}</div>
                     </td>
                     <td className="px-4 py-2.5">
                       <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-gray-100 hover:text-cyan-300">{event.title}</a>
                     </td>
                     <td className="px-3 py-2.5 font-mono text-cyan-300">{event.sourceShortName}</td>
-                    <td className={`px-4 py-2.5 text-right font-mono ${event.timeStatus === 'scheduled' ? 'text-gray-300' : 'text-gray-500'}`}>{event.timeLabel}</td>
+                    <td className={`hidden px-4 py-2.5 text-right font-mono sm:table-cell ${event.timeStatus === 'scheduled' ? 'text-gray-300' : 'text-gray-500'}`}>{event.timeLabel}</td>
                   </tr>
                 );
               })}

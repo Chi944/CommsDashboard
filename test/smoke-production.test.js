@@ -50,17 +50,32 @@ function fixtureFor(url, overrides = {}) {
       state: 'live',
       fetchedAt: nowIso(),
       asOf: nowIso(),
-      providerStatuses: [
-        { id: 'bls', status: 'live' },
-        { id: 'bea', status: 'live' },
-        { id: 'federal-reserve', status: 'live' },
+      providers: [
+        {
+          id: 'bls', name: 'BLS principal releases via OMB/OIRA', shortName: 'OMB/BLS', status: 'live',
+          sourceUrl: 'https://www.census.gov/economic-indicators/econcards/assets/pdf/censusreleaseglance_2026.pdf',
+        },
+        {
+          id: 'bea', name: 'U.S. Bureau of Economic Analysis', shortName: 'BEA', status: 'live',
+          sourceUrl: 'https://www.bea.gov/news/schedule/ics/online-calendar-subscription.ics',
+        },
+        {
+          id: 'federal-reserve', name: 'Federal Reserve', shortName: 'Fed', status: 'live',
+          sourceUrl: 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm',
+        },
       ],
       events: [{
-        id: 'bls-cpi',
-        title: 'Consumer Price Index',
-        startsAt: futureIso(),
-        source: 'BLS',
-        sourceUrl: 'https://www.bls.gov/schedule/',
+        id: 'bls-employment',
+        title: 'The Employment Situation',
+        sourceId: 'bls',
+        sourceName: 'BLS principal releases via OMB/OIRA',
+        sourceShortName: 'OMB/BLS',
+        date: futureIso().slice(0, 10),
+        startsAt: null,
+        timeZone: null,
+        timeStatus: 'date-only',
+        timeLabel: 'Date only',
+        sourceUrl: 'https://www.census.gov/economic-indicators/econcards/assets/pdf/censusreleaseglance_2026.pdf',
       }],
     },
     '/api/history': {
@@ -238,6 +253,56 @@ test('production surface smoke rejects degraded public data contracts', async (t
           startsAt: futureIso(),
           sourceUrl: 'https://www.bls.gov/schedule/',
         }],
+      },
+      error: /calendar.*official/i,
+    },
+    {
+      name: 'calendar with an unapproved provider link',
+      path: '/api/calendar',
+      body: {
+        ...fixtureFor('/api/calendar'),
+        providers: fixtureFor('/api/calendar').providers.map((provider) => (
+          provider.id === 'bls' ? { ...provider, sourceUrl: 'https://example.com/census.gov/schedule.pdf' } : provider
+        )),
+      },
+      error: /calendar.*official/i,
+    },
+    {
+      name: 'calendar with an approved host but unapproved source path',
+      path: '/api/calendar',
+      body: {
+        ...fixtureFor('/api/calendar'),
+        events: fixtureFor('/api/calendar').events.map((event) => ({
+          ...event,
+          sourceUrl: 'https://www.census.gov/economic-indicators/unrelated.pdf',
+        })),
+      },
+      error: /calendar.*official/i,
+    },
+    {
+      name: 'calendar with an official source URL bound to the wrong provider',
+      path: '/api/calendar',
+      body: {
+        ...fixtureFor('/api/calendar'),
+        events: fixtureFor('/api/calendar').events.map((event) => ({
+          ...event,
+          sourceId: 'bea',
+        })),
+      },
+      error: /calendar.*official/i,
+    },
+    {
+      name: 'OMB calendar that invents a release time',
+      path: '/api/calendar',
+      body: {
+        ...fixtureFor('/api/calendar'),
+        events: fixtureFor('/api/calendar').events.map((event) => ({
+          ...event,
+          startsAt: futureIso(),
+          timeZone: 'America/New_York',
+          timeStatus: 'scheduled',
+          timeLabel: '8:30 AM ET',
+        })),
       },
       error: /calendar.*official/i,
     },
