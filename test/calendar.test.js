@@ -16,6 +16,17 @@ SUMMARY:Consumer Price Index
 END:VEVENT
 END:VCALENDAR`;
 
+const BLS_HTML = `<!doctype html><html><body>
+<h1>September 2026</h1>
+<table class="release-list"><tbody>
+<tr>
+  <td class="date-cell"><p>Friday, September 4, 2026</p></td>
+  <td class="time-cell"><p>08:30 AM</p></td>
+  <td class="desc-cell"><p><strong>Employment Situation</strong> for August 2026</p></td>
+</tr>
+</tbody></table>
+</body></html>`;
+
 const BEA_ICS = `BEGIN:VCALENDAR
 VERSION:2.0
 TZID:America/New_York
@@ -99,6 +110,46 @@ test('BLS ICS parsing preserves the official Eastern time as an exact UTC instan
     date: '2026-09-11',
     endDate: '2026-09-11',
     startsAt: '2026-09-11T12:30:00.000Z',
+    timeZone: 'America/New_York',
+    timeStatus: 'scheduled',
+    timeLabel: '8:30 AM ET',
+  });
+});
+
+test('calendar keeps BLS live from its official annual schedule when the ICS endpoint is blocked', async () => {
+  // Catches serverless-network rejection of the ICS file degrading an otherwise
+  // available first-party BLS schedule.
+  const { buildCalendarSnapshot } = await calendarModule('../lib/calendar/index.js');
+  const annualUrl = 'https://www.bls.gov/schedule/2026/';
+  const snapshot = await buildCalendarSnapshot({
+    now: new Date('2026-08-28T15:00:00.000Z'),
+    fetchText: async (url) => {
+      if (url.endsWith('/bls.ics')) throw Object.assign(new Error('blocked'), { code: 'upstream_unavailable' });
+      if (url === annualUrl) return { text: BLS_HTML, sourceLastModifiedAt: null };
+      if (url.includes('bea.gov')) return { text: BEA_ICS, sourceLastModifiedAt: null };
+      if (url.includes('federalreserve.gov')) return { text: FED_HTML, sourceLastModifiedAt: null };
+      throw new Error('unexpected source');
+    },
+  });
+
+  assert.equal(snapshot.partial, false);
+  assert.deepEqual(snapshot.providers.map(({ id, status }) => ({ id, status })), [
+    { id: 'bls', status: 'live' },
+    { id: 'bea', status: 'live' },
+    { id: 'federal-reserve', status: 'live' },
+  ]);
+  const blsEvent = snapshot.events.find((event) => event.sourceId === 'bls');
+  assert.deepEqual(blsEvent, {
+    id: 'bls:2026-09-04:employment-situation-for-august-2026',
+    title: 'Employment Situation for August 2026',
+    kind: 'economic-release',
+    sourceId: 'bls',
+    sourceName: 'U.S. Bureau of Labor Statistics',
+    sourceShortName: 'BLS',
+    sourceUrl: annualUrl,
+    date: '2026-09-04',
+    endDate: '2026-09-04',
+    startsAt: '2026-09-04T12:30:00.000Z',
     timeZone: 'America/New_York',
     timeStatus: 'scheduled',
     timeLabel: '8:30 AM ET',
