@@ -4,8 +4,9 @@ Live multi-asset dashboard: 268 tracked stocks, crypto assets,
 commodities futures, macro indices, and 40+ FX
 currencies — with real-time news per asset and an optional
 **AI-generated analysis** panel powered by Groq. Intel also includes a
-live 90-day economic calendar sourced only from official BLS, BEA, and
-Federal Reserve schedules.
+live 90-day economic calendar sourced from BLS, BEA, and Federal Reserve
+schedules. When BLS blocks the serverless network, its major releases are
+transparently sourced from the free St. Louis Fed FRED calendar instead.
 
 **Live:** https://comms-dashboard-navy.vercel.app/
 
@@ -79,7 +80,7 @@ The combined market and Smart Money refresh runs at 06:00 and 18:00 UTC (`vercel
 - Yahoo symbols are fetched in 20-symbol batches, cutting the normal price refresh to 14 upstream requests for all 268 assets.
 - The supplemental market snapshot returns only source-tagged CoinGecko/EIA rows and reports live, stale, missing, and fallback coverage explicitly. Static catalogue anchors are never exposed as live provider observations.
 - General and per-asset news reject undated, future-dated, and more-than-seven-day-old articles. The briefing applies a stricter 72-hour headline boundary, and the UI drops its LIVE claim after a failed or expired news refresh while retaining the last good headlines visibly.
-- The economic calendar has no static event fallback, consensus forecast, or invented prior values. Every displayed event links to an official BLS, BEA, or Federal Reserve schedule; partial provider failure is shown as degraded rather than live.
+- The economic calendar has no static event fallback, consensus forecast, or invented prior values. Every displayed event links to BLS, BEA, Federal Reserve, or the St. Louis Fed FRED schedule; partial provider failure is shown as degraded rather than live.
 - News, per-asset news, history, sentiment, market, AI, and Smart Money upstream calls all have bounded deadlines and safe public errors.
 - The UI reports `LIVE`, `DEGRADED`, or `STALE` from the effective displayed coverage. A complete fresh Yahoo feed keeps the dashboard live when an optional provider overlay is stale; stale overlays are rejected rather than shown. Mock fallback rows remain visible but are excluded from movers, heatmaps, and alerts.
 - Provider requests time out and partial failures preserve usable or last-known-good data.

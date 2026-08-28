@@ -112,7 +112,7 @@ try {
       || !Array.isArray(calendar?.events) || calendar.events.length === 0
       || calendar.events.some((event) => (
         !Number.isFinite(Date.parse(event?.startsAt || `${event?.date}T00:00:00.000Z`))
-        || !/^https:\/\/(?:www\.)?(?:bls\.gov|bea\.gov|federalreserve\.gov)\//i.test(event?.sourceUrl || '')
+        || !/^https:\/\/(?:www\.)?(?:bls\.gov|bea\.gov|federalreserve\.gov|fred\.stlouisfed\.org)\//i.test(event?.sourceUrl || '')
       ))) {
     throw new Error('/api/calendar did not return a live official-source schedule');
   }
