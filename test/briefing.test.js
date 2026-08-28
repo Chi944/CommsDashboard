@@ -277,10 +277,13 @@ test('caches generated briefings by semantic key and expires them after the TTL'
   process.env.GROQ_API_KEY = 'test-key';
   process.env.GROQ_MODEL = 'test/cache-model';
   process.env.AI_BRIEFING_TTL_SECONDS = '0.01';
+  const originalDateNow = Date.now;
+  let nowMs = originalDateNow();
+  Date.now = () => nowMs;
   let generations = 0;
   let sentimentValue = 50;
   const sentimentUpdatedAt = new Date(
-    Math.floor((Date.now() - 60 * 60 * 1000) / 60_000) * 60_000,
+    Math.floor((nowMs - 60 * 60 * 1000) / 60_000) * 60_000,
   ).toISOString();
 
   globalThis.fetch = async (url) => {
@@ -314,12 +317,13 @@ test('caches generated briefings by semantic key and expires them after the TTL'
     assert.equal(changedEvidence.body.aiStatus.source, 'generated');
     assert.notEqual(changedEvidence.body.evidenceDigest, first.body.evidenceDigest);
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    nowMs += 20;
     const expired = createResponse();
     await briefingHandler(createRequest('203.0.113.12'), expired);
     assert.equal(generations, 3);
     assert.match(expired.body.briefing.text, /51 · Neutral/);
   } finally {
+    Date.now = originalDateNow;
     globalThis.fetch = originalFetch;
     restoreEnv(env);
   }

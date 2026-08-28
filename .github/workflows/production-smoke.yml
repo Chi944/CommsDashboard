@@ -1,4 +1,4 @@
-name: Production AI and provider smoke
+name: Production live release smoke
 
 on:
   workflow_dispatch:
@@ -15,22 +15,38 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main
       - name: Resolve checked-out main commit
         id: checked-out-main
         shell: bash
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: node scripts/smoke-ai.mjs
+          cache: npm
+      - run: npm ci
+      - name: Verify every public production data surface
+        run: node scripts/smoke-production.mjs
+        env:
+          PRODUCTION_SMOKE_BASE_URL: https://comms-dashboard-navy.vercel.app
+          PRODUCTION_SMOKE_TIMEOUT_MS: '35000'
+          PRODUCTION_SMOKE_EXPECTED_COMMIT_SHA: ${{ steps.checked-out-main.outputs.sha }}
+          PRODUCTION_SMOKE_EXPECTED_DEPLOYMENT_ENVIRONMENT: production
+      - name: Force and verify generated AI surfaces
+        run: node scripts/smoke-ai.mjs
         env:
           AI_SMOKE_BASE_URL: https://comms-dashboard-navy.vercel.app
           AI_SMOKE_SECRET: ${{ secrets.AI_SMOKE_SECRET }}
           AI_SMOKE_TIMEOUT_MS: '35000'
           AI_SMOKE_EXPECTED_COMMIT_SHA: ${{ steps.checked-out-main.outputs.sha }}
           AI_SMOKE_EXPECTED_DEPLOYMENT_ENVIRONMENT: production
+      - name: Install Chromium for production browser verification
+        run: npx playwright install --with-deps chromium
+      - name: Verify every production tab at mobile, tablet, and desktop widths
+        run: npm run test:e2e:production
+        env:
+          PRODUCTION_SMOKE_BASE_URL: https://comms-dashboard-navy.vercel.app

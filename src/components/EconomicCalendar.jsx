@@ -1,153 +1,172 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-// Upcoming macro events — dates in YYYY-MM-DD, impact: 1-3
-const EVENTS = [
-  { date: '2026-06-03', event: 'NFP · May Jobs Report',    currency: 'USD', impact: 3, forecast: '180K',  prior: '177K'  },
-  { date: '2026-06-10', event: 'CPI · May Inflation',       currency: 'USD', impact: 3, forecast: '3.1%',  prior: '3.2%'  },
-  { date: '2026-06-11', event: 'FOMC Meeting (Day 1)',       currency: 'USD', impact: 3, forecast: 'Hold',  prior: '4.5%'  },
-  { date: '2026-06-12', event: 'FOMC Decision + Press Conf', currency: 'USD', impact: 3, forecast: 'Hold',  prior: '4.5%'  },
-  { date: '2026-06-13', event: 'PPI · May Producer Prices',  currency: 'USD', impact: 2, forecast: '0.2%', prior: '0.2%'  },
-  { date: '2026-06-18', event: 'ECB Rate Decision',          currency: 'EUR', impact: 3, forecast: 'Hold',  prior: '3.25%' },
-  { date: '2026-06-25', event: 'GDP Q1 2026 Final',          currency: 'USD', impact: 2, forecast: '1.8%',  prior: '1.8%'  },
-  { date: '2026-07-01', event: 'NFP · June Jobs Report',     currency: 'USD', impact: 3, forecast: '175K',  prior: '180K'  },
-  { date: '2026-07-09', event: 'FOMC Minutes (June)',        currency: 'USD', impact: 2, forecast: '—',     prior: '—'     },
-  { date: '2026-07-14', event: 'CPI · June Inflation',       currency: 'USD', impact: 3, forecast: '3.0%',  prior: '3.1%'  },
-  { date: '2026-07-28', event: 'BOJ Policy Decision',        currency: 'JPY', impact: 3, forecast: 'Hold',  prior: '0.5%'  },
-  { date: '2026-07-29', event: 'FOMC Meeting (Day 1)',       currency: 'USD', impact: 3, forecast: 'Hold',  prior: '4.5%'  },
-  { date: '2026-07-30', event: 'FOMC Decision + PCE',        currency: 'USD', impact: 3, forecast: 'Hold',  prior: '4.5%'  },
-  { date: '2026-08-05', event: 'NFP · July Jobs Report',     currency: 'USD', impact: 3, forecast: '172K',  prior: '175K'  },
-  { date: '2026-08-12', event: 'CPI · July Inflation',       currency: 'USD', impact: 3, forecast: '2.9%',  prior: '3.0%'  },
-  { date: '2026-08-21', event: 'Jackson Hole Symposium',     currency: 'USD', impact: 3, forecast: '—',     prior: '—'     },
-  { date: '2026-09-02', event: 'NFP · August Jobs Report',   currency: 'USD', impact: 3, forecast: '170K',  prior: '172K'  },
-  { date: '2026-09-09', event: 'CPI · August Inflation',     currency: 'USD', impact: 3, forecast: '2.8%',  prior: '2.9%'  },
-  { date: '2026-09-16', event: 'FOMC Meeting (Day 1)',       currency: 'USD', impact: 3, forecast: 'Hold',  prior: '4.5%'  },
-  { date: '2026-09-17', event: 'FOMC Decision',              currency: 'USD', impact: 3, forecast: 'Hold',  prior: '4.5%'  },
-];
+const REQUEST_TIMEOUT_MS = 8_000;
 
-const IMPACT_DOTS = {
-  3: { dots: 3, color: 'bg-red-500',    label: 'High' },
-  2: { dots: 2, color: 'bg-yellow-500', label: 'Medium' },
-  1: { dots: 1, color: 'bg-gray-500',   label: 'Low' },
-};
-
-const CCY_COLORS = {
-  USD: 'text-cyan-300',
-  EUR: 'text-blue-400',
-  JPY: 'text-yellow-400',
-  GBP: 'text-purple-400',
-};
-
-function daysUntil(dateStr) {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr + 'T00:00:00');
-  return Math.round((target - now) / (1000 * 60 * 60 * 24));
+function formatDate(date) {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime())
+    ? parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })
+    : date;
 }
 
-function formatDate(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+function formatDateRange(event) {
+  return event.endDate && event.endDate !== event.date
+    ? `${formatDate(event.date)}–${formatDate(event.endDate)}`
+    : formatDate(event.date);
+}
+
+function relativeDay(date, from) {
+  const target = Date.parse(`${date}T00:00:00.000Z`);
+  const start = Date.parse(`${from}T00:00:00.000Z`);
+  if (!Number.isFinite(target) || !Number.isFinite(start)) return '';
+  const days = Math.round((target - start) / 86_400_000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  return `in ${days}d`;
+}
+
+function checkedLabel(value) {
+  const instant = new Date(value);
+  if (!Number.isFinite(instant.getTime())) return '';
+  return `Checked ${instant.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
+}
+
+function statusClasses(state) {
+  if (state === 'live') return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300';
+  if (state === 'degraded') return 'border-amber-500/40 bg-amber-500/10 text-amber-300';
+  if (state === 'loading') return 'border-cyan-500/40 bg-cyan-500/10 text-cyan-300';
+  return 'border-red-500/40 bg-red-500/10 text-red-300';
 }
 
 export default function EconomicCalendar() {
-  const [impactFilter, setImpactFilter] = useState(0); // 0 = all
+  const mounted = useRef(true);
+  const [result, setResult] = useState({ loading: true, data: null, failed: false });
 
-  const upcoming = useMemo(() => {
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    return EVENTS
-      .map((e) => ({ ...e, daysAway: daysUntil(e.date) }))
-      .filter((e) => e.daysAway >= 0 && e.daysAway <= 90)
-      .filter((e) => impactFilter === 0 || e.impact === impactFilter)
-      .sort((a, b) => a.daysAway - b.daysAway);
-  }, [impactFilter]);
+  const loadCalendar = useCallback(async () => {
+    if (mounted.current) setResult((current) => ({ ...current, loading: true, failed: false }));
+    const controller = new AbortController();
+    let timeout;
+    const deadline = new Promise((_, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(new Error('calendar request timeout'));
+      }, REQUEST_TIMEOUT_MS);
+    });
+    try {
+      const response = await Promise.race([fetch('/api/calendar', { signal: controller.signal }), deadline]);
+      const payload = await response.json();
+      const data = {
+        ...payload,
+        providers: Array.isArray(payload?.providers) ? payload.providers : [],
+        events: Array.isArray(payload?.events) ? payload.events : [],
+      };
+      if (mounted.current) setResult({ loading: false, data, failed: !response.ok || !payload?.ok });
+    } catch {
+      if (mounted.current) setResult({ loading: false, data: null, failed: true });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    loadCalendar();
+    return () => { mounted.current = false; };
+  }, [loadCalendar]);
+
+  const unavailableProviders = useMemo(
+    () => (result.data?.providers || []).filter((provider) => provider.status !== 'live'),
+    [result.data],
+  );
+  const state = result.loading && !result.data
+    ? 'loading'
+    : result.failed || result.data?.state === 'unavailable'
+      ? 'unavailable'
+      : result.data?.state === 'degraded'
+        ? 'degraded'
+        : 'live';
 
   return (
-    <div className="rounded-xl border border-gray-800 bg-gray-900/70 overflow-hidden">
-      <div className="px-4 py-3 sm:px-5 border-b border-gray-800 flex items-center justify-between flex-wrap gap-2">
+    <section className="rounded-xl border border-gray-800 bg-gray-900/70 overflow-hidden" aria-labelledby="economic-calendar-title">
+      <div className="px-4 py-3 sm:px-5 border-b border-gray-800 flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <div className="text-[10px] uppercase tracking-[0.18em] text-gray-500">Economic Calendar</div>
-          <div className="text-xs text-gray-300 mt-0.5">Next 90 days · macro events</div>
+          <h2 id="economic-calendar-title" className="text-[10px] uppercase tracking-[0.18em] text-gray-500">Economic Calendar</h2>
+          <div className="text-xs text-gray-300 mt-0.5">Next 90 days · official U.S. schedules</div>
         </div>
-        <div className="flex gap-1 items-center">
-          <span className="text-[10px] text-gray-500 mr-1">Impact:</span>
-          {[0, 3, 2].map((v) => (
-            <button
-              key={v}
-              onClick={() => setImpactFilter(v)}
-              className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
-                impactFilter === v
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                  : 'text-gray-500 hover:text-gray-300 border border-transparent'
-              }`}
-            >
-              {v === 0 ? 'All' : v === 3 ? '🔴 High' : '🟡 Med'}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <span role="status" aria-label="Economic calendar status" className={`rounded border px-2 py-1 text-[10px] font-mono tracking-widest ${statusClasses(state)}`}>
+            {state.toUpperCase()}
+          </span>
+          <button type="button" onClick={loadCalendar} disabled={result.loading} aria-label="Refresh economic calendar" className="rounded border border-gray-700 px-2 py-1 text-[10px] font-mono text-gray-300 hover:border-cyan-500/50 hover:text-cyan-300 disabled:cursor-wait disabled:opacity-50">
+            {result.loading ? 'LOADING' : 'REFRESH'}
+          </button>
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-gray-800 text-[10px] uppercase tracking-widest text-gray-500">
-              <th className="px-4 py-2 text-left font-medium">Date</th>
-              <th className="px-4 py-2 text-left font-medium">Event</th>
-              <th className="px-3 py-2 text-center font-medium">Imp.</th>
-              <th className="px-3 py-2 text-right font-medium hidden sm:table-cell">Forecast</th>
-              <th className="px-4 py-2 text-right font-medium hidden sm:table-cell">Prior</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800/60">
-            {upcoming.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-gray-500">No events match the filter.</td>
+      {state === 'degraded' && (
+        <div role="alert" className="mx-4 mt-3 rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+          {unavailableProviders.length === 1
+            ? `${unavailableProviders[0].name} is temporarily unavailable; other official schedules remain live.`
+            : `${unavailableProviders.map((provider) => provider.name).join(' and ')} are temporarily unavailable; other official schedules remain live.`}
+        </div>
+      )}
+
+      {state === 'unavailable' ? (
+        <div className="px-4 py-8 text-center">
+          <div role="alert" className="text-sm text-red-300">Economic calendar unavailable. No static or estimated events are being shown.</div>
+          <button type="button" onClick={loadCalendar} aria-label="Retry economic calendar" className="mt-3 rounded border border-gray-700 px-3 py-1.5 text-xs text-gray-200 hover:border-cyan-500/50 hover:text-cyan-300">Retry</button>
+        </div>
+      ) : state === 'loading' ? (
+        <div className="px-4 py-8 text-center text-xs text-gray-500">Loading official schedules…</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] text-xs">
+            <thead>
+              <tr className="border-b border-gray-800 text-[10px] uppercase tracking-widest text-gray-500">
+                <th className="px-4 py-2 text-left font-medium">Date</th>
+                <th className="px-4 py-2 text-left font-medium">Event</th>
+                <th className="px-3 py-2 text-left font-medium">Source</th>
+                <th className="px-4 py-2 text-right font-medium">Time (ET)</th>
               </tr>
-            )}
-            {upcoming.map((e, i) => {
-              const meta = IMPACT_DOTS[e.impact];
-              const ccy = CCY_COLORS[e.currency] || 'text-gray-400';
-              const isToday = e.daysAway === 0;
-              const isSoon = e.daysAway <= 3 && e.daysAway > 0;
-              const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(e.event)}`;
-              return (
-                <tr
-                  key={i}
-                  onClick={() => window.open(searchUrl, '_blank', 'noopener,noreferrer')}
-                  className={`cursor-pointer transition-colors ${isToday ? 'bg-cyan-500/5 hover:bg-cyan-500/10' : 'hover:bg-gray-800/50'}`}
-                >
-                  <td className="px-4 py-2.5 font-mono whitespace-nowrap">
-                    <div className="text-gray-100">{formatDate(e.date)}</div>
-                    <div className={`text-[10px] mt-0.5 ${isToday ? 'text-cyan-400 font-semibold' : isSoon ? 'text-amber-400' : 'text-gray-500'}`}>
-                      {isToday ? 'Today' : `in ${e.daysAway}d`}
-                    </div>
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="text-gray-100 leading-snug group-hover:text-cyan-300">{e.event}</div>
-                    <div className={`text-[10px] font-mono mt-0.5 ${ccy}`}>{e.currency}</div>
-                  </td>
-                  <td className="px-3 py-2.5 text-center">
-                    <div className="flex items-center justify-center gap-0.5">
-                      {[1, 2, 3].map((d) => (
-                        <span
-                          key={d}
-                          className={`w-1.5 h-1.5 rounded-full ${d <= e.impact ? meta.color : 'bg-gray-700'}`}
-                        />
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5 text-right font-mono text-gray-300 hidden sm:table-cell">
-                    {e.forecast}
-                  </td>
-                  <td className="px-4 py-2.5 text-right font-mono text-gray-500 hidden sm:table-cell">
-                    {e.prior}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
+            </thead>
+            <tbody className="divide-y divide-gray-800/60">
+              {result.data.events.length === 0 && (
+                <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-500">No official events are scheduled in this window.</td></tr>
+              )}
+              {result.data.events.map((event) => {
+                const relative = relativeDay(event.date, result.data.window?.from);
+                return (
+                  <tr key={event.id} className="hover:bg-gray-800/50">
+                    <td className="px-4 py-2.5 font-mono whitespace-nowrap">
+                      <div className="text-gray-100">{formatDateRange(event)}</div>
+                      <div className={`mt-0.5 text-[10px] ${relative === 'Today' ? 'text-cyan-400 font-semibold' : 'text-gray-500'}`}>{relative}</div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-gray-100 hover:text-cyan-300">{event.title}</a>
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-cyan-300">{event.sourceShortName}</td>
+                    <td className={`px-4 py-2.5 text-right font-mono ${event.timeStatus === 'scheduled' ? 'text-gray-300' : 'text-gray-500'}`}>{event.timeLabel}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {result.data && state !== 'unavailable' && (
+        <div className="border-t border-gray-800 px-4 py-3 sm:px-5 flex flex-wrap items-center justify-between gap-2 text-[10px] text-gray-500">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1" aria-label="Economic calendar sources">
+            {result.data.providers.map((provider) => (
+              <span key={provider.id} className="inline-flex items-center gap-1">
+                <span className={`h-1.5 w-1.5 rounded-full ${provider.status === 'live' ? 'bg-emerald-400' : 'bg-red-400'}`} aria-hidden="true" />
+                <a href={provider.sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:text-cyan-300">{provider.name} source</a>
+              </span>
+            ))}
+          </div>
+          <time dateTime={result.data.asOf} title={result.data.asOf}>{checkedLabel(result.data.asOf)}</time>
+        </div>
+      )}
+    </section>
   );
 }

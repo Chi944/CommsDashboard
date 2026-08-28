@@ -59,7 +59,7 @@ const Converter = () => {
         </span>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-3 items-end">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-3 items-end">
         <div>
           <label className="text-[10px] uppercase tracking-widest text-gray-500">Amount &amp; from</label>
           <div className="mt-1 flex gap-2">

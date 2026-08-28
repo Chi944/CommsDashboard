@@ -106,8 +106,7 @@ export default function AlertButton({ asset, compact = false }) {
             )}
 
             <div className="text-[10px] text-gray-500 mt-3">
-              Alerts trigger when price crosses the threshold (intraday) — checked every 60s with each price poll.
-              Browser notifications fire if you allow them.
+              Threshold checks and browser alerts operate only while this dashboard is open. Prices are checked every 60 seconds while open.
             </div>
           </div>
         </div>

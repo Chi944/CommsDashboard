@@ -13,15 +13,18 @@ vi.mock('../src/state/LiveData.jsx', () => ({
 }));
 
 import AnalysisPanel from '../src/components/AnalysisPanel.jsx';
+import AlertButton from '../src/components/AlertButton.jsx';
 import Briefing from '../src/components/Briefing.jsx';
 import CommandPalette from '../src/components/CommandPalette.jsx';
 import Currency from '../src/components/Currency.jsx';
 import NotificationsDrawer from '../src/components/NotificationsDrawer.jsx';
 import Prices, { fmtPctChange } from '../src/components/Prices.jsx';
+import SectorHeatmap from '../src/components/SectorHeatmap.jsx';
 import Ticker from '../src/components/Ticker.jsx';
 
 const originalFetch = globalThis.fetch;
 const originalResizeObserver = globalThis.ResizeObserver;
+const originalNotification = globalThis.Notification;
 
 function jsonFetch(payload) {
   const calls = [];
@@ -167,6 +170,8 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   if (originalResizeObserver) globalThis.ResizeObserver = originalResizeObserver;
   else delete globalThis.ResizeObserver;
+  if (originalNotification) globalThis.Notification = originalNotification;
+  else delete globalThis.Notification;
 });
 
 describe('AI refresh controls', () => {
@@ -725,6 +730,21 @@ describe('Prices heatmap', () => {
   });
 });
 
+describe('Overview sector heatmap', () => {
+  it('does not prefix a negative top performer with a plus sign', () => {
+    const rows = [
+      { ...priceRow('LEAST-DOWN', 'yahoo', false), changePct: -0.8 },
+      { ...priceRow('MOST-DOWN', 'yahoo', false), changePct: -1.2 },
+    ];
+    liveData.current = pricesLiveData(rows);
+
+    render(<SectorHeatmap />);
+
+    expect(screen.getByText('-0.8%')).toBeInTheDocument();
+    expect(screen.queryByText('+-0.8%')).not.toBeInTheDocument();
+  });
+});
+
 describe('Ticker V2-only state', () => {
   it('shows a neutral change and no live dot without a trusted Yahoo baseline', () => {
     const base = {
@@ -859,5 +879,36 @@ describe('NotificationsDrawer', () => {
 
     expect(screen.queryByRole('dialog', { name: /alerts & notifications/i })).not.toBeInTheDocument();
     expect(opener).toHaveFocus();
+  });
+
+  it('describes browser alerts as available only while the dashboard is open', () => {
+    Object.defineProperty(globalThis, 'Notification', {
+      configurable: true,
+      value: { permission: 'default' },
+    });
+
+    render(<NotificationsDrawer open onClose={() => {}} />);
+
+    expect(screen.getByRole('button', { name: /enable browser alerts/i })).toBeInTheDocument();
+    expect(screen.getByText(/alerts operate only while this dashboard is open/i)).toBeInTheDocument();
+    expect(screen.queryByText(/push/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('Price alert dialog', () => {
+  it('states that threshold checks and browser alerts require the dashboard to remain open', async () => {
+    const user = userEvent.setup();
+    liveData.current = {
+      ...defaultLiveData(),
+      alerts: [],
+      addAlert: vi.fn(),
+      removeAlert: vi.fn(),
+      toggleAlert: vi.fn(),
+    };
+
+    render(<AlertButton asset={{ ticker: 'WTI', name: 'WTI Crude', price: 80 }} />);
+    await user.click(screen.getByRole('button', { name: /price alerts/i }));
+
+    expect(screen.getByText(/threshold checks and browser alerts operate only while this dashboard is open/i)).toBeInTheDocument();
   });
 });

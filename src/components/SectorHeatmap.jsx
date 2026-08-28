@@ -65,7 +65,7 @@ export default function SectorHeatmap({ onSelectAsset }) {
               <div className="bg-black/20 rounded px-1.5 py-1 truncate">
                 <div className="text-gray-300/70 uppercase tracking-wider text-[9px]">Top</div>
                 <div className="font-mono text-gray-50 truncate">{s.top.ticker}</div>
-                <div className="font-mono text-emerald-200">+{s.top.changePct.toFixed(1)}%</div>
+                <div className="font-mono text-emerald-200">{s.top.changePct >= 0 ? '+' : ''}{s.top.changePct.toFixed(1)}%</div>
               </div>
               <div className="bg-black/20 rounded px-1.5 py-1 truncate">
                 <div className="text-gray-300/70 uppercase tracking-wider text-[9px]">Worst</div>

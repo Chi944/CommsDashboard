@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildValidatedMarketContext,
   createMarketContextLoader,
   currentUtcMarketDate,
 } from '../lib/briefing/market-context.js';
@@ -81,4 +82,30 @@ test('market context degrades individual failed inputs without throwing or inven
 
 test('currentUtcMarketDate rejects an invalid clock', () => {
   assert.throws(() => currentUtcMarketDate(new Date('invalid')), /invalid_market_clock/);
+});
+
+test('briefing context excludes headlines older than 72 hours', () => {
+  const nowMs = Date.parse(NOW);
+  const context = buildValidatedMarketContext({
+    prices: PRICES,
+    fearGreed: FEAR_GREED,
+    now: new Date(NOW),
+    news: {
+      ok: true,
+      fetchedAt: NOW,
+      items: [
+        {
+          id: 'boundary', headline: 'Headline at freshness boundary', source: 'Wire',
+          ts: nowMs - 72 * 60 * 60 * 1000, url: 'https://publisher.example/boundary',
+        },
+        {
+          id: 'expired', headline: 'Headline beyond freshness boundary', source: 'Wire',
+          ts: nowMs - 72 * 60 * 60 * 1000 - 1, url: 'https://publisher.example/expired',
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(context.signals.headlines.map((item) => item.id), ['boundary']);
+  assert.equal(context.evidence.some((item) => item.id === 'news:expired'), false);
 });

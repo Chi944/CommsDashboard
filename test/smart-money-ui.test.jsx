@@ -149,7 +149,7 @@ it('labels an SEC profile source as SEC EDGAR instead of an official site', () =
 it('shows exact fail-closed simulation readiness with no activation controls', () => {
   const { container } = render(<SimulationReadiness capability={RESEARCH_ONLY_CAPABILITY} />);
   expect(screen.getByText(
-    'No rights-cleared free market-price source is currently enabled. Signals remain research-only; no simulated transaction was created.',
+    'No rights-cleared free market-price source is currently enabled for simulation entry or daily marking. Dashboard market data remains display-only; signals are research-only, and no simulated transaction was created.',
   )).toBeVisible();
   expect(screen.getByText(/does not recommend, prepare, route, sign, or execute trades/i)).toBeVisible();
   expect(within(container).queryByRole('button')).not.toBeInTheDocument();

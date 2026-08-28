@@ -67,11 +67,15 @@ test('strict parseFeed has no external-link bypass while Google News handlers pr
     await assetNewsHandler({ query: { q: 'Nvidia', limit: '1' } }, asset);
 
     assert.equal(news.statusCode, 200);
-    assert.deepEqual(Object.keys(news.body).sort(), ['fetchedAt', 'items', 'ok']);
+    assert.deepEqual(Object.keys(news.body).sort(), ['fetchedAt', 'freshness', 'items', 'ok']);
+    assert.equal(news.body.freshness.isFresh, true);
+    assert.equal(news.body.freshness.maxAgeHours, 168);
     assert.deepEqual(Object.keys(news.body.items[0]).sort(), ['category', 'desc', 'headline', 'id', 'source', 'time', 'ts', 'url']);
     assert.equal(news.body.items[0].url, 'https://publisher.example/story');
     assert.equal(asset.statusCode, 200);
-    assert.deepEqual(Object.keys(asset.body).sort(), ['fetchedAt', 'items', 'ok', 'query']);
+    assert.deepEqual(Object.keys(asset.body).sort(), ['asOf', 'fetchedAt', 'freshness', 'items', 'ok', 'query']);
+    assert.equal(asset.body.freshness.isFresh, true);
+    assert.equal(asset.body.freshness.maxAgeHours, 168);
     assert.deepEqual(Object.keys(asset.body.items[0]).sort(), ['desc', 'headline', 'id', 'source', 'time', 'ts', 'url']);
     assert.equal(asset.body.items[0].url, 'https://publisher.example/story');
   } finally {

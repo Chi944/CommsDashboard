@@ -2,8 +2,11 @@
 // GET /api/asset-news?q=Nvidia&limit=6 -> { ok, items: [...] }
 
 import { parseGoogleNewsFeed } from '../lib/feeds.js';
+import { fetchWithTimeout } from '../lib/market/fetch.js';
 
 const PER_QUERY_LIMIT = 8;
+const MAX_NEWS_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 function timeAgo(date) {
   const t = Date.parse(date);
@@ -28,7 +31,7 @@ export default async function handler(req, res) {
     const limit = Math.max(1, Math.min(12, parseInt(req.query?.limit || '6', 10)));
 
     const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
-    const r = await fetch(url, {
+    const r = await fetchWithTimeout(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; CommsDashboard/1.0)',
         'Accept': 'application/rss+xml, application/xml, text/xml',
@@ -39,6 +42,7 @@ export default async function handler(req, res) {
       return;
     }
     const xml = await r.text();
+    const referenceMs = Date.now();
     const items = parseGoogleNewsFeed(xml, {
       maxItems: PER_QUERY_LIMIT,
     }).map((it, i) => {
@@ -52,11 +56,30 @@ export default async function handler(req, res) {
         url: it.url,
         ts,
       };
-    }).sort((a, b) => b.ts - a.ts).slice(0, limit);
+    }).filter((item) => item.ts > 0
+      && item.ts <= referenceMs + MAX_FUTURE_SKEW_MS
+      && referenceMs - item.ts <= MAX_NEWS_AGE_MS)
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, limit);
+
+    const newestPublishedAt = items.length ? new Date(items[0].ts).toISOString() : null;
+    const oldestPublishedAt = items.length ? new Date(items.at(-1).ts).toISOString() : null;
 
     res.setHeader('Cache-Control', 's-maxage=180, stale-while-revalidate=600');
-    res.status(200).json({ ok: true, query: q, fetchedAt: new Date().toISOString(), items });
+    res.status(200).json({
+      ok: true,
+      query: q,
+      fetchedAt: new Date().toISOString(),
+      asOf: newestPublishedAt,
+      freshness: {
+        isFresh: items.length > 0,
+        maxAgeHours: MAX_NEWS_AGE_MS / (60 * 60 * 1000),
+        newestPublishedAt,
+        oldestPublishedAt,
+      },
+      items,
+    });
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+    res.status(502).json({ ok: false, error: 'asset news upstream unavailable' });
   }
 }

@@ -1,10 +1,12 @@
 // GET /api/fear-greed
 // Proxies the alternative.me Fear & Greed index to avoid CORS from the browser.
 // Response: { ok, value, label, updatedAt }
+import { fetchWithTimeout } from '../lib/market/fetch.js';
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=60');
   try {
-    const r = await fetch('https://api.alternative.me/fng/?limit=1', {
+    const r = await fetchWithTimeout('https://api.alternative.me/fng/?limit=1', {
       headers: { 'User-Agent': 'CommsDashboard/1.0' },
     });
     if (!r.ok) throw new Error(`upstream ${r.status}`);
@@ -18,6 +20,6 @@ export default async function handler(req, res) {
       updatedAt: new Date(parseInt(d.timestamp, 10) * 1000).toISOString(),
     });
   } catch (e) {
-    res.json({ ok: false, error: String(e?.message || e) });
+    res.status(502).json({ ok: false, error: 'fear and greed upstream unavailable' });
   }
 }

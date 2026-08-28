@@ -3,7 +3,9 @@
 Live multi-asset dashboard: 268 tracked stocks, crypto assets,
 commodities futures, macro indices, and 40+ FX
 currencies — with real-time news per asset and an optional
-**AI-generated analysis** panel powered by Groq.
+**AI-generated analysis** panel powered by Groq. Intel also includes a
+live 90-day economic calendar sourced only from official BLS, BEA, and
+Federal Reserve schedules.
 
 **Live:** https://comms-dashboard-navy.vercel.app/
 
@@ -55,6 +57,7 @@ See [docs/commodities-v2-api-spec.md](docs/commodities-v2-api-spec.md) for archi
 | ----- | ------- |
 | `GET /api/prices` | Batched Yahoo daily quotes and history for the full catalogue |
 | `GET /api/market/snapshot` | CoinGecko (live) + EIA; legacy Alpha Vantage cache rows are quarantined |
+| `GET /api/calendar` | Next 90 days from free official BLS, BEA, and Federal Reserve schedules |
 | `GET /api/market/refresh` | Cron: refresh EIA cache and clear retired Alpha Vantage rows (Bearer `CRON_SECRET`) |
 | `GET /api/briefing` | Date-partitioned, quota-protected AI briefing grounded in movers, headline sentiment, and Fear & Greed |
 | `GET /api/analysis?ticker=NVDA` | Cached, quota-protected technical and AI analysis |
@@ -74,6 +77,10 @@ The combined market and Smart Money refresh runs at 06:00 and 18:00 UTC (`vercel
 - Alpha Vantage is retired from the enabled market path because its free WTI/Brent feed returned week-old EIA/FRED spot observations for instruments represented in the dashboard as current oil futures. WTI (`CL`) and Brent (`BZ`) therefore remain on the fresh Yahoo futures baseline; legacy Alpha Vantage cache rows are ignored and scheduled refresh makes no Alpha Vantage request.
 - EIA Henry Hub remains a daily observation series even though EIA publishes it weekly; its observation-age allowance is 12 days to cover publication lag and holidays.
 - Yahoo symbols are fetched in 20-symbol batches, cutting the normal price refresh to 14 upstream requests for all 268 assets.
+- The supplemental market snapshot returns only source-tagged CoinGecko/EIA rows and reports live, stale, missing, and fallback coverage explicitly. Static catalogue anchors are never exposed as live provider observations.
+- General and per-asset news reject undated, future-dated, and more-than-seven-day-old articles. The briefing applies a stricter 72-hour headline boundary, and the UI drops its LIVE claim after a failed or expired news refresh while retaining the last good headlines visibly.
+- The economic calendar has no static event fallback, consensus forecast, or invented prior values. Every displayed event links to an official BLS, BEA, or Federal Reserve schedule; partial provider failure is shown as degraded rather than live.
+- News, per-asset news, history, sentiment, market, AI, and Smart Money upstream calls all have bounded deadlines and safe public errors.
 - The UI reports `LIVE`, `DEGRADED`, or `STALE` from the effective displayed coverage. A complete fresh Yahoo feed keeps the dashboard live when an optional provider overlay is stale; stale overlays are rejected rather than shown. Mock fallback rows remain visible but are excluded from movers, heatmaps, and alerts.
 - Provider requests time out and partial failures preserve usable or last-known-good data.
 - Briefings use a UTC market-date cache partition and preserve their true generation/input timestamps. Stale or future-dated sentiment is rejected, and every paragraph must cite validated mover and sentiment evidence before it can be cached. The Refresh button uses a stable, quota-protected no-store route to retrieve the newest shared briefing without serving an older edge-cached response.
@@ -87,10 +94,12 @@ The combined market and Smart Money refresh runs at 06:00 and 18:00 UTC (`vercel
 npm test
 npm run build
 npm audit
+npm run smoke:production -- https://comms-dashboard-navy.vercel.app
 npm run smoke:ai -- https://comms-dashboard-navy.vercel.app NVDA
+npm run test:e2e:production
 ```
 
-CI repeats tests, the production build, and a production-dependency security audit on every push and pull request.
+CI repeats the build and test suite on Node 22 and Node 24, plus a production-dependency security audit, on every push and pull request. The daily exact-commit production release smoke verifies all public data routes, forced AI generation, provider freshness, every dashboard view, and mobile/tablet/desktop overflow and runtime health.
 
 ## Tabs
 
@@ -98,4 +107,4 @@ CI repeats tests, the production build, and a production-dependency security aud
 - **Prices** — full asset table, charts, AI analysis
 - **Currency** — 40+ FX pairs
 - **Portfolio** — holdings and explicit research-only simulation readiness
-- **Intel** — RSS headlines plus Smart Money people, firms, SEC-backed institutional flows, provider health, and public findings
+- **Intel** — freshness-bounded RSS headlines, an official live economic calendar, plus Smart Money people, firms, SEC-backed institutional flows, provider health, and public findings

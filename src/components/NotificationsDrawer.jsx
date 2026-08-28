@@ -131,17 +131,18 @@ export default function NotificationsDrawer({ open, onClose }) {
                 type="button"
                 onClick={enableNotifications}
                 className="ml-auto px-2 py-0.5 rounded text-[10px] uppercase tracking-wider bg-cyan-500/20 border border-cyan-500/50 text-cyan-300 hover:bg-cyan-500/30 transition-colors"
-              >Enable push notifications</button>
+              >Enable browser alerts</button>
             )}
             {notifPerm === 'granted' && (
               <span className="ml-auto flex items-center gap-1 text-emerald-400">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                Push on
+                Browser alerts on
               </span>
             )}
             {notifPerm === 'denied' && (
-              <span className="ml-auto text-gray-500">Push blocked in browser</span>
+              <span className="ml-auto text-gray-500">Browser alerts blocked</span>
             )}
+            <span className="w-full text-gray-600">Browser alerts operate only while this dashboard is open.</span>
           </div>
         </header>
         <div className="overflow-y-auto h-[calc(100%-95px)]">
