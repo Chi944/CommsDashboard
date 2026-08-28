@@ -145,6 +145,10 @@ test('live and research-only boundaries are explicit', async ({ page }) => {
   await page.goto('/?tab=Intel&view=smart-money', { waitUntil: 'networkidle' });
   await expect(page.getByText(/7\/7 live/i).first()).toBeVisible();
   await page.goto('/?tab=Portfolio&view=simulation-readiness', { waitUntil: 'networkidle' });
-  await expect(page.getByText(/transactions permanently disabled/i)).toBeVisible();
+  const simulationBoundary = page.getByRole('region', { name: 'Simulation readiness' });
+  await expect(simulationBoundary).toContainText(/research only/i);
+  await expect(simulationBoundary).toContainText(/transactions/i);
+  await expect(simulationBoundary).toContainText(/permanently disabled by this capability/i);
+  await expect(simulationBoundary).toContainText(/does not recommend, prepare, route, sign, or execute trades/i);
   await expect(page.getByRole('button', { name: /buy|sell|trade|execute|connect wallet/i })).toHaveCount(0);
 });
