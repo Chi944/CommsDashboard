@@ -27,6 +27,17 @@ const BLS_HTML = `<!doctype html><html><body>
 </tbody></table>
 </body></html>`;
 
+const FRED_BLS_HTML = `<!doctype html><html><body>
+<div id="release-dates-pager"><table><tbody>
+<tr class="odd"><td colspan="2"><span style="font-weight: bold;">Friday September 04, 2026</span></td></tr>
+<tr><td>7:30 am</td><td><a href="/release?rid=50">Employment Situation</a></td></tr>
+</tbody></table></div>
+</body></html>`;
+
+const FRED_EMPTY_HTML = `<!doctype html><html><body>
+<div id="release-dates-pager">No release dates are available for the selected options.</div>
+</body></html>`;
+
 const BEA_ICS = `BEGIN:VCALENDAR
 VERSION:2.0
 TZID:America/New_York
@@ -154,6 +165,83 @@ test('calendar keeps BLS live from its official annual schedule when the ICS end
     timeStatus: 'scheduled',
     timeLabel: '8:30 AM ET',
   });
+});
+
+test('calendar transparently attributes FRED when the BLS network blocks every direct source', async () => {
+  const { buildCalendarSnapshot } = await calendarModule('../lib/calendar/index.js');
+  const snapshot = await buildCalendarSnapshot({
+    now: new Date('2026-08-28T15:00:00.000Z'),
+    fetchText: async (url) => {
+      if (url.includes('bls.gov')) throw Object.assign(new Error('blocked'), { code: 'upstream_unavailable' });
+      if (url.includes('fred.stlouisfed.org')) return { text: FRED_BLS_HTML, sourceLastModifiedAt: null };
+      if (url.includes('bea.gov')) return { text: BEA_ICS, sourceLastModifiedAt: null };
+      if (url.includes('federalreserve.gov')) return { text: FED_HTML, sourceLastModifiedAt: null };
+      throw new Error('unexpected source');
+    },
+  });
+
+  assert.equal(snapshot.partial, false);
+  const provider = snapshot.providers.find(({ id }) => id === 'bls');
+  assert.deepEqual(provider, {
+    id: 'bls',
+    name: 'BLS releases via FRED',
+    shortName: 'FRED/BLS',
+    sourceUrl: 'https://fred.stlouisfed.org/releases/calendar',
+    status: 'live',
+    eventCount: 1,
+    fetchedAt: '2026-08-28T15:00:00.000Z',
+    sourceLastModifiedAt: null,
+  });
+  const event = snapshot.events.find(({ sourceId }) => sourceId === 'bls');
+  assert.equal(event.sourceName, 'BLS releases via FRED');
+  assert.equal(event.sourceShortName, 'FRED/BLS');
+  assert.match(event.sourceUrl, /^https:\/\/fred\.stlouisfed\.org\/releases\/calendar\?/);
+  assert.equal(event.startsAt, '2026-09-04T12:30:00.000Z');
+  assert.equal(event.timeLabel, '8:30 AM ET');
+});
+
+test('an explicitly empty FRED release page does not disable other BLS release families', async () => {
+  const { buildCalendarSnapshot } = await calendarModule('../lib/calendar/index.js');
+  const snapshot = await buildCalendarSnapshot({
+    now: new Date('2026-08-28T15:00:00.000Z'),
+    fetchText: async (url) => {
+      if (url.includes('bls.gov')) throw Object.assign(new Error('blocked'), { code: 'upstream_unavailable' });
+      if (url.includes('fred.stlouisfed.org')) {
+        return { text: url.includes('rid=11&') ? FRED_EMPTY_HTML : FRED_BLS_HTML, sourceLastModifiedAt: null };
+      }
+      if (url.includes('bea.gov')) return { text: BEA_ICS, sourceLastModifiedAt: null };
+      if (url.includes('federalreserve.gov')) return { text: FED_HTML, sourceLastModifiedAt: null };
+      throw new Error('unexpected source');
+    },
+  });
+
+  assert.equal(snapshot.state, 'live');
+  assert.equal(snapshot.partial, false);
+  assert.equal(snapshot.providers.find(({ id }) => id === 'bls')?.status, 'live');
+  assert.ok(snapshot.events.some(({ sourceId }) => sourceId === 'bls'));
+});
+
+test('the BLS fallback chain is bounded below the browser request deadline', async () => {
+  const { buildCalendarSnapshot } = await calendarModule('../lib/calendar/index.js');
+  const startedAt = Date.now();
+  const snapshot = await buildCalendarSnapshot({
+    now: new Date('2026-08-28T15:00:00.000Z'),
+    httpOptions: { timeoutMs: 15 },
+    fetchText: async (url) => {
+      if (url.includes('bls.gov')) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        throw Object.assign(new Error('blocked'), { code: 'upstream_timeout' });
+      }
+      if (url.includes('fred.stlouisfed.org')) return { text: FRED_BLS_HTML, sourceLastModifiedAt: null };
+      if (url.includes('bea.gov')) return { text: BEA_ICS, sourceLastModifiedAt: null };
+      if (url.includes('federalreserve.gov')) return { text: FED_HTML, sourceLastModifiedAt: null };
+      throw new Error('unexpected source');
+    },
+  });
+
+  assert.equal(snapshot.state, 'live');
+  assert.equal(snapshot.providers.find(({ id }) => id === 'bls')?.shortName, 'FRED/BLS');
+  assert.ok(Date.now() - startedAt < 100, 'fallback should not await every slow direct BLS request');
 });
 
 test('BEA ICS parsing unfolds continuation lines and converts escaped punctuation', async () => {
