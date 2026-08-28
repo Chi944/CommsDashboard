@@ -340,6 +340,12 @@ test('OMB PDF parsing validates the document envelope before accepting one compl
 test('OMB PDF parsing exercises the pinned real PDF.js extractor without network access', async () => {
   const { parseOmbBlsPdf } = await calendarModule('../lib/calendar/omb.js');
   assert.equal(typeof parseOmbBlsPdf, 'function');
+  const runtimeKeys = ['DOMMatrix', 'ImageData', 'Path2D', 'pdfjsWorker'];
+  const previousRuntime = new Map(runtimeKeys.map((key) => [
+    key,
+    { owned: Object.hasOwn(globalThis, key), value: globalThis[key] },
+  ]));
+  for (const key of runtimeKeys) delete globalThis[key];
   const source = {
     id: 'bls',
     name: 'BLS principal releases via OMB/OIRA',
@@ -348,13 +354,24 @@ test('OMB PDF parsing exercises the pinned real PDF.js extractor without network
     kind: 'economic-release',
   };
 
-  const events = await parseOmbBlsPdf(createOmbPdfFixture(), source, 2026);
+  try {
+    const events = await parseOmbBlsPdf(createOmbPdfFixture(), source, 2026);
 
-  assert.equal(events.length, 72);
-  assert.equal(events[0].id, 'bls:2026-01-09:the-employment-situation');
-  assert.ok(events.every(({ startsAt, timeZone, timeStatus }) => (
-    startsAt === null && timeZone === null && timeStatus === 'date-only'
-  )));
+    assert.equal(events.length, 72);
+    assert.equal(events[0].id, 'bls:2026-01-09:the-employment-situation');
+    assert.ok(events.every(({ startsAt, timeZone, timeStatus }) => (
+      startsAt === null && timeZone === null && timeStatus === 'date-only'
+    )));
+    assert.equal(typeof globalThis.DOMMatrix, 'function');
+    assert.equal(typeof globalThis.ImageData, 'function');
+    assert.equal(typeof globalThis.Path2D, 'function');
+    assert.equal(typeof globalThis.pdfjsWorker?.WorkerMessageHandler?.setup, 'function');
+  } finally {
+    for (const [key, previous] of previousRuntime) {
+      if (previous.owned) globalThis[key] = previous.value;
+      else delete globalThis[key];
+    }
+  }
 });
 
 test('calendar keeps BLS live from its official annual schedule when the ICS endpoint is blocked', async () => {

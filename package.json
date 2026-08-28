@@ -19,6 +19,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@napi-rs/canvas": "1.0.8",
     "@upstash/redis": "^1.38.2",
     "@vercel/analytics": "^1.6.1",
     "@vercel/blob": "^2.8.0",
