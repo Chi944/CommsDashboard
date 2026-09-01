@@ -1,13 +1,5 @@
 import React from 'react';
-
-function safeHttps(value) {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && !url.username && !url.password ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
+import { evidenceLinkLabel, publicEvidenceUrl } from '../../lib/publicEvidenceUrl.js';
 
 const tone = {
   live: 'text-emerald-300 border-emerald-700/40 bg-emerald-500/5',
@@ -27,7 +19,7 @@ export default function ProviderHealthPanel({ statuses, sourceLinks }) {
       <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {(statuses || []).map((status) => {
           const link = links.get(status.id);
-          const href = safeHttps(link?.url);
+          const destination = publicEvidenceUrl(link?.url);
           return (
             <li key={status.id} className={`min-w-0 rounded-lg border p-3 ${tone[status.status] || tone.unavailable}`}>
               <div className="flex items-center justify-between gap-2">
@@ -37,9 +29,9 @@ export default function ProviderHealthPanel({ statuses, sourceLinks }) {
               <div className="mt-1 text-[10px] text-gray-500">
                 {status.recordCount || 0} records · {status.sourceAsOf ? `source ${status.sourceAsOf.slice(0, 10)}` : 'no source date'}
               </div>
-              {href && (
-                <a href={href} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block break-words text-[10px] text-cyan-300 hover:underline">
-                  Open {link.label || 'source'}
+              {destination && (
+                <a href={destination.href} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block break-words text-[10px] text-cyan-300 hover:underline">
+                  {evidenceLinkLabel(destination, `Open ${link.label || 'source'}`)}
                 </a>
               )}
             </li>

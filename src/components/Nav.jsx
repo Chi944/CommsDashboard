@@ -41,6 +41,7 @@ export default function Nav({ active, setActive, onOpenAlerts, onOpenPalette }) 
             <button
               key={t}
               onClick={() => setActive(t)}
+              aria-current={active === t ? 'page' : undefined}
               className={`relative px-3 py-1.5 text-xs uppercase tracking-wider rounded-lg transition-all font-mono
                 ${active === t
                   ? 'text-white bg-[#171717] border border-[#333]'
@@ -53,11 +54,11 @@ export default function Nav({ active, setActive, onOpenAlerts, onOpenPalette }) 
       </div>
 
       <div className="flex items-center gap-2 sm:gap-2.5 text-xs text-[#737373]">
-        <label className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#0a0a0a] border border-[#333] hover:border-[#525252] transition-colors cursor-pointer">
+        <label className="flex items-center gap-1.5 px-1.5 sm:px-2 py-1 rounded-md bg-[#0a0a0a] border border-[#333] hover:border-[#525252] transition-colors cursor-pointer">
           <select
             value={dashboardCurrency}
             onChange={(e) => setDashboardCurrency(e.target.value)}
-            className="bg-transparent text-[#f5f5f5] font-mono text-xs focus:outline-none cursor-pointer"
+            className="w-12 sm:w-auto bg-transparent text-[#f5f5f5] font-mono text-xs focus:outline-none cursor-pointer"
             aria-label="Display currency"
           >
             {availableCurrencies.map((c) => (
@@ -69,7 +70,7 @@ export default function Nav({ active, setActive, onOpenAlerts, onOpenPalette }) 
         </label>
         <button
           onClick={onOpenPalette}
-          className="hidden sm:flex items-center p-1.5 rounded-md border border-[#333] bg-[#0a0a0a] text-[#737373] hover:text-[#f5f5f5] hover:border-[#525252] transition-colors"
+          className="flex items-center p-1.5 rounded-md border border-[#333] bg-[#0a0a0a] text-[#737373] hover:text-[#f5f5f5] hover:border-[#525252] transition-colors"
           aria-label="open command palette"
           title="Command palette"
         >

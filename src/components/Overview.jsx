@@ -196,11 +196,12 @@ const HeadlinesPreview = ({ intel, newsLive }) => {
 export default function Overview({ onSelectAsset, onOpenSmartMoney }) {
   const {
     commodities, rankingCommodities, intel, newsLive, dataMode,
-    pricesUpdatedAt, refresh,
+    pricesUpdatedAt, pricesLoading, newsLoading, refresh,
     formatAssetPrice, dashboardCurrency,
     activityScore, marketVolumes,
   } = useLiveData();
   const [sfRange, setSfRange] = useState('30D');
+  const refreshBusy = Boolean(pricesLoading || newsLoading);
 
   // Exclude FX from movers/headline rankings.
   const tradable = useMemo(
@@ -265,10 +266,14 @@ export default function Overview({ onSelectAsset, onOpenSmartMoney }) {
           </p>
         </div>
         <button
+          type="button"
           onClick={refresh}
+          disabled={refreshBusy}
+          aria-busy={refreshBusy}
+          aria-label={refreshBusy ? 'Refreshing overview data' : 'Refresh overview data'}
           className="self-start px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white transition-colors"
         >
-          Refresh
+          {refreshBusy ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
 
@@ -285,6 +290,7 @@ export default function Overview({ onSelectAsset, onOpenSmartMoney }) {
               <button
                 key={o}
                 onClick={() => setSfRange(o)}
+                aria-pressed={sfRange === o}
                 className={`px-2 py-0.5 text-[10px] rounded font-mono transition-colors ${
                   sfRange === o
                     ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'

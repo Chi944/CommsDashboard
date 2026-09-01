@@ -226,6 +226,37 @@ test('caches analysis by ticker', async () => {
   }
 });
 
+test('public refresh bypasses the edge cache while retaining the shared AI analysis cache', async () => {
+  const env = {
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    GROQ_MODEL: process.env.GROQ_MODEL,
+    AI_GENERATION_QUOTA: process.env.AI_GENERATION_QUOTA,
+  };
+  const originalFetch = globalThis.fetch;
+  process.env.GROQ_API_KEY = 'test-key';
+  process.env.GROQ_MODEL = 'test/analysis-public-refresh-model';
+  process.env.AI_GENERATION_QUOTA = '10';
+  let generations = 0;
+  globalThis.fetch = createAnalysisFetch({ onGeneration: () => { generations += 1; } });
+
+  try {
+    const first = createResponse();
+    const refreshed = createResponse();
+    await analysisHandler(createRequest('NVDA', '198.51.100.19'), first);
+    await analysisHandler(createRequest('NVDA', '198.51.100.19', { refresh: '1' }), refreshed);
+
+    assert.equal(first.statusCode, 200);
+    assert.equal(first.body.aiStatus.source, 'generated');
+    assert.equal(refreshed.statusCode, 200);
+    assert.equal(refreshed.body.aiStatus.source, 'cache');
+    assert.equal(refreshed.headers['Cache-Control'], 'no-store');
+    assert.equal(generations, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv(env);
+  }
+});
+
 test('enforces the client generation quota across analysis tickers while serving cache hits', async () => {
   const env = {
     GROQ_API_KEY: process.env.GROQ_API_KEY,
@@ -356,7 +387,7 @@ test('rejects non-GET analysis requests before making upstream calls', async () 
   }
 });
 
-test('rejects unknown or unauthorized smoke analysis queries before upstream work', async () => {
+test('rejects unknown, malformed refresh, or unauthorized smoke analysis queries before upstream work', async () => {
   const env = { AI_SMOKE_SECRET: process.env.AI_SMOKE_SECRET };
   const originalFetch = globalThis.fetch;
   process.env.AI_SMOKE_SECRET = 'configured-analysis-smoke-secret';
@@ -368,11 +399,15 @@ test('rejects unknown or unauthorized smoke analysis queries before upstream wor
 
   try {
     const unknown = createResponse();
+    const malformedRefresh = createResponse();
+    const duplicateRefresh = createResponse();
     const unauthorizedSmoke = createResponse();
-    await analysisHandler(createRequest('NVDA', '198.51.100.18', { refresh: '1' }), unknown);
+    await analysisHandler(createRequest('NVDA', '198.51.100.18', { debug: '1' }), unknown);
+    await analysisHandler(createRequest('NVDA', '198.51.100.18', { refresh: '0' }), malformedRefresh);
+    await analysisHandler(createRequest('NVDA', '198.51.100.18', { refresh: ['1', '1'] }), duplicateRefresh);
     await analysisHandler(createRequest('NVDA', '198.51.100.18', { aiSmoke: 'nonce' }), unauthorizedSmoke);
 
-    for (const response of [unknown, unauthorizedSmoke]) {
+    for (const response of [unknown, malformedRefresh, duplicateRefresh, unauthorizedSmoke]) {
       assert.equal(response.statusCode, 400);
       assert.equal(response.headers['Cache-Control'], 'no-store');
       assert.deepEqual(response.body.error, {

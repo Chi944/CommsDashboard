@@ -1,15 +1,7 @@
 import React, { useMemo } from 'react';
 
+import { evidenceLinkLabel, publicEvidenceUrl } from '../../lib/publicEvidenceUrl.js';
 import { useSmartMoney } from '../../state/SmartMoney.jsx';
-
-function safeHttps(value) {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && !url.username && !url.password ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
 
 function fallbackParagraphs(smart) {
   const live = smart.providerStatuses.filter((row) => row.status === 'live').length;
@@ -66,8 +58,12 @@ export default function SmartMoneyPulse({ onOpen }) {
       <div className="flex flex-wrap items-center gap-3 border-t border-gray-800 px-4 py-2.5 text-[9px] uppercase tracking-widest text-gray-600 sm:px-5">
         <span>{generated ? 'AI generated from accepted evidence' : 'Deterministic accepted-evidence summary'}</span>
         {(smart.sourceLinks || []).slice(0, 3).map((link) => {
-          const href = safeHttps(link.url);
-          return href ? <a key={link.providerId} href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400/80 hover:underline">{link.label}</a> : null;
+          const destination = publicEvidenceUrl(link.url);
+          return destination ? (
+            <a key={link.providerId} href={destination.href} target="_blank" rel="noopener noreferrer" className="text-cyan-400/80 hover:underline">
+              {evidenceLinkLabel(destination, link.label)}
+            </a>
+          ) : null;
         })}
       </div>
     </section>

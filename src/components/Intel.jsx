@@ -20,7 +20,8 @@ const severityLabel = (s) => ({
 }[s] || null);
 
 function NewsFeed() {
-  const { intel, newsLive, newsUpdatedAt, newsLoading, refresh } = useLiveData();
+  const { intel, newsLive, newsUpdatedAt, newsLoading, pricesLoading, refresh } = useLiveData();
+  const refreshBusy = Boolean(pricesLoading || newsLoading);
   const [filter, setFilter] = useState('All');
   const [query, setQuery] = useState('');
 
@@ -67,10 +68,14 @@ function NewsFeed() {
           </div>
         </div>
         <button
+          type="button"
           onClick={refresh}
+          disabled={refreshBusy}
+          aria-busy={refreshBusy}
+          aria-label={refreshBusy ? 'Refreshing Intel data' : 'Refresh Intel data'}
           className="self-start px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white transition-colors"
         >
-          Refresh
+          {refreshBusy ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
 
@@ -82,6 +87,7 @@ function NewsFeed() {
               <button
                 key={f}
                 onClick={() => setFilter(f)}
+                aria-pressed={filter === f}
                 className={`shrink-0 px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-all flex items-center gap-1.5
                   ${filter === f
                     ? (isBreaking
@@ -107,6 +113,7 @@ function NewsFeed() {
         <div className="sm:ml-auto relative">
           <input
             type="search"
+            aria-label="Search Intel headlines"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search headlines…"
@@ -116,7 +123,7 @@ function NewsFeed() {
             <button
               onClick={() => setQuery('')}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-200 text-sm"
-              aria-label="clear"
+              aria-label="Clear headline search"
             >×</button>
           )}
         </div>

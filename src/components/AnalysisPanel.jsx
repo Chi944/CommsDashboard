@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { readDashboardJson } from '../lib/apiClient.js';
 
 const tierClass = (tier) => ({
@@ -24,6 +24,7 @@ export default function AnalysisPanel({ asset }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [requestVersion, setRequestVersion] = useState(0);
+  const manualRefreshRef = useRef(false);
   const data = result?.ticker === asset?.ticker ? result.payload : null;
 
   useEffect(() => {
@@ -32,7 +33,9 @@ export default function AnalysisPanel({ asset }) {
     let cancelled = false;
     setLoading(true);
     setErr(null);
-    fetch(`/api/analysis?ticker=${encodeURIComponent(ticker)}`)
+    const refreshQuery = manualRefreshRef.current ? '&refresh=1' : '';
+    manualRefreshRef.current = false;
+    fetch(`/api/analysis?ticker=${encodeURIComponent(ticker)}${refreshQuery}`)
       .then(readDashboardJson)
       .then((j) => {
         if (cancelled) return;
@@ -63,7 +66,10 @@ export default function AnalysisPanel({ asset }) {
         </div>
         <button
           type="button"
-          onClick={() => setRequestVersion((version) => version + 1)}
+          onClick={() => {
+            manualRefreshRef.current = true;
+            setRequestVersion((version) => version + 1);
+          }}
           disabled={loading}
           aria-label={`Refresh ${asset?.name || asset?.ticker || 'asset'} analysis`}
           className="text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-md border border-gray-800 bg-gray-900 text-gray-300 hover:border-gray-600 hover:text-white disabled:opacity-50"

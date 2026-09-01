@@ -39,6 +39,7 @@ export default function DataModeBadge({
           type="button"
           onClick={onRefresh}
           disabled={refreshing}
+          aria-busy={refreshing}
           className="p-1.5 rounded-md border border-[#333] bg-[#0a0a0a] text-[#737373] hover:text-[#0070f3] hover:border-[#0070f3]/40 disabled:opacity-40 transition-colors"
           aria-label="Refresh market snapshot"
           title="Refresh snapshot"

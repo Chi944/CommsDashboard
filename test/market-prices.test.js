@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import pricesHandler from '../api/prices.js';
+import {
+  YAHOO_SPARK_BATCH_SIZE,
+  YAHOO_SPARK_RECOVERY_REQUEST_LIMIT,
+} from '../lib/market/yahooSpark.js';
 import { SYMBOLS } from '../lib/symbols.js';
 
 const NOW_SECONDS = Math.floor(Date.now() / 1000) - 60;
@@ -35,14 +39,23 @@ function yahooSeries(yahoo) {
   };
 }
 
-function yahooFetch({ failBatchContaining } = {}) {
+function yahooFetch({ failBatchContaining, failFirstBatchContaining } = {}) {
   const calls = [];
+  let transientFailurePending = Boolean(failFirstBatchContaining);
   const fetch = async (input) => {
     const url = new URL(String(input));
     calls.push(url);
 
     if (url.pathname === '/v7/finance/spark') {
       const symbols = (url.searchParams.get('symbols') || '').split(',').filter(Boolean);
+      if (
+        transientFailurePending
+        && symbols.length > 1
+        && symbols.includes(failFirstBatchContaining)
+      ) {
+        transientFailurePending = false;
+        return new Response('temporary upstream failure', { status: 503 });
+      }
       if (failBatchContaining && symbols.includes(failBatchContaining)) {
         return new Response('upstream unavailable', { status: 503 });
       }
@@ -155,23 +168,46 @@ test('all tracked symbols are fetched through Yahoo-supported multi-symbol spark
   const response = await runPrices(fetchImpl);
 
   assert.equal(response.body.commodities.length, SYMBOLS.length);
-  assert.equal(fetchImpl.calls.length, Math.ceil(SYMBOLS.length / 20));
+  assert.equal(fetchImpl.calls.length, Math.ceil(SYMBOLS.length / YAHOO_SPARK_BATCH_SIZE));
   assert.ok(fetchImpl.calls.every((url) => url.pathname === '/v7/finance/spark'));
-  assert.ok(fetchImpl.calls.every((url) => url.searchParams.get('symbols').split(',').length <= 20));
+  assert.ok(fetchImpl.calls.every((url) => (
+    url.searchParams.get('symbols').split(',').length <= YAHOO_SPARK_BATCH_SIZE
+  )));
 });
 
-test('a failed batch returns useful live rows plus explicit degraded metadata', async () => {
+test('a single bad Yahoo symbol is isolated without dropping its valid batch siblings', async () => {
   const response = await runPrices(yahooFetch({ failBatchContaining: 'AAPL' }));
+  const normalBatchCount = Math.ceil(SYMBOLS.length / YAHOO_SPARK_BATCH_SIZE);
 
   assert.equal(response.statusCode, 200);
   assert.equal(response.body.ok, true);
   assert.equal(response.body.partial, true);
   assert.equal(response.body.counts.requested, SYMBOLS.length);
-  assert.ok(response.body.counts.received > 0);
-  assert.ok(response.body.counts.failed > 0);
+  assert.equal(response.body.counts.received, SYMBOLS.length - 1);
+  assert.equal(response.body.counts.failed, 1);
   assert.equal(response.body.counts.requested, response.body.counts.received + response.body.counts.failed);
-  assert.ok(response.body.missingTickers.includes('AAPL'));
+  assert.deepEqual(response.body.missingTickers, ['AAPL']);
+  assert.ok(response.body.commodities.some((row) => row.ticker === 'MSFT'));
+  assert.ok(response.body.counts.requests > normalBatchCount);
+  assert.ok(
+    response.body.counts.requests <= normalBatchCount + YAHOO_SPARK_RECOVERY_REQUEST_LIMIT,
+  );
   assert.ok(response.body.errors.length > 0);
+});
+
+test('a transient Yahoo batch failure is retried once without degrading the response', async () => {
+  const fetchImpl = yahooFetch({ failFirstBatchContaining: 'AAPL' });
+  const response = await runPrices(fetchImpl);
+  const normalBatchCount = Math.ceil(SYMBOLS.length / YAHOO_SPARK_BATCH_SIZE);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(response.body.partial, false);
+  assert.equal(response.body.counts.received, SYMBOLS.length);
+  assert.equal(response.body.counts.failed, 0);
+  assert.equal(response.body.counts.requests, normalBatchCount + 1);
+  assert.equal(response.body.missingTickers.length, 0);
+  assert.equal(response.body.errors, undefined);
 });
 
 test('renamed and colliding assets request their current Yahoo Finance symbols', async () => {

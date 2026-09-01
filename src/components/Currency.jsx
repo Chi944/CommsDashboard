@@ -200,8 +200,9 @@ const CurrencyNews = () => {
 };
 
 export default function Currency() {
-  const { dataMode, pricesUpdatedAt, refresh } = useLiveData();
+  const { dataMode, pricesUpdatedAt, pricesLoading, newsLoading, refresh } = useLiveData();
   const modeCopy = rateModeCopy(dataMode);
+  const refreshBusy = Boolean(pricesLoading || newsLoading);
   return (
     <div className="space-y-5 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
@@ -223,9 +224,13 @@ export default function Currency() {
           </div>
         </div>
         <button
+          type="button"
           onClick={refresh}
+          disabled={refreshBusy}
+          aria-busy={refreshBusy}
+          aria-label={refreshBusy ? 'Refreshing currency data' : 'Refresh currency data'}
           className="self-start px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white"
-        >Refresh</button>
+        >{refreshBusy ? 'Refreshing…' : 'Refresh'}</button>
       </div>
 
       <Converter />

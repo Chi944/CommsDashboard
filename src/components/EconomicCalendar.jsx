@@ -38,6 +38,33 @@ function statusClasses(state) {
   return 'border-red-500/40 bg-red-500/10 text-red-300';
 }
 
+function humanEventUrl(event) {
+  try {
+    const source = new URL(event.sourceUrl);
+    const candidate = new URL(event.eventUrl);
+    if (candidate.protocol !== 'https:'
+        || candidate.origin !== source.origin
+        || candidate.username
+        || candidate.password
+        || /\.(?:ics|pdf)$/i.test(candidate.pathname)) return null;
+    return candidate.href;
+  } catch {
+    return null;
+  }
+}
+
+function sourcePurpose(sourceUrl) {
+  try {
+    const { pathname } = new URL(sourceUrl);
+    if (/\.ics$/i.test(pathname)) return 'calendar subscription';
+    if (/\.pdf$/i.test(pathname)) return 'annual schedule PDF';
+    if (/fomccalendars/i.test(pathname)) return 'meeting calendar';
+  } catch {
+    // The server only emits validated official sources; retain an honest generic label if malformed.
+  }
+  return 'release calendar';
+}
+
 export default function EconomicCalendar() {
   const mounted = useRef(true);
   const [result, setResult] = useState({ loading: true, data: null, failed: false });
@@ -135,6 +162,7 @@ export default function EconomicCalendar() {
               )}
               {result.data.events.map((event) => {
                 const relative = relativeDay(event.date, result.data.window?.from);
+                const eventUrl = humanEventUrl(event);
                 return (
                   <tr key={event.id} className="hover:bg-gray-800/50">
                     <td className="px-4 py-2.5 font-mono whitespace-nowrap">
@@ -143,7 +171,11 @@ export default function EconomicCalendar() {
                       <div className={`mt-0.5 text-[10px] font-mono sm:hidden ${event.timeStatus === 'scheduled' ? 'text-gray-300' : 'text-gray-500'}`}>{event.timeLabel}</div>
                     </td>
                     <td className="px-4 py-2.5">
-                      <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-gray-100 hover:text-cyan-300">{event.title}</a>
+                      {eventUrl ? (
+                        <a href={eventUrl} target="_blank" rel="noopener noreferrer" className="text-gray-100 hover:text-cyan-300">{event.title}</a>
+                      ) : (
+                        <span className="text-gray-100">{event.title}</span>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 font-mono text-cyan-300">{event.sourceShortName}</td>
                     <td className={`hidden px-4 py-2.5 text-right font-mono sm:table-cell ${event.timeStatus === 'scheduled' ? 'text-gray-300' : 'text-gray-500'}`}>{event.timeLabel}</td>
@@ -161,7 +193,7 @@ export default function EconomicCalendar() {
             {result.data.providers.map((provider) => (
               <span key={provider.id} className="inline-flex items-center gap-1">
                 <span className={`h-1.5 w-1.5 rounded-full ${provider.status === 'live' ? 'bg-emerald-400' : 'bg-red-400'}`} aria-hidden="true" />
-                <a href={provider.sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:text-cyan-300">{provider.name} source</a>
+                <a href={provider.sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:text-cyan-300">{provider.name} {sourcePurpose(provider.sourceUrl)}</a>
               </span>
             ))}
           </div>

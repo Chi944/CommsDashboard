@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { forwardRef } from 'react';
+
+import { evidenceLinkLabel, publicEvidenceUrl } from '../../lib/publicEvidenceUrl.js';
 
 function safeHttps(value) {
   try {
@@ -16,14 +18,24 @@ function sourceLabel(value) {
     : hostname;
 }
 
-export default function EntityProfile({ entity, activities, signals, onClose }) {
+const EntityProfile = forwardRef(function EntityProfile({ entity, activities, signals, onClose }, ref) {
   if (!entity) return null;
   const entityActivities = activities
     .filter((row) => row.entityId === entity.id)
-    .sort((left, right) => String(right.observedAt).localeCompare(String(left.observedAt)));
+    .sort((left, right) => (
+      String(right.disclosedAt || right.effectiveAt || right.observedAt || '').localeCompare(
+        String(left.disclosedAt || left.effectiveAt || left.observedAt || ''),
+      )
+      || String(right.effectiveAt || right.observedAt || '').localeCompare(
+        String(left.effectiveAt || left.observedAt || ''),
+      )
+      || String(right.observedAt || '').localeCompare(String(left.observedAt || ''))
+      || String(left.id || '').localeCompare(String(right.id || ''))
+    ));
   const entitySignals = signals.filter((row) => row.entityId === entity.id);
+  const sourceOnly = String(entity.evidenceCoverage || '').endsWith('-link-only');
   return (
-    <section aria-labelledby="entity-profile-title" className="rounded-xl border border-cyan-800/40 bg-cyan-950/10 p-4 sm:p-5">
+    <section ref={ref} tabIndex={-1} aria-labelledby="entity-profile-title" className="scroll-mt-20 rounded-xl border border-cyan-800/40 bg-cyan-950/10 p-4 outline-none sm:p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-[10px] uppercase tracking-widest text-cyan-300/80">Research profile</div>
@@ -60,7 +72,9 @@ export default function EntityProfile({ entity, activities, signals, onClose }) 
         {entityActivities.length ? (
           <ul className="mt-3 space-y-3">
             {entityActivities.slice(0, 5).map((activity) => {
-              const href = safeHttps(activity.sourceUrl);
+              const destination = publicEvidenceUrl(activity.sourceUrl, {
+                sourceStableId: activity.sourceStableId,
+              });
               return (
                 <li key={activity.id} className="rounded-lg border border-gray-800 bg-gray-950/40 p-3">
                   <p className="text-xs leading-relaxed text-gray-200">{activity.summary}</p>
@@ -69,9 +83,9 @@ export default function EntityProfile({ entity, activities, signals, onClose }) 
                     <div><dt className="inline text-gray-600">Disclosed: </dt><dd className="inline">{activity.disclosedAt ? String(activity.disclosedAt).slice(0, 10) : 'Not separately reported'}</dd></div>
                     <div><dt className="inline text-gray-600">Observed: </dt><dd className="inline">{String(activity.observedAt).slice(0, 10)}</dd></div>
                   </dl>
-                  {href && (
-                    <a href={href} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-[10px] text-cyan-300 hover:underline">
-                      Open accepted public evidence
+                  {destination && (
+                    <a href={destination.href} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-[10px] text-cyan-300 hover:underline">
+                      {evidenceLinkLabel(destination, 'Open accepted public evidence')}
                     </a>
                   )}
                 </li>
@@ -80,10 +94,14 @@ export default function EntityProfile({ entity, activities, signals, onClose }) 
           </ul>
         ) : (
           <p className="mt-2 text-xs leading-relaxed text-gray-500">
-            No material new public activity is present in the accepted snapshot. The source links and provider dates above remain the current evidence boundary.
+            {sourceOnly
+              ? 'Source-only profile: no monitored activity feed is enabled. Use the official source links above for current public material.'
+              : 'No material new public activity is present in the accepted snapshot. The source links and provider dates above remain the current evidence boundary.'}
           </p>
         )}
       </div>
     </section>
   );
-}
+});
+
+export default EntityProfile;

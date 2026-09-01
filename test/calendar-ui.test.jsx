@@ -84,21 +84,19 @@ afterEach(() => {
 
 describe('official economic calendar', () => {
   it('shows a live official event with exact source attribution and no invented market estimates', async () => {
-    // Catches reintroducing unsourced forecast/prior values or search-engine links.
+    // Catches making a provider-wide calendar subscription look like event details.
     globalThis.fetch = vi.fn(async () => response(payload()));
 
     render(<EconomicCalendar />);
 
     expect(await screen.findByRole('status', { name: /economic calendar status/i })).toHaveTextContent('LIVE');
-    expect(screen.getByRole('link', { name: 'Consumer Price Index' })).toHaveAttribute(
+    expect(screen.getByText('Consumer Price Index')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Consumer Price Index' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /U.S. Bureau of Labor Statistics calendar subscription/i })).toHaveAttribute(
       'href',
       'https://www.bls.gov/schedule/news_release/bls.ics',
     );
     expect(screen.getAllByText('8:30 AM ET')).toHaveLength(2);
-    expect(screen.getByRole('link', { name: /U.S. Bureau of Labor Statistics/i })).toHaveAttribute(
-      'href',
-      'https://www.bls.gov/schedule/news_release/bls.ics',
-    );
     expect(screen.queryByRole('columnheader', { name: /forecast/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: /prior/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: /impact/i })).not.toBeInTheDocument();
@@ -133,13 +131,44 @@ describe('official economic calendar', () => {
 
     render(<EconomicCalendar />);
 
-    const eventLink = await screen.findByRole('link', { name: 'The Employment Situation' });
-    const eventRow = eventLink.closest('tr');
-    expect(eventLink).toHaveAttribute('href', sourceUrl);
+    const eventTitle = await screen.findByText('The Employment Situation');
+    const eventRow = eventTitle.closest('tr');
+    expect(screen.queryByRole('link', { name: 'The Employment Situation' })).not.toBeInTheDocument();
     expect(within(eventRow).getAllByText('Date only').length).toBeGreaterThan(0);
     expect(within(eventRow).getByText('OMB/BLS')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /BLS principal releases via OMB\/OIRA source/i })).toHaveAttribute('href', sourceUrl);
+    expect(screen.getByRole('link', { name: /BLS principal releases via OMB\/OIRA annual schedule PDF/i })).toHaveAttribute('href', sourceUrl);
     expect(screen.queryByText('8:30 AM ET')).not.toBeInTheDocument();
+  });
+
+  it('uses an official event-specific page when the provider supplies one', async () => {
+    // Catches discarding an event detail URL and sending the title to a generic calendar instead.
+    const eventUrl = 'https://fred.stlouisfed.org/release?rid=50';
+    globalThis.fetch = vi.fn(async () => response(payload({
+      providers: [
+        provider('bls', 'FRED/BLS', 'live', {
+          name: 'BLS releases via FRED',
+          sourceUrl: 'https://fred.stlouisfed.org/releases/calendar',
+        }),
+        provider('bea', 'BEA'),
+        provider('federal-reserve', 'Fed'),
+      ],
+      events: [event({
+        id: 'bls:2026-09-04:employment-situation',
+        title: 'Employment Situation',
+        sourceName: 'BLS releases via FRED',
+        sourceShortName: 'FRED/BLS',
+        sourceUrl: 'https://fred.stlouisfed.org/releases/calendar?rid=50',
+        eventUrl,
+      })],
+    })));
+
+    render(<EconomicCalendar />);
+
+    expect(await screen.findByRole('link', { name: 'Employment Situation' })).toHaveAttribute('href', eventUrl);
+    expect(screen.getByRole('link', { name: /BLS releases via FRED release calendar/i })).toHaveAttribute(
+      'href',
+      'https://fred.stlouisfed.org/releases/calendar',
+    );
   });
 
   it('keeps available events visible and names a failed provider in degraded mode', async () => {
@@ -155,7 +184,7 @@ describe('official economic calendar', () => {
 
     expect(await screen.findByRole('status', { name: /economic calendar status/i })).toHaveTextContent('DEGRADED');
     expect(screen.getByRole('alert')).toHaveTextContent(/Federal Reserve is temporarily unavailable/i);
-    expect(screen.getByRole('link', { name: 'Consumer Price Index' })).toBeInTheDocument();
+    expect(screen.getByText('Consumer Price Index')).toBeInTheDocument();
   });
 
   it('shows an honest unavailable state and retries the public route', async () => {

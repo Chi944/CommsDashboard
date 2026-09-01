@@ -3,7 +3,7 @@
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 let LiveDataProvider;
@@ -229,6 +229,39 @@ describe('LiveData market fetch isolation', () => {
     await waitFor(() => expect(screen.getByRole('status', { name: /market mode/i })).toHaveTextContent('LIVE'));
     expect(calls.filter((url) => url === '/api/market/snapshot')).toHaveLength(2);
   });
+
+  it('coalesces rapid market refresh activations into one in-flight request set', async () => {
+    let manual = false;
+    const calls = [];
+    const releases = [];
+    globalThis.fetch = vi.fn(async (url) => {
+      calls.push(String(url));
+      if (!manual) {
+        if (url === '/api/prices') return response(yahooPayload());
+        if (url === '/api/market/snapshot') return response(v2Payload());
+        return response(newsPayload());
+      }
+      return new Promise((resolve) => releases.push(() => resolve(
+        url === '/api/prices' ? response(yahooPayload(83)) : response(v2Payload(78)),
+      )));
+    });
+
+    render(<LiveDataProvider><MarketState /></LiveDataProvider>);
+    await waitFor(() => expect(screen.getByRole('status', { name: /market mode/i })).toHaveTextContent('LIVE'));
+    manual = true;
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /refresh market/i }));
+      fireEvent.click(screen.getByRole('button', { name: /refresh market/i }));
+    });
+
+    try {
+      expect(calls.filter((url) => url === '/api/prices')).toHaveLength(2);
+      expect(calls.filter((url) => url === '/api/market/snapshot')).toHaveLength(2);
+    } finally {
+      await act(async () => releases.splice(0).forEach((release) => release()));
+    }
+  });
 });
 
 describe('LiveData news freshness', () => {
@@ -276,6 +309,44 @@ describe('LiveData news freshness', () => {
 
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith('/api/news', { cache: 'no-store' }));
     expect(screen.getByRole('status', { name: /news live/i })).toHaveTextContent('false');
+  });
+
+  it('coalesces rapid page refresh activations into one price and news request set', async () => {
+    let manual = false;
+    const calls = [];
+    const releases = [];
+    globalThis.fetch = vi.fn(async (url) => {
+      calls.push(String(url));
+      if (!manual) {
+        if (url === '/api/prices') return response(yahooPayload());
+        if (url === '/api/market/snapshot') return response(v2Payload());
+        if (url === '/api/news') return response(newsPayload());
+      }
+      return new Promise((resolve) => releases.push(() => resolve(
+        url === '/api/prices'
+          ? response(yahooPayload(83))
+          : url === '/api/market/snapshot'
+            ? response(v2Payload(78))
+            : response(newsPayload()),
+      )));
+    });
+
+    render(<LiveDataProvider><NewsState /></LiveDataProvider>);
+    await waitFor(() => expect(screen.getByRole('status', { name: /news live/i })).toHaveTextContent('true'));
+    manual = true;
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /refresh all/i }));
+      fireEvent.click(screen.getByRole('button', { name: /refresh all/i }));
+    });
+
+    try {
+      expect(calls.filter((url) => url === '/api/prices')).toHaveLength(2);
+      expect(calls.filter((url) => url === '/api/market/snapshot')).toHaveLength(2);
+      expect(calls.filter((url) => url === '/api/news')).toHaveLength(2);
+    } finally {
+      await act(async () => releases.splice(0).forEach((release) => release()));
+    }
   });
 
   it('expires LIVE when the newest article crosses the seven-day boundary', async () => {
