@@ -29,7 +29,6 @@ const RANGES = ['1D', '7D', '30D', '90D', 'YTD'];
 // Maps display range labels to the API range param used by /api/history
 const API_RANGE = { '1D': '1d', '7D': '5d', '30D': '1mo', '90D': '3mo', 'YTD': 'ytd' };
 const COMPARE_COLORS = ['#22d3ee', '#a78bfa', '#f472b6', '#fbbf24', '#34d399'];
-const STORAGE_KEY = 'comms.watchlist.v2';
 
 export const fmtPctChange = (n) => (
   Number.isFinite(n) ? `${n >= 0 ? '+' : ''}${n.toFixed(2)}%` : '—'
@@ -58,31 +57,52 @@ function computeRSI(prices, dates, period = 14) {
   return result;
 }
 
-// Approximate next earnings dates for common tickers (MM-DD format for chart x-axis).
-const EARNINGS_DATES = {
-  AAPL:  ['07-25', '10-24'],
-  NVDA:  ['08-20', '11-19'],
-  MSFT:  ['07-22', '10-21'],
-  TSLA:  ['07-19', '10-18'],
-  META:  ['07-23', '10-22'],
-  AMZN:  ['07-25', '10-24'],
-  GOOGL: ['07-23', '10-22'],
-  AMD:   ['07-22', '10-21'],
-  NFLX:  ['07-15', '10-14'],
-  BABA:  ['08-05', '11-04'],
-  MSTR:  ['07-30', '10-29'],
-  COIN:  ['07-28', '10-27'],
-  SNOW:  ['08-27', '11-26'],
-  SHOP:  ['08-06', '11-05'],
-  TSM:   ['07-17', '10-16'],
-  INTC:  ['07-24', '10-23'],
-  QCOM:  ['07-29', '10-28'],
-  BA:    ['07-23', '10-22'],
-  JPM:   ['07-10', '10-09'],
-};
-
 const PRESETS_KEY = 'comms.presets.v1';
 const NOTES_KEY = 'comms.notes.v1';
+
+function orderedHistoryDates(tickers, byTicker) {
+  const nextDates = new Map();
+  const indegree = new Map();
+  const firstSeen = new Map();
+  let sequence = 0;
+  const addDate = (date) => {
+    if (indegree.has(date)) return;
+    indegree.set(date, 0);
+    nextDates.set(date, new Set());
+    firstSeen.set(date, sequence++);
+  };
+
+  for (const ticker of tickers) {
+    const dates = [...byTicker.get(ticker).keys()];
+    for (const date of dates) addDate(date);
+    for (let index = 1; index < dates.length; index += 1) {
+      const previous = dates[index - 1];
+      const current = dates[index];
+      if (previous === current || nextDates.get(previous).has(current)) continue;
+      nextDates.get(previous).add(current);
+      indegree.set(current, indegree.get(current) + 1);
+    }
+  }
+
+  const ready = [...indegree.keys()]
+    .filter((date) => indegree.get(date) === 0)
+    .sort((a, b) => firstSeen.get(a) - firstSeen.get(b));
+  const ordered = [];
+  while (ready.length) {
+    const date = ready.shift();
+    ordered.push(date);
+    for (const next of nextDates.get(date)) {
+      indegree.set(next, indegree.get(next) - 1);
+      if (indegree.get(next) === 0) {
+        ready.push(next);
+        ready.sort((a, b) => firstSeen.get(a) - firstSeen.get(b));
+      }
+    }
+  }
+  return ordered.length === indegree.size
+    ? ordered
+    : [...firstSeen.keys()];
+}
 
 const tileBg = (pct) => {
   const a = Math.min(0.65, Math.max(0.06, Math.abs(pct) / 8));
@@ -271,7 +291,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
     pricesLoading, newsLoading,
     formatAssetPrice, dashboardCurrency, resolveHeatmapAsset, resolveTablePrice,
     watchlistNames, activeWatchlist, activeWatchSet,
-    setActiveList, createList, toggleWatch,
+    setActiveList, createList, renameList, deleteList, toggleWatch,
   } = useLiveData();
 
   // FX excluded — they live behind the Currency tab/dropdown.
@@ -300,6 +320,8 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
   const watchlist = activeWatchSet;
 
   const [historyCache, setHistoryCache] = useState({});
+  const [historyIssues, setHistoryIssues] = useState({});
+  const [historyRetryNonce, setHistoryRetryNonce] = useState(0);
   const [chartLoading, setChartLoading] = useState(false);
   const searchRef = useRef(null);
   const [shareCopied, setShareCopied] = useState(false);
@@ -312,6 +334,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
     try { return JSON.parse(localStorage.getItem(NOTES_KEY) || '{}'); } catch { return {}; }
   });
   const [editingNote, setEditingNote] = useState(null); // ticker being edited
+  const [watchlistError, setWatchlistError] = useState(null);
   const handledInitialTickerRef = useRef(null);
 
   const selectTicker = useCallback((ticker) => {
@@ -397,21 +420,32 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
   }, [filtered, selectTicker, selected]);
 
   const neededTickers = useMemo(
-    () => (compare ? [...compareSet] : sel ? [sel.ticker] : []),
+    () => (compare ? [...compareSet].sort((a, b) => a.localeCompare(b)) : sel ? [sel.ticker] : []),
     [compare, compareSet, sel]
   );
 
   useEffect(() => {
     const missing = neededTickers.filter((t) => !historyCache[`${t}|${range}`]);
-    if (missing.length === 0) return;
+    if (missing.length === 0) {
+      setChartLoading(false);
+      return undefined;
+    }
     let cancelled = false;
     setChartLoading(true);
+    setHistoryIssues((previous) => {
+      const next = { ...previous };
+      for (const ticker of missing) delete next[`${ticker}|${range}`];
+      return next;
+    });
     Promise.all(
       missing.map((t) =>
         fetch(`/api/history?ticker=${encodeURIComponent(t)}&range=${API_RANGE[range]}`)
-          .then((r) => r.ok ? r.json() : null)
-          .then((j) => (j && j.ok && Array.isArray(j.points) && j.points.length) ? [t, j.points] : [t, null])
-          .catch(() => [t, null])
+          .then((r) => r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`)))
+          .then((j) => {
+            if (!j?.ok || !Array.isArray(j.points)) return [t, null, 'error'];
+            return j.points.length ? [t, j.points, null] : [t, null, 'empty'];
+          })
+          .catch(() => [t, null, 'error'])
       )
     ).then((entries) => {
       if (cancelled) return;
@@ -420,27 +454,36 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
         for (const [t, pts] of entries) if (pts) next[`${t}|${range}`] = pts;
         return next;
       });
+      setHistoryIssues((previous) => {
+        const next = { ...previous };
+        for (const [ticker, points, issue] of entries) {
+          const key = `${ticker}|${range}`;
+          if (points) delete next[key];
+          else next[key] = issue;
+        }
+        return next;
+      });
       setChartLoading(false);
     });
     return () => { cancelled = true; };
-  }, [neededTickers, range]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [neededTickers, range, historyRetryNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const chartData = useMemo(() => {
     if (compare) {
-      const tickers = [...compareSet];
-      const series = tickers.map((t) => historyCache[`${t}|${range}`]).filter(Boolean);
-      if (series.length === 0) return [];
-      const minLen = Math.min(...series.map((s) => s.length));
-      const out = [];
-      for (let i = 0; i < minLen; i++) {
-        const row = { date: series[0][i].date };
-        tickers.forEach((t) => {
-          const arr = historyCache[`${t}|${range}`];
-          if (arr && arr[i]) row[t] = arr[i].price;
-        });
-        out.push(row);
-      }
-      return out;
+      const tickers = neededTickers;
+      const byTicker = new Map(tickers.map((ticker) => [
+        ticker,
+        new Map((historyCache[`${ticker}|${range}`] || []).map((point) => [point.date, point.price])),
+      ]));
+      const dates = orderedHistoryDates(tickers, byTicker);
+      return dates.map((date) => {
+        const row = { date };
+        for (const ticker of tickers) {
+          const series = byTicker.get(ticker);
+          row[ticker] = series.has(date) ? series.get(date) : null;
+        }
+        return row;
+      });
     }
     if (!sel) return [];
     const cached = historyCache[`${sel.ticker}|${range}`];
@@ -449,7 +492,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
       return sel.history.map((h) => ({ date: h.date, price: h.price }));
     }
     return [];
-  }, [compare, compareSet, sel, range, historyCache]);
+  }, [compare, neededTickers, sel, range, historyCache]);
 
   const rsiData = useMemo(() => {
     if (!showRsi || compare || chartData.length === 0) return [];
@@ -457,13 +500,6 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
     const dates = chartData.map((d) => d.date);
     return computeRSI(prices, dates);
   }, [showRsi, compare, chartData]);
-
-  // Earnings reference lines for current ticker and range.
-  const earningsLines = useMemo(() => {
-    if (compare || !sel || range === '1D' || range === '7D') return [];
-    const dates = EARNINGS_DATES[sel.ticker] || [];
-    return dates.filter((d) => chartData.some((pt) => pt.date === d));
-  }, [compare, sel, range, chartData]);
 
   const setNote = useCallback((ticker, note) => {
     setNotesMap((prev) => {
@@ -493,18 +529,54 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
     });
   }, []);
 
-  const exportCsv = () => {
-    const rows = filtered.map((c) => ({
-      ticker: c.ticker, name: c.name, category: c.category, unit: c.unit,
-      price_usd: c.price, changePct: c.changePct, changeAbs: c.changeAbs,
-      open: c.open, high: c.high, low: c.low,
-      prevClose: c.prevClose, volume: c.volume,
-      fiftyTwoWeekHigh: c.fiftyTwoWeekHigh, fiftyTwoWeekLow: c.fiftyTwoWeekLow,
-    }));
-    downloadCSV(`prices-${cat.toLowerCase()}.csv`, rows);
+  const exportRows = useMemo(() => filtered
+    .map((asset) => resolveTablePrice(asset))
+    .filter(isTrustedMarketRow)
+    .map((display) => ({
+      ticker: display.ticker, name: display.name, category: display.category, unit: display.unit,
+      price_usd: display.price, changePct: display.changePct, changeAbs: display.changeAbs,
+      open: display.open, high: display.high, low: display.low,
+      prevClose: display.prevClose, volume: display.volume,
+      fiftyTwoWeekHigh: display.fiftyTwoWeekHigh, fiftyTwoWeekLow: display.fiftyTwoWeekLow,
+      source: display.source, asOf: display.asOf || '', stale: Boolean(display.stale),
+    })), [filtered, resolveTablePrice]);
+
+  const exportCsv = () => downloadCSV(`prices-${cat.toLowerCase()}.csv`, exportRows);
+
+  const renameActiveWatchlist = () => {
+    const requested = window.prompt('Rename watchlist:', activeWatchlist);
+    if (requested == null) return;
+    const name = requested.trim();
+    if (!name || name === activeWatchlist) return;
+    const duplicate = watchlistNames.find(
+      (existing) => existing !== activeWatchlist
+        && existing.toLocaleLowerCase() === name.toLocaleLowerCase(),
+    );
+    if (duplicate) {
+      setWatchlistError(`${duplicate} already exists.`);
+      return;
+    }
+    renameList(activeWatchlist, name);
+    setWatchlistError(null);
   };
 
-  const compareTickers = [...compareSet];
+  const deleteActiveWatchlist = () => {
+    if (watchlistNames.length <= 1) return;
+    deleteList(activeWatchlist);
+    setWatchlistError(null);
+  };
+
+  const compareTickers = neededTickers;
+  const activeHistoryIssues = neededTickers
+    .map((ticker) => ({ ticker, issue: historyIssues[`${ticker}|${range}`] }))
+    .filter(({ issue }) => issue);
+  const failedHistoryTickers = activeHistoryIssues
+    .filter(({ issue }) => issue === 'error')
+    .map(({ ticker }) => ticker);
+  const emptyHistoryTickers = activeHistoryIssues
+    .filter(({ issue }) => issue === 'empty')
+    .map(({ ticker }) => ticker);
+  const retryHistory = () => setHistoryRetryNonce((value) => value + 1);
   const chartKey = compare
     ? `cmp:${range}:${compareTickers.join(',')}`
     : `one:${range}:${sel?.ticker}`;
@@ -563,7 +635,8 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
               ${compare ? 'bg-cyan-500 border-cyan-400 text-gray-950' : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white'}`}
           >{compare ? 'Comparing' : 'Compare'}</button>
           <button onClick={exportCsv}
-            className="px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white">
+            disabled={exportRows.length === 0}
+            className="px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40">
             <span className="hidden sm:inline">Export CSV</span><span className="sm:hidden">CSV</span>
           </button>
           <button
@@ -687,6 +760,22 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
                   : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600'}`}
             >★ {n}</button>
           ))}
+          <div role="group" aria-label={`Manage ${activeWatchlist} watchlist`} className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={renameActiveWatchlist}
+              aria-label={`Rename ${activeWatchlist} watchlist`}
+              className="rounded border border-gray-700 px-2 py-1 text-[10px] uppercase tracking-wider text-gray-400 hover:border-gray-500 hover:text-white"
+            >rename</button>
+            <button
+              type="button"
+              onClick={deleteActiveWatchlist}
+              disabled={watchlistNames.length <= 1}
+              aria-label={`Delete ${activeWatchlist} watchlist`}
+              title={watchlistNames.length <= 1 ? 'Keep at least one watchlist' : `Delete ${activeWatchlist}`}
+              className="rounded border border-red-800/50 px-2 py-1 text-[10px] uppercase tracking-wider text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
+            >delete</button>
+          </div>
           <button
             onClick={() => {
               const name = window.prompt('New watchlist name:');
@@ -694,6 +783,9 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
             }}
             className="ml-auto px-2.5 py-1 text-[11px] uppercase tracking-wider rounded-md border border-dashed border-gray-700 text-gray-400 hover:text-white hover:border-gray-500"
           >+ new list</button>
+          {watchlistError && (
+            <div role="alert" aria-label="Watchlist error" className="w-full text-[11px] text-amber-300">{watchlistError}</div>
+          )}
         </div>
       )}
 
@@ -781,6 +873,29 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
             {shareCopied && (
               <div role="status" aria-label="Share link status" className="sr-only">Share link copied.</div>
             )}
+            {activeHistoryIssues.length > 0 && (
+              <div
+                role={failedHistoryTickers.length ? 'alert' : 'status'}
+                aria-label={failedHistoryTickers.length ? 'Price history unavailable' : 'Price history empty'}
+                className={`mb-4 flex items-center justify-between gap-3 rounded-md border p-2 text-[11px]
+                  ${failedHistoryTickers.length
+                    ? 'border-red-800/50 bg-red-950/20 text-red-200'
+                    : 'border-amber-800/50 bg-amber-950/20 text-amber-200'}`}
+              >
+                <span>
+                  {failedHistoryTickers.length > 0
+                    ? `Price history is unavailable for ${failedHistoryTickers.join(', ')}.`
+                    : `No price history was returned for ${emptyHistoryTickers.join(', ')}.`}
+                </span>
+                <button
+                  type="button"
+                  onClick={retryHistory}
+                  disabled={chartLoading}
+                  aria-label="Retry price history"
+                  className="shrink-0 rounded border border-current/40 px-2 py-1 uppercase tracking-wider hover:bg-white/5 disabled:cursor-wait disabled:opacity-50"
+                >Retry</button>
+              </div>
+            )}
             <div className="h-64 sm:h-72 relative">
               {chartLoading && chartData.length === 0 && (
                 <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-500">
@@ -804,10 +919,6 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
                     ) : (
                       <Line type="monotone" dataKey="price" stroke="#22d3ee" strokeWidth={2} dot={false} />
                     )}
-                    {earningsLines.map((d) => (
-                      <ReferenceLine key={d} x={d} stroke="#f59e0b" strokeDasharray="4 3"
-                        label={{ value: 'ERN', position: 'top', fontSize: 9, fill: '#f59e0b' }} />
-                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               )}

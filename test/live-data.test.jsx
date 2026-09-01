@@ -127,6 +127,18 @@ function NewsState() {
   );
 }
 
+function WatchlistState() {
+  const data = useLiveData();
+  return (
+    <>
+      <output aria-label="watchlist names">{data.watchlistNames.join('|')}</output>
+      <output aria-label="active watchlist">{data.activeWatchlist}</output>
+      <button type="button" onClick={() => data.renameList('Default', 'Macro')}>Rename into existing</button>
+      <button type="button" onClick={() => data.deleteList(data.activeWatchlist)}>Delete active</button>
+    </>
+  );
+}
+
 beforeAll(async () => {
   vi.stubEnv('VITE_USE_LIVE_DATA', 'true');
   ({ LiveDataProvider, useLiveData } = await import('../src/state/LiveData.jsx'));
@@ -261,6 +273,37 @@ describe('LiveData market fetch isolation', () => {
     } finally {
       await act(async () => releases.splice(0).forEach((release) => release()));
     }
+  });
+});
+
+describe('LiveData watchlist lifecycle', () => {
+  it('rejects a duplicate rename and never deletes the last remaining watchlist', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('comms.watchlists.v1', JSON.stringify({
+      active: 'Default',
+      lists: { Default: ['NVDA'], Macro: ['AAPL'] },
+    }));
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url === '/api/prices') return response(yahooPayload());
+      if (url === '/api/market/snapshot') return response(v2Payload());
+      if (url === '/api/news') return response(newsPayload());
+      throw new Error(`unexpected request ${url}`);
+    });
+
+    const { unmount } = render(<LiveDataProvider><WatchlistState /></LiveDataProvider>);
+    await user.click(screen.getByRole('button', { name: /rename into existing/i }));
+    expect(screen.getByLabelText('watchlist names')).toHaveTextContent('Default|Macro');
+    expect(screen.getByLabelText('active watchlist')).toHaveTextContent('Default');
+    unmount();
+
+    localStorage.setItem('comms.watchlists.v1', JSON.stringify({
+      active: 'Default',
+      lists: { Default: ['NVDA'] },
+    }));
+    render(<LiveDataProvider><WatchlistState /></LiveDataProvider>);
+    await user.click(screen.getByRole('button', { name: /delete active/i }));
+    expect(screen.getByLabelText('watchlist names')).toHaveTextContent('Default');
+    expect(screen.getByLabelText('active watchlist')).toHaveTextContent('Default');
   });
 });
 

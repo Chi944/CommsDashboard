@@ -16,6 +16,23 @@ const fmtDate = (d, range) => {
 };
 
 export default async function handler(req, res) {
+  if (String(req?.method || 'GET').toUpperCase() !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(405).json({ ok: false, error: 'method not allowed' });
+    return;
+  }
+  const query = req?.query || {};
+  if (Object.keys(query).some((key) => !['ticker', 'range'].includes(key))) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(400).json({ ok: false, error: 'unsupported query' });
+    return;
+  }
+  if (Object.values(query).some((value) => Array.isArray(value))) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(400).json({ ok: false, error: 'invalid query' });
+    return;
+  }
   try {
     const ticker = (req.query?.ticker || '').toString();
     const rangeKey = (req.query?.range || '1mo').toString();

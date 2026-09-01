@@ -37,16 +37,16 @@ test('dashboard route preserves Intel evidence and durable Prices ticker state',
   );
 });
 
-test('dashboard routes fail closed and canonicalize simulation readiness', () => {
+test('dashboard routes fail closed and canonicalize retired simulation links to holdings', () => {
   assert.deepEqual(parseDashboardSearch('?tab=Unsafe&view=paper-copy&t=%00BTC'), {
     tab: 'Overview', view: null, recordId: null, ticker: null,
   });
   assert.deepEqual(parseDashboardSearch('?tab=Portfolio&view=paper-copy'), {
-    tab: 'Portfolio', view: 'simulation-readiness', recordId: null, ticker: null,
+    tab: 'Portfolio', view: 'holdings', recordId: null, ticker: null,
   });
   assert.equal(buildDashboardSearch('', {
     tab: 'Portfolio', view: 'simulation-readiness', recordId: 'ignored', ticker: null,
-  }), '?tab=Portfolio&view=simulation-readiness');
+  }), '?tab=Portfolio&view=holdings');
 });
 
 test('preferences round-trip with stable IDs and no executable or credential state', () => {

@@ -4,6 +4,17 @@
 import { fetchWithTimeout } from '../lib/market/fetch.js';
 
 export default async function handler(req, res) {
+  if (String(req?.method || 'GET').toUpperCase() !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(405).json({ ok: false, error: 'method not allowed' });
+    return;
+  }
+  if (Object.keys(req?.query || {}).length > 0) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(400).json({ ok: false, error: 'unsupported query' });
+    return;
+  }
   res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=60');
   try {
     const r = await fetchWithTimeout('https://api.alternative.me/fng/?limit=1', {

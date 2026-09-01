@@ -163,22 +163,28 @@ const QuickRates = () => {
 };
 
 const CurrencyNews = () => {
-  const { intel, newsLive } = useLiveData();
+  const { intel, newsLive, newsLoading } = useLiveData();
   const items = useMemo(
     () => intel.filter((i) => i.category === 'Currency' || i.category === 'Finance').slice(0, 10),
     [intel]
   );
+  const status = newsLive ? 'live' : newsLoading ? 'fetching' : 'unavailable';
+  const emptyCopy = newsLoading
+    ? 'No items yet — feed loading.'
+    : newsLive
+      ? 'No currency or finance headlines in the current feed.'
+      : 'News feed unavailable.';
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900/70 p-4 sm:p-5">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-100">Currency &amp; Markets News</h3>
         <span className={`text-[10px] flex items-center gap-1 ${newsLive ? 'text-emerald-400' : 'text-amber-400'}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${newsLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
-          {newsLive ? 'live' : 'fetching'}
+          {status}
         </span>
       </div>
       {items.length === 0 && (
-        <div className="text-xs text-gray-500">No items yet — feed loading.</div>
+        <div className="text-xs text-gray-500">{emptyCopy}</div>
       )}
       <ul className="space-y-2">
         {items.map((it) => (

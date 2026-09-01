@@ -82,13 +82,13 @@ The combined market and Smart Money refresh runs at 06:00 and 18:00 UTC (`vercel
 - The supplemental market snapshot returns only source-tagged CoinGecko/EIA rows and reports live, stale, missing, and fallback coverage explicitly. Static catalogue anchors are never exposed as live provider observations.
 - General and per-asset news reject undated, future-dated, and more-than-seven-day-old articles. The briefing applies a stricter 72-hour headline boundary, and the UI drops its LIVE claim after a failed or expired news refresh while retaining the last good headlines visibly.
 - The economic calendar has no static event fallback, consensus forecast, or invented prior values. Direct BLS schedules are preferred; if that network path fails, the dashboard uses the official OMB/OIRA Principal Federal Economic Indicators schedule hosted by Census and then FRED as a final fallback. OMB/OIRA dates are explicitly labelled `Date only` because its BLS table does not publish a time. Event titles link only when an exact human-readable release page is available; provider-wide subscriptions and schedule documents are labelled separately. Partial provider failure is shown as degraded rather than live.
-- News, per-asset news, history, sentiment, market, AI, and Smart Money upstream calls all have bounded deadlines and safe public errors.
+- News, per-asset news, history, sentiment, market, AI, and Smart Money upstream calls all have bounded deadlines, strict method/query validation, and safe public errors.
 - The UI reports `LIVE`, `DEGRADED`, or `STALE` from the effective displayed coverage. A complete fresh Yahoo feed keeps the dashboard live when an optional provider overlay is stale; stale overlays are rejected rather than shown. Mock fallback rows remain visible but are excluded from movers, heatmaps, and alerts.
 - Provider requests time out and partial failures preserve usable or last-known-good data.
 - Briefings use a UTC market-date cache partition and preserve their true generation/input timestamps. Stale or future-dated sentiment is rejected, and every paragraph must cite validated mover and sentiment evidence before it can be cached. The Refresh button uses a stable, quota-protected no-store route to retrieve the newest shared briefing without serving an older edge-cached response.
 - AI calls use distributed semantic caching, cross-instance generation locks, atomic per-client quotas, safe client errors, structured server logs, and a scheduled forced-generation production smoke test. Vercel fails closed if its Redis guard is unavailable.
 - Smart Money uses only reviewed free public sources. SEC filing dates, effective dates, observation dates, and retrieval dates remain distinct; unverified performance is never presented as success. No rights-cleared free crypto-whale leaderboard is currently enabled.
-- Smart Money simulation is deliberately fail-closed and research-only because no free source passed the full retrieval, retention, public-display, and derived-simulation rights gate. The dashboard has no order, broker, exchange, wallet, signing, or credential capability and cannot prepare or execute trades.
+- Trading and simulated-trading capabilities are deliberately absent. The dashboard has no order, broker, exchange, wallet, signing, or credential capability and cannot prepare or execute trades; Portfolio is a local-only tracker.
 
 ## Verify
 
@@ -108,5 +108,5 @@ CI repeats the build and test suite on Node 22 and Node 24, plus a production-de
 - **Overview** — hero stats, evidence-backed daily market briefing, Smart Money pulse, top movers, headlines
 - **Prices** — full asset table, charts, AI analysis
 - **Currency** — 40+ FX pairs
-- **Portfolio** — holdings and explicit research-only simulation readiness
+- **Portfolio** — local-only holdings, live P&amp;L, CSV export, and no brokerage or trade execution
 - **Intel** — freshness-bounded RSS headlines, an official live economic calendar, plus Smart Money people, firms, SEC-backed institutional flows, provider health, and public findings

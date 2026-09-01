@@ -12,10 +12,6 @@ vi.mock('../src/state/LiveData.jsx', () => ({
   useLiveData: () => liveData.current,
 }));
 
-vi.mock('../src/state/SmartMoney.jsx', () => ({
-  useSmartMoney: () => ({ simulationCapability: null }),
-}));
-
 import Portfolio from '../src/components/Portfolio.jsx';
 
 const NVIDIA = {
@@ -77,6 +73,16 @@ it('labels every position field and exposes ticker suggestions as a combobox', a
   expect(screen.getByRole('option', { name: /NVDA NVIDIA EQUITY/i })).toBeVisible();
 });
 
+it('keeps legacy simulation links on the usable local-only portfolio tracker', () => {
+  render(<Portfolio view="simulation-readiness" />);
+
+  expect(screen.getByRole('heading', { name: 'Portfolio' })).toBeVisible();
+  expect(screen.getByRole('combobox', { name: 'Ticker' })).toBeVisible();
+  expect(screen.getByText(/no brokerage connection or trade execution/i)).toBeVisible();
+  expect(screen.queryByRole('tab', { name: /simulation readiness/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: /simulation readiness/i })).not.toBeInTheDocument();
+});
+
 it('selects a ticker suggestion with ArrowDown and Enter', async () => {
   const user = userEvent.setup();
   render(<Portfolio />);
@@ -136,6 +142,19 @@ it('renders a loss with an unambiguous leading minus sign', () => {
   render(<Portfolio />);
 
   expect(screen.getAllByText('-$60.00')).toHaveLength(2);
+});
+
+it("calculates today's change from the previous close instead of applying the percentage to current value", () => {
+  liveData.current = portfolioState({
+    commodities: [{ ...NVIDIA, prevClose: 100, changePct: 20 }],
+    positions: [{ ticker: 'NVDA', qty: 2, avgCost: 100 }],
+  });
+
+  render(<Portfolio />);
+
+  const label = screen.getByText("Today's change");
+  expect(label.parentElement).toHaveTextContent('$40.00');
+  expect(label.parentElement).not.toHaveTextContent('$48.00');
 });
 
 it('names the position affected by remove even when catalogue data is unavailable', () => {

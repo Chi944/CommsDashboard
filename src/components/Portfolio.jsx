@@ -5,9 +5,6 @@ import Sparkline from './Sparkline.jsx';
 import { downloadCSV } from '../utils/csv.js';
 import CorrelationMatrix from './CorrelationMatrix.jsx';
 import { dataModeLabel } from '../lib/marketDisplay.js';
-import { useSmartMoney } from '../state/SmartMoney.jsx';
-import SegmentedTabs from './SegmentedTabs.jsx';
-import SimulationReadiness from './smart-money/SimulationReadiness.jsx';
 
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 
@@ -155,7 +152,7 @@ const AddRow = ({ commodities, onAdd }) => {
 function HoldingsView({ onSelectAsset }) {
   const {
     commodities, positions, upsertPosition, removePosition,
-    formatAssetPrice, dashboardCurrency, convert, dataMode,
+    formatAssetPrice, dashboardCurrency, dataMode,
   } = useLiveData();
 
   const enriched = useMemo(() => positions.map((p) => {
@@ -165,7 +162,13 @@ function HoldingsView({ onSelectAsset }) {
     const cost = p.avgCost * p.qty;
     const pnl = value - cost;
     const pnlPct = cost > 0 ? (pnl / cost) * 100 : 0;
-    const dayChange = (c.changePct / 100) * value; // approx today's $ change in USD
+    const changeRate = Number(c.changePct) / 100;
+    const previousPrice = Number.isFinite(c.prevClose) && c.prevClose > 0
+      ? c.prevClose
+      : Number.isFinite(changeRate) && changeRate > -1
+        ? c.price / (1 + changeRate)
+        : c.price;
+    const dayChange = (c.price - previousPrice) * p.qty;
     return { ...p, c, value, cost, pnl, pnlPct, dayChange };
   }), [positions, commodities]);
 
@@ -194,7 +197,7 @@ function HoldingsView({ onSelectAsset }) {
             Portfolio
           </h2>
           <p className="text-xs sm:text-sm text-gray-400 mt-1">
-            Track positions with live P&amp;L. Stored locally in your browser.
+            Track positions with live P&amp;L. Stored locally in your browser; there is no brokerage connection or trade execution.
           </p>
         </div>
         <button
@@ -317,32 +320,6 @@ const SummaryCard = ({ label, value, sub, accent }) => (
   </div>
 );
 
-export default function Portfolio({
-  view = 'holdings', onViewChange, onSelectAsset,
-}) {
-  const { simulationCapability } = useSmartMoney();
-  const activeView = view === 'simulation-readiness' ? 'simulation-readiness' : 'holdings';
-  return (
-    <div className="space-y-5 sm:space-y-6">
-      <SegmentedTabs
-        idPrefix="portfolio-view"
-        label="Portfolio view"
-        value={activeView}
-        onChange={(nextView) => onViewChange?.(nextView)}
-        tabs={[
-          { id: 'holdings', label: 'Holdings' },
-          { id: 'simulation-readiness', label: 'Simulation readiness' },
-        ]}
-      />
-      <div
-        id={`portfolio-view-panel-${activeView}`}
-        role="tabpanel"
-        aria-labelledby={`portfolio-view-tab-${activeView}`}
-      >
-        {activeView === 'simulation-readiness'
-          ? <SimulationReadiness capability={simulationCapability} />
-          : <HoldingsView onSelectAsset={onSelectAsset} />}
-      </div>
-    </div>
-  );
+export default function Portfolio({ onSelectAsset }) {
+  return <HoldingsView onSelectAsset={onSelectAsset} />;
 }
