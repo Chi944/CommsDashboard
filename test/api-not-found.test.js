@@ -1,24 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { createSmartMoneyRouteHandler } from '../api/smart-money/[route].js';
 import { mockRequest } from './helpers/api.js';
 
-async function apiFallbackModule() {
-  try {
-    return await import('../api/not-found.js');
-  } catch (error) {
-    if (error?.code === 'ERR_MODULE_NOT_FOUND') return null;
-    throw error;
-  }
-}
-
 test('unknown API paths return one non-cacheable JSON 404 contract', async () => {
-  const module = await apiFallbackModule();
-  assert.equal(
-    typeof module?.default,
-    'function',
-    'an API fallback handler must exist before the SPA fallback',
-  );
+  const handler = createSmartMoneyRouteHandler({ handlers: {} });
 
   for (const { path, method } of [
     { path: '/api/does-not-exist?private=value', method: 'GET' },
@@ -26,7 +13,7 @@ test('unknown API paths return one non-cacheable JSON 404 contract', async () =>
   ]) {
     const { req, res } = mockRequest(path, { method });
 
-    await module.default(req, res);
+    await handler(req, res);
 
     assert.equal(res.statusCode, 404, `${method} ${path}`);
     assert.deepEqual(res.body, {

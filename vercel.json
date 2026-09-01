@@ -25,7 +25,7 @@
   "rewrites": [
     { "source": "/api/smart-money/:route", "destination": "/api/smart-money/[route]" },
     { "source": "/api/smart-money/:route/", "destination": "/api/smart-money/[route]" },
-    { "source": "/api/:path*", "destination": "/api/not-found" },
+    { "source": "/api/:path*", "destination": "/api/smart-money/[route]?route=__api_not_found" },
     { "source": "/(.*)", "destination": "/" }
   ]
 }
