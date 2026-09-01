@@ -146,6 +146,8 @@ export function LiveDataProvider({ children }) {
   const [alerts, setAlerts] = useLocalStorage('comms.alerts.v1', []);
   const [triggeredAlerts, setTriggeredAlerts] = useLocalStorage('comms.alerts.triggered.v1', []);
   const lastPriceRef = useRef({});
+  const marketRefreshInFlightRef = useRef(null);
+  const pageRefreshInFlightRef = useRef(null);
 
   const addAlert = useCallback(({ ticker, op, price, name }) => {
     const id = `${ticker}-${op}-${price}-${Date.now()}`;
@@ -289,20 +291,27 @@ export function LiveDataProvider({ children }) {
     }
   }, [fetchLiveMarketFeeds, fetchYahooPrices]);
 
-  const refreshMarketSnapshot = useCallback(async () => {
-    try {
-      setMarketRefreshing(true);
-      if (USE_MARKET_V2) {
-        await fetchLiveMarketFeeds();
-      } else {
-        await fetchYahooPrices();
+  const refreshMarketSnapshot = useCallback(() => {
+    if (marketRefreshInFlightRef.current) return marketRefreshInFlightRef.current;
+    setMarketRefreshing(true);
+    const operation = (async () => {
+      try {
+        if (USE_MARKET_V2) {
+          await fetchLiveMarketFeeds();
+        } else {
+          await fetchYahooPrices();
+        }
+      } catch {
+        setPricesFetchFailed(true);
+        /* keep prior v2 snapshot */
       }
-    } catch {
-      setPricesFetchFailed(true);
-      /* keep prior v2 snapshot */
-    } finally {
+    })();
+    marketRefreshInFlightRef.current = operation;
+    operation.finally(() => {
+      if (marketRefreshInFlightRef.current === operation) marketRefreshInFlightRef.current = null;
       setMarketRefreshing(false);
-    }
+    });
+    return operation;
   }, [fetchLiveMarketFeeds, fetchYahooPrices]);
 
   const fetchNews = useCallback(async () => {
@@ -348,7 +357,15 @@ export function LiveDataProvider({ children }) {
     return () => { clearInterval(a); clearInterval(b); clearInterval(c); };
   }, [fetchPrices, fetchNews]);
 
-  const refresh = useCallback(() => { fetchPrices(); fetchNews(); }, [fetchPrices, fetchNews]);
+  const refresh = useCallback(() => {
+    if (pageRefreshInFlightRef.current) return pageRefreshInFlightRef.current;
+    const operation = Promise.allSettled([fetchPrices(), fetchNews()]);
+    pageRefreshInFlightRef.current = operation;
+    operation.finally(() => {
+      if (pageRefreshInFlightRef.current === operation) pageRefreshInFlightRef.current = null;
+    });
+    return operation;
+  }, [fetchPrices, fetchNews]);
 
   const yahooDataMode = useMemo(
     () => dataModeFromState({

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useId, useMemo, useState } from 'react';
 import { useLiveData } from '../state/LiveData.jsx';
 import { assetCategoryColor } from '../data/mockData.js';
 import Sparkline from './Sparkline.jsx';
@@ -16,9 +16,29 @@ const AddRow = ({ commodities, onAdd }) => {
   const [qty, setQty] = useState('');
   const [cost, setCost] = useState('');
   const [matches, setMatches] = useState([]);
+  const [activeMatch, setActiveMatch] = useState(-1);
+  const fieldId = useId();
+  const tickerId = `${fieldId}-ticker`;
+  const quantityId = `${fieldId}-quantity`;
+  const averageCostId = `${fieldId}-average-cost`;
+  const suggestionsId = `${fieldId}-ticker-suggestions`;
+
+  const selectedAsset = commodities.find(
+    (c) => c.ticker.toUpperCase() === ticker.trim().toUpperCase(),
+  );
+  const quantity = Number(qty);
+  const averageCost = Number(cost);
+  const canSubmit = Boolean(selectedAsset)
+    && qty.trim() !== ''
+    && Number.isFinite(quantity)
+    && quantity > 0
+    && cost.trim() !== ''
+    && Number.isFinite(averageCost)
+    && averageCost > 0;
 
   const onTickerChange = (v) => {
     setTicker(v);
+    setActiveMatch(-1);
     if (!v.trim()) { setMatches([]); return; }
     const q = v.toLowerCase();
     setMatches(commodities
@@ -26,16 +46,37 @@ const AddRow = ({ commodities, onAdd }) => {
       .slice(0, 6));
   };
 
+  const chooseTicker = (asset) => {
+    setTicker(asset.ticker);
+    setMatches([]);
+    setActiveMatch(-1);
+  };
+
+  const onTickerKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      setMatches([]);
+      setActiveMatch(-1);
+      return;
+    }
+    if (!matches.length) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setActiveMatch((current) => Math.min(current + 1, matches.length - 1));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActiveMatch((current) => (current <= 0 ? matches.length - 1 : current - 1));
+    } else if (event.key === 'Enter' && activeMatch >= 0) {
+      event.preventDefault();
+      chooseTicker(matches[activeMatch]);
+    }
+  };
+
   const submit = (e) => {
     e?.preventDefault?.();
-    const t = ticker.trim().toUpperCase();
-    const sym = commodities.find((c) => c.ticker.toUpperCase() === t);
-    if (!sym) return;
-    const q = Number(qty);
-    const c = Number(cost);
-    if (!q || !c) return;
-    onAdd({ ticker: sym.ticker, qty: q, avgCost: c });
+    if (!canSubmit) return;
+    onAdd({ ticker: selectedAsset.ticker, qty: quantity, avgCost: averageCost });
     setTicker(''); setQty(''); setCost(''); setMatches([]);
+    setActiveMatch(-1);
   };
 
   return (
@@ -43,19 +84,36 @@ const AddRow = ({ commodities, onAdd }) => {
       <div className="text-[11px] uppercase tracking-widest text-gray-500">Add a position</div>
       <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr_1fr_auto] gap-2 items-end">
         <div className="relative">
-          <label className="text-[10px] uppercase tracking-widest text-gray-500">Ticker</label>
+          <label htmlFor={tickerId} className="text-[10px] uppercase tracking-widest text-gray-500">Ticker</label>
           <input
+            id={tickerId}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={matches.length > 0}
+            aria-controls={suggestionsId}
+            aria-activedescendant={activeMatch >= 0 ? `${suggestionsId}-${activeMatch}` : undefined}
             value={ticker}
             onChange={(e) => onTickerChange(e.target.value)}
+            onKeyDown={onTickerKeyDown}
             placeholder="e.g. NVDA"
             className="mt-1 w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-md px-3 py-2 font-mono uppercase focus:outline-none focus:border-cyan-500"
           />
           {matches.length > 0 && (
-            <ul className="absolute left-0 right-0 mt-1 z-10 max-h-56 overflow-y-auto rounded-md border border-gray-800 bg-gray-950 shadow-xl">
-              {matches.map((m) => (
+            <ul
+              id={suggestionsId}
+              role="listbox"
+              aria-label="Ticker suggestions"
+              className="absolute left-0 right-0 mt-1 z-10 max-h-56 overflow-y-auto rounded-md border border-gray-800 bg-gray-950 shadow-xl"
+            >
+              {matches.map((m, index) => (
                 <li
                   key={m.ticker}
-                  onClick={() => { setTicker(m.ticker); setMatches([]); }}
+                  id={`${suggestionsId}-${index}`}
+                  role="option"
+                  aria-selected={index === activeMatch}
+                  onMouseEnter={() => setActiveMatch(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseTicker(m)}
                   className="px-3 py-2 cursor-pointer hover:bg-gray-800/70 flex items-center gap-2"
                 >
                   <span className="font-mono text-xs text-gray-100 w-16">{m.ticker}</span>
@@ -67,16 +125,18 @@ const AddRow = ({ commodities, onAdd }) => {
           )}
         </div>
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-gray-500">Quantity</label>
+          <label htmlFor={quantityId} className="text-[10px] uppercase tracking-widest text-gray-500">Quantity</label>
           <input
+            id={quantityId}
             type="number" inputMode="decimal" step="any" value={qty}
             onChange={(e) => setQty(e.target.value)}
             className="mt-1 w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-md px-3 py-2 font-mono focus:outline-none focus:border-cyan-500"
           />
         </div>
         <div>
-          <label className="text-[10px] uppercase tracking-widest text-gray-500">Avg cost ($)</label>
+          <label htmlFor={averageCostId} className="text-[10px] uppercase tracking-widest text-gray-500">Average cost ($)</label>
           <input
+            id={averageCostId}
             type="number" inputMode="decimal" step="any" value={cost}
             onChange={(e) => setCost(e.target.value)}
             className="mt-1 w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-md px-3 py-2 font-mono focus:outline-none focus:border-cyan-500"
@@ -84,7 +144,8 @@ const AddRow = ({ commodities, onAdd }) => {
         </div>
         <button
           type="submit"
-          className="h-[38px] px-4 rounded-md text-xs uppercase tracking-wider bg-cyan-500 text-gray-950 hover:bg-cyan-400"
+          disabled={!canSubmit}
+          className="h-[38px] px-4 rounded-md text-xs uppercase tracking-wider bg-cyan-500 text-gray-950 hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed"
         >Add</button>
       </div>
     </form>
@@ -182,7 +243,11 @@ function HoldingsView({ onSelectAsset }) {
                 <li key={p.ticker} className="px-4 py-3 flex items-center justify-between text-sm text-gray-400">
                   <span className="font-mono">{p.ticker}</span>
                   <span className="text-amber-400 text-xs">not in catalogue — open price tab to view, or remove</span>
-                  <button onClick={() => removePosition(p.ticker)} className="text-[10px] text-red-300 hover:underline">remove</button>
+                  <button
+                    onClick={() => removePosition(p.ticker)}
+                    aria-label={`Remove ${p.ticker} position`}
+                    className="text-[10px] text-red-300 hover:underline"
+                  >remove</button>
                 </li>
               );
             }
@@ -208,7 +273,7 @@ function HoldingsView({ onSelectAsset }) {
                 <div className="text-right w-24">
                   <div className="text-[10px] text-gray-500 uppercase">P&amp;L</div>
                   <div className={`font-mono text-xs ${up ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {up ? '+' : ''}{formatPriceUSD(p.pnl, formatAssetPrice).replace(/^-/, '')}
+                    {up ? '+' : ''}{formatPriceUSD(p.pnl, formatAssetPrice)}
                   </div>
                   <div className={`font-mono text-[10px] ${up ? 'text-emerald-400/80' : 'text-red-400/80'}`}>
                     {fmtPctChange(p.pnlPct)}
@@ -216,8 +281,9 @@ function HoldingsView({ onSelectAsset }) {
                 </div>
                 <button
                   onClick={() => removePosition(p.ticker)}
+                  aria-label={`Remove ${p.ticker} position`}
                   className="text-gray-600 hover:text-red-400 text-base leading-none px-2"
-                  title="Remove position"
+                  title={`Remove ${p.ticker} position`}
                 >×</button>
               </li>
             );
@@ -238,7 +304,8 @@ function HoldingsView({ onSelectAsset }) {
 
 function formatPriceUSD(amountUsd, formatAssetPrice) {
   // Use the same converter used elsewhere by passing a synthetic asset.
-  return formatAssetPrice({ unit: '$', category: 'TECH' }, amountUsd);
+  const formatted = formatAssetPrice({ unit: '$', category: 'TECH' }, Math.abs(amountUsd));
+  return amountUsd < 0 ? `-${formatted}` : formatted;
 }
 
 const SummaryCard = ({ label, value, sub, accent }) => (

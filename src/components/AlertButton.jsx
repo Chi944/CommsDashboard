@@ -1,14 +1,74 @@
-import React, { useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { useLiveData } from '../state/LiveData.jsx';
+
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
 
 export default function AlertButton({ asset, compact = false }) {
   const { alerts, addAlert, removeAlert, toggleAlert, requestNotificationPermission } = useLiveData();
   const [open, setOpen] = useState(false);
   const [op, setOp] = useState('>');
   const [price, setPrice] = useState('');
+  const triggerRef = useRef(null);
+  const dialogRef = useRef(null);
+  const priceInputRef = useRef(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
   const myAlerts = alerts.filter((a) => a.ticker === asset?.ticker);
   const hasAny = myAlerts.length > 0;
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const trigger = triggerRef.current;
+    priceInputRef.current?.focus();
+
+    return () => {
+      trigger?.focus();
+    };
+  }, [open]);
+
+  const closeDialog = () => setOpen(false);
+
+  const handleDialogKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeDialog();
+      return;
+    }
+
+    if (event.key !== 'Tab') return;
+
+    const dialog = dialogRef.current;
+    const focusable = dialog
+      ? Array.from(dialog.querySelectorAll(FOCUSABLE_SELECTOR))
+      : [];
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialog?.focus();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+
+    if (event.shiftKey && (active === first || !dialog.contains(active))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   const submit = async (e) => {
     e?.preventDefault?.();
@@ -17,44 +77,62 @@ export default function AlertButton({ asset, compact = false }) {
     if ('Notification' in window) await requestNotificationPermission();
     addAlert({ ticker: asset.ticker, op, price: p, name: asset.name });
     setPrice('');
+    priceInputRef.current?.focus();
   };
 
   return (
     <>
       <button
+        ref={triggerRef}
+        type="button"
         onClick={(e) => { e.stopPropagation(); setOpen(true); }}
         className={`${compact ? 'text-sm' : 'text-base'} leading-none transition-colors ${hasAny ? 'text-cyan-400' : 'text-gray-600 hover:text-gray-300'}`}
         title={hasAny ? `${myAlerts.length} alert${myAlerts.length > 1 ? 's' : ''} set` : 'Set price alert'}
-        aria-label="price alerts"
+        aria-label={`Price alerts for ${asset.ticker}`}
       >
         🔔
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-[55] flex items-center justify-center px-4" onClick={() => setOpen(false)}>
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+        <div className="fixed inset-0 z-[55] flex items-center justify-center px-4" onClick={closeDialog}>
+          <div aria-hidden="true" className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
           <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            aria-describedby={descriptionId}
+            tabIndex={-1}
             className="relative w-full max-w-md rounded-xl border border-gray-800 bg-gray-950/95 shadow-2xl p-5 animate-slide-up"
             onClick={(e) => e.stopPropagation()}
+            onKeyDown={handleDialogKeyDown}
           >
+            <h2 id={titleId} className="sr-only">Price alerts for {asset?.name || asset?.ticker}</h2>
             <div className="flex items-center justify-between mb-4">
               <div>
                 <div className="text-[10px] uppercase tracking-widest text-gray-500">Price alert</div>
                 <div className="text-sm font-semibold text-gray-100">{asset.name} <span className="text-gray-500 font-mono">· {asset.ticker}</span></div>
                 <div className="text-xs text-gray-400 mt-1 font-mono">Current: {asset.price?.toLocaleString()}</div>
               </div>
-              <button onClick={() => setOpen(false)} className="text-gray-500 hover:text-gray-200 text-xl leading-none">×</button>
+              <button
+                type="button"
+                onClick={closeDialog}
+                aria-label="Close price alert dialog"
+                className="text-gray-500 hover:text-gray-200 text-xl leading-none"
+              >×</button>
             </div>
 
             <form onSubmit={submit} className="flex items-end gap-2 mb-4">
               <div>
-                <label className="text-[10px] uppercase tracking-widest text-gray-500">Trigger when</label>
-                <div className="mt-1 flex gap-1">
+                <div className="text-[10px] uppercase tracking-widest text-gray-500">Trigger when</div>
+                <div role="group" aria-label="Price threshold direction" className="mt-1 flex gap-1">
                   {['>', '<'].map((o) => (
                     <button
                       key={o}
                       type="button"
                       onClick={() => setOp(o)}
+                      aria-label={`Trigger when price is ${o === '>' ? 'above' : 'below'} threshold`}
+                      aria-pressed={op === o}
                       className={`w-9 h-9 text-sm rounded-md font-mono transition
                         ${op === o ? 'bg-cyan-500 text-gray-950 border border-cyan-400' : 'bg-gray-800 border border-gray-700 text-gray-300 hover:border-gray-500'}`}
                     >{o}</button>
@@ -62,8 +140,10 @@ export default function AlertButton({ asset, compact = false }) {
                 </div>
               </div>
               <div className="flex-1">
-                <label className="text-[10px] uppercase tracking-widest text-gray-500">Price</label>
+                <label htmlFor={`${titleId}-price`} className="text-[10px] uppercase tracking-widest text-gray-500">Price threshold</label>
                 <input
+                  ref={priceInputRef}
+                  id={`${titleId}-price`}
                   type="number"
                   inputMode="decimal"
                   step="any"
@@ -105,7 +185,7 @@ export default function AlertButton({ asset, compact = false }) {
               </div>
             )}
 
-            <div className="text-[10px] text-gray-500 mt-3">
+            <div id={descriptionId} className="text-[10px] text-gray-500 mt-3">
               Threshold checks and browser alerts operate only while this dashboard is open. Prices are checked every 60 seconds while open.
             </div>
           </div>

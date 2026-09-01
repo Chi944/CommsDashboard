@@ -5,6 +5,21 @@ if (!baseUrl) throw new Error('VERCEL_DEV_BASE_URL is required.');
 
 const checks = [
   {
+    path: '/api/does-not-exist',
+    statuses: [404],
+    codes: ['api_route_not_found'],
+  },
+  {
+    path: '/api/smart-money/briefing/extra',
+    statuses: [404],
+    codes: ['api_route_not_found'],
+  },
+  {
+    path: '/api/calendar?unknown=1',
+    statuses: [400],
+    codes: ['invalid_query_parameters'],
+  },
+  {
     path: '/api/smart-money/briefing?unknown=1',
     statuses: [400],
     codes: ['invalid_query_parameters'],
@@ -55,3 +70,12 @@ for (const check of checks) {
   assert.ok(check.codes.includes(body?.error?.code), `${check.path}: ${body?.error?.code}`);
   process.stdout.write(`verified ${check.path} -> ${response.status} ${body.error.code}\n`);
 }
+
+const spaPath = '/route-verification/frontend-deep-link';
+const spaResponse = await fetch(new URL(spaPath, baseUrl), {
+  redirect: 'follow',
+  signal: AbortSignal.timeout(10_000),
+});
+assert.equal(spaResponse.status, 200, spaPath);
+assert.match(spaResponse.headers.get('content-type') || '', /^text\/html(?:;|$)/i, spaPath);
+process.stdout.write(`verified ${spaPath} -> ${spaResponse.status} SPA HTML\n`);

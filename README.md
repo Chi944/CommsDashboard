@@ -65,7 +65,7 @@ See [docs/commodities-v2-api-spec.md](docs/commodities-v2-api-spec.md) for archi
 | `GET /api/analysis?ticker=NVDA` | Cached, quota-protected technical and AI analysis |
 | `GET /api/smart-money` | Latest accepted public research snapshot |
 | `GET /api/smart-money/briefing` | Daily three-paragraph research briefing grounded only in accepted public evidence |
-| `GET /api/smart-money/history` | Inclusive, bounded accepted research history |
+| `GET /api/smart-money/history?since=2026-08-01T00%3A00%3A00.000Z&limit=20` | Inclusive, bounded accepted research history (`since` is required) |
 | `GET /api/smart-money/health` | Exact health for all seven enabled SEC-backed adapters and both durable stores |
 | `GET /api/smart-money/refresh` | Protected Smart Money-only refresh (Bearer `CRON_SECRET`) |
 
@@ -81,7 +81,7 @@ The combined market and Smart Money refresh runs at 06:00 and 18:00 UTC (`vercel
 - Yahoo symbols are fetched in 20-symbol batches, cutting the normal price refresh to 14 upstream requests for all 268 assets.
 - The supplemental market snapshot returns only source-tagged CoinGecko/EIA rows and reports live, stale, missing, and fallback coverage explicitly. Static catalogue anchors are never exposed as live provider observations.
 - General and per-asset news reject undated, future-dated, and more-than-seven-day-old articles. The briefing applies a stricter 72-hour headline boundary, and the UI drops its LIVE claim after a failed or expired news refresh while retaining the last good headlines visibly.
-- The economic calendar has no static event fallback, consensus forecast, or invented prior values. Direct BLS schedules are preferred; if that network path fails, the dashboard uses the official OMB/OIRA Principal Federal Economic Indicators schedule hosted by Census and then FRED as a final fallback. OMB/OIRA dates are explicitly labelled `Date only` because its BLS table does not publish a time. Every displayed event links to its exact BLS, Census-hosted OMB/OIRA, BEA, Federal Reserve, or FRED source, and partial provider failure is shown as degraded rather than live.
+- The economic calendar has no static event fallback, consensus forecast, or invented prior values. Direct BLS schedules are preferred; if that network path fails, the dashboard uses the official OMB/OIRA Principal Federal Economic Indicators schedule hosted by Census and then FRED as a final fallback. OMB/OIRA dates are explicitly labelled `Date only` because its BLS table does not publish a time. Event titles link only when an exact human-readable release page is available; provider-wide subscriptions and schedule documents are labelled separately. Partial provider failure is shown as degraded rather than live.
 - News, per-asset news, history, sentiment, market, AI, and Smart Money upstream calls all have bounded deadlines and safe public errors.
 - The UI reports `LIVE`, `DEGRADED`, or `STALE` from the effective displayed coverage. A complete fresh Yahoo feed keeps the dashboard live when an optional provider overlay is stale; stale overlays are rejected rather than shown. Mock fallback rows remain visible but are excluded from movers, heatmaps, and alerts.
 - Provider requests time out and partial failures preserve usable or last-known-good data.

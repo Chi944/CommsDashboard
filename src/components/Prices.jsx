@@ -107,6 +107,8 @@ const Heatmap = ({ items, selectedTicker, onSelect, fmt, resolveHeatmapAsset }) 
           <button
             key={c.ticker}
             onClick={() => onSelect(c.ticker)}
+            aria-pressed={sel}
+            aria-label={`Select ${c.ticker} — ${c.name}`}
             style={{ background: tileBg(display.changePct) }}
             className={`text-left rounded-lg p-3 border transition-all
               ${sel ? 'border-cyan-400 ring-1 ring-cyan-400/40' : 'border-gray-800 hover:border-gray-600'}`}
@@ -285,7 +287,11 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
   const [cat, setCat] = useState('ALL');
   const [view, setView] = useState('table');
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState(commodities[0]?.ticker);
+  const [selected, setSelected] = useState(() => (
+    initialTicker && commodities.some((asset) => asset.ticker === initialTicker)
+      ? initialTicker
+      : commodities[0]?.ticker
+  ));
   const [range, setRange] = useState('30D');
   const [compare, setCompare] = useState(false);
   const [compareSet, setCompareSet] = useState(
@@ -297,6 +303,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
   const [chartLoading, setChartLoading] = useState(false);
   const searchRef = useRef(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const [shareErrorUrl, setShareErrorUrl] = useState(null);
   const [showRsi, setShowRsi] = useState(false);
   const [presets, setPresets] = useState(() => {
     try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]'); } catch { return []; }
@@ -305,6 +312,15 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
     try { return JSON.parse(localStorage.getItem(NOTES_KEY) || '{}'); } catch { return {}; }
   });
   const [editingNote, setEditingNote] = useState(null); // ticker being edited
+  const handledInitialTickerRef = useRef(null);
+
+  const selectTicker = useCallback((ticker) => {
+    if (!ticker || !commodities.some((asset) => asset.ticker === ticker)) return;
+    setShareCopied(false);
+    setShareErrorUrl(null);
+    setSelected(ticker);
+    onTickerChange?.(ticker);
+  }, [commodities, onTickerChange]);
 
   // Keyboard shortcut: '/' focuses the search input. Esc clears it.
   useEffect(() => {
@@ -325,22 +341,20 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
 
   // When the user navigates to Prices via "click on Overview", honour
   // the requested ticker: clear the search/filter so it's visible,
-  // select it, then notify the parent so it can clear pendingTicker.
+  // select it without echoing a stale local default back to the route.
   useEffect(() => {
     if (!initialTicker) return;
     if (!commodities.some((c) => c.ticker === initialTicker)) return;
+    if (handledInitialTickerRef.current === initialTicker) return;
+    handledInitialTickerRef.current = initialTicker;
     setQuery('');
     setCat('ALL');
     setSelected(initialTicker);
     // Scroll the page to the top so the chart panel is in view
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && !/jsdom/i.test(window.navigator?.userAgent || '')) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [initialTicker, commodities]);
-
-  useEffect(() => {
-    if (selected) onTickerChange?.(selected);
-  }, [onTickerChange, selected]);
 
   const toggleCompare = (t) => setCompareSet((p) => {
     const n = new Set(p);
@@ -378,9 +392,9 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
   useEffect(() => {
     if (filtered.length === 0) return;
     if (!filtered.some((c) => c.ticker === selected)) {
-      setSelected(filtered[0].ticker);
+      selectTicker(filtered[0].ticker);
     }
-  }, [filtered, selected]);
+  }, [filtered, selectTicker, selected]);
 
   const neededTickers = useMemo(
     () => (compare ? [...compareSet] : sel ? [sel.ticker] : []),
@@ -527,6 +541,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
               <button
                 key={v}
                 onClick={() => setView(v)}
+                aria-pressed={view === v}
                 className={`px-2.5 py-1 text-[11px] uppercase tracking-wider rounded transition-colors
                   ${view === v ? 'bg-gray-100 text-gray-950' : 'text-gray-300 hover:text-white'}`}
               >{v}</button>
@@ -543,7 +558,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
             <span className="hidden sm:inline">{refreshBusy ? 'Refreshing…' : 'Refresh'}</span>
             <span className="sm:hidden">{refreshBusy ? '…' : '↻'}</span>
           </button>
-          <button onClick={() => setCompare((v) => !v)}
+          <button onClick={() => setCompare((v) => !v)} aria-pressed={compare}
             className={`px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-colors
               ${compare ? 'bg-cyan-500 border-cyan-400 text-gray-950' : 'bg-gray-900/70 border-gray-800 text-gray-300 hover:border-gray-600 hover:text-white'}`}
           >{compare ? 'Comparing' : 'Compare'}</button>
@@ -571,6 +586,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
         <input
           ref={searchRef}
           type="search"
+          aria-label="Search Prices"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search by ticker or name (e.g. NVDA, Apple, Bitcoin)…"
@@ -583,7 +599,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
           <button
             onClick={() => setQuery('')}
             className="absolute right-3 top-1/2 -translate-y-1/2 sm:hidden text-gray-500 hover:text-gray-200 text-sm"
-            aria-label="clear"
+            aria-label="Clear price search"
           >×</button>
         )}
       </div>
@@ -597,6 +613,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
               <button
                 key={c}
                 onClick={() => setCat(c)}
+                aria-pressed={cat === c}
                 className={`shrink-0 px-3 py-1.5 text-xs uppercase tracking-wider rounded-md border transition-all
                   ${cat === c
                     ? 'bg-gradient-to-b from-cyan-300 to-cyan-500 text-gray-950 border-cyan-200 shadow'
@@ -613,6 +630,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
                 <button
                   key={c}
                   onClick={() => setCat(c)}
+                  aria-pressed={cat === c}
                   className={`shrink-0 px-2.5 py-1 text-[11px] uppercase tracking-wider rounded-md border transition-all
                     ${cat === c
                       ? 'bg-gradient-to-b from-gray-50 to-gray-200 text-gray-950 border-gray-100 shadow-sm'
@@ -640,6 +658,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
               </button>
               <button
                 onClick={() => deletePreset(i)}
+                aria-label={`Delete ${p.name} layout`}
                 className="px-1.5 py-1 text-[11px] rounded-r-md border border-l-0 border-gray-700 bg-gray-900/70 text-gray-600 hover:text-red-400 hover:border-gray-500 transition-colors"
                 title="Delete preset"
               >×</button>
@@ -661,6 +680,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
             <button
               key={n}
               onClick={() => setActiveList(n)}
+              aria-pressed={activeWatchlist === n}
               className={`px-2.5 py-1 text-[11px] uppercase tracking-wider rounded-md border transition-colors
                 ${activeWatchlist === n
                   ? 'bg-yellow-400/20 border-yellow-400/60 text-yellow-200'
@@ -708,22 +728,27 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
                     <AlertButton asset={sel} />
                     <button
                       onClick={async () => {
+                        const url = `${location.origin}${location.pathname}?tab=Prices&t=${encodeURIComponent(sel.ticker)}`;
+                        setShareErrorUrl(null);
                         try {
-                          const url = `${location.origin}${location.pathname}?tab=Prices&t=${encodeURIComponent(sel.ticker)}`;
                           await navigator.clipboard.writeText(url);
                           setShareCopied(true);
                           setTimeout(() => setShareCopied(false), 1500);
-                        } catch {}
+                        } catch {
+                          setShareCopied(false);
+                          setShareErrorUrl(url);
+                        }
                       }}
                       className="text-base leading-none text-gray-600 hover:text-cyan-300"
                       title="Copy share link"
-                      aria-label="share"
+                      aria-label={shareCopied ? `Share link for ${sel.ticker} copied` : `Share ${sel.ticker}`}
                     >{shareCopied ? '✓' : '🔗'}</button>
                   </div>
                 )}
                 <div className="flex flex-wrap gap-1">
                   {RANGES.map((r) => (
                     <button key={r} onClick={() => setRange(r)}
+                      aria-pressed={range === r}
                       className={`px-2 py-1 text-[11px] uppercase tracking-wider rounded transition-colors
                         ${range === r ? 'bg-gray-100 text-gray-950' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}
                     >{r}</button>
@@ -731,6 +756,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
                   {!compare && (
                     <button
                       onClick={() => setShowRsi((v) => !v)}
+                      aria-pressed={showRsi}
                       className={`px-2 py-1 text-[11px] uppercase tracking-wider rounded transition-colors
                         ${showRsi ? 'bg-purple-500/30 text-purple-300 border border-purple-500/50' : 'bg-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-700'}`}
                       title="Toggle RSI indicator"
@@ -739,6 +765,22 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
                 </div>
               </div>
             </div>
+            {shareErrorUrl && (
+              <div role="status" aria-label="Share link status" className="mb-4 rounded-md border border-amber-800/50 bg-amber-950/20 p-2 text-[10px] text-amber-200">
+                <span>Unable to copy automatically. Select this link:</span>
+                <input
+                  type="text"
+                  readOnly
+                  aria-label="Share link"
+                  value={shareErrorUrl}
+                  onFocus={(event) => event.currentTarget.select()}
+                  className="mt-1 block w-full rounded border border-amber-800/40 bg-gray-950 px-2 py-1 font-mono text-gray-200"
+                />
+              </div>
+            )}
+            {shareCopied && (
+              <div role="status" aria-label="Share link status" className="sr-only">Share link copied.</div>
+            )}
             <div className="h-64 sm:h-72 relative">
               {chartLoading && chartData.length === 0 && (
                 <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-500">
@@ -811,7 +853,11 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
                   {filtered.length} {filtered.length === 1 ? 'asset' : 'assets'}
                   {query.trim() && <span className="text-cyan-400 normal-case"> · "{query}"</span>}
                 </div>
-                {compare && <div className="text-[10px] text-gray-500">{compareTickers.length}/5 selected</div>}
+                {compare && (
+                  <div className="text-[10px] text-gray-500" aria-live="polite">
+                    {compareSet.size >= 5 ? 'Maximum 5 symbols · ' : ''}{compareTickers.length}/5 selected
+                  </div>
+                )}
               </div>
               <div className="divide-y divide-gray-800 max-h-[80vh] lg:max-h-[calc(100vh-12rem)] overflow-y-auto">
                 {filtered.length === 0 && (
@@ -830,14 +876,15 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
                   return (
                     <div
                       key={c.ticker}
-                      onClick={() => setSelected(c.ticker)}
-                      className={`flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3 cursor-pointer transition-colors
+                      role="group"
+                      aria-label={`${c.ticker} asset controls`}
+                      className={`flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3 transition-colors
                         ${isSel ? 'bg-gray-800/60' : 'hover:bg-gray-800/30'}`}
                     >
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleWatch(c.ticker); }}
                         className={`text-base leading-none ${watched ? 'text-yellow-400' : 'text-gray-600 hover:text-gray-300'}`}
-                        aria-label="watchlist toggle"
+                        aria-label={`${watched ? 'Remove' : 'Add'} ${c.ticker} ${watched ? 'from' : 'to'} watchlist`}
                       >★</button>
                       <span onClick={(e) => e.stopPropagation()}>
                         <AlertButton asset={c} compact />
@@ -846,25 +893,40 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
                         <input
                           type="checkbox"
                           checked={inCompare}
+                          disabled={!inCompare && compareSet.size >= 5}
+                          aria-label={`Compare ${c.ticker}`}
+                          title={!inCompare && compareSet.size >= 5 ? 'Maximum 5 symbols selected' : `Compare ${c.ticker}`}
                           onChange={() => toggleCompare(c.ticker)}
                           onClick={(e) => e.stopPropagation()}
                           className="accent-cyan-400"
                         />
                       )}
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono text-sm text-gray-100">{c.ticker}</span>
-                          <span className={`text-[9px] uppercase tracking-wider ${assetCategoryColor(c.category)}`}>
-                            {c.category}
+                        <button
+                          type="button"
+                          onClick={() => selectTicker(c.ticker)}
+                          aria-pressed={isSel}
+                          aria-label={`Select ${c.ticker} — ${c.name}`}
+                          className="block w-full rounded text-left focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400"
+                        >
+                          <span className="flex items-center gap-1.5">
+                            <span className="font-mono text-sm text-gray-100">{c.ticker}</span>
+                            <span className={`text-[9px] uppercase tracking-wider ${assetCategoryColor(c.category)}`}>
+                              {c.category}
+                            </span>
+                            {notes[c.ticker] && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title={notes[c.ticker]} />
+                            )}
                           </span>
-                          {notes[c.ticker] && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title={notes[c.ticker]} />
+                          {editingNote !== c.ticker && (
+                            <span className="block text-[10px] text-gray-500 truncate">{notes[c.ticker] || c.name}</span>
                           )}
-                        </div>
-                        {editingNote === c.ticker ? (
+                        </button>
+                        {editingNote === c.ticker && (
                           <input
                             autoFocus
                             type="text"
+                            aria-label={`Note for ${c.ticker}`}
                             defaultValue={notes[c.ticker] || ''}
                             placeholder="Add note… (Enter to save)"
                             className="text-[10px] bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-100 focus:outline-none focus:border-cyan-500 w-full mt-0.5"
@@ -875,15 +937,13 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
                             }}
                             onClick={(e) => e.stopPropagation()}
                           />
-                        ) : (
-                          <div className="text-[10px] text-gray-500 truncate">{notes[c.ticker] || c.name}</div>
                         )}
                       </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); setEditingNote(editingNote === c.ticker ? null : c.ticker); }}
                         className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${notes[c.ticker] ? 'text-amber-400 hover:bg-amber-400/10' : 'text-gray-600 hover:text-gray-300 hover:bg-gray-700/50'}`}
                         title={notes[c.ticker] ? 'Edit note' : 'Add note'}
-                        aria-label="note"
+                        aria-label={`${notes[c.ticker] ? 'Edit' : 'Add'} note for ${c.ticker}`}
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M12 20h9" />
@@ -913,7 +973,7 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
             <Heatmap
               items={filtered}
               selectedTicker={selected}
-              onSelect={setSelected}
+              onSelect={selectTicker}
               fmt={fmt}
               resolveHeatmapAsset={resolveHeatmapAsset}
             />

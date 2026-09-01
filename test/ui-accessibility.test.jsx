@@ -17,6 +17,7 @@ import AlertButton from '../src/components/AlertButton.jsx';
 import Briefing from '../src/components/Briefing.jsx';
 import CommandPalette from '../src/components/CommandPalette.jsx';
 import Currency from '../src/components/Currency.jsx';
+import Nav from '../src/components/Nav.jsx';
 import NotificationsDrawer from '../src/components/NotificationsDrawer.jsx';
 import Prices, { fmtPctChange } from '../src/components/Prices.jsx';
 import SectorHeatmap from '../src/components/SectorHeatmap.jsx';
@@ -172,6 +173,30 @@ afterEach(() => {
   else delete globalThis.ResizeObserver;
   if (originalNotification) globalThis.Notification = originalNotification;
   else delete globalThis.Notification;
+});
+
+it('keeps display currency available at mobile widths and updates it', async () => {
+  const user = userEvent.setup();
+  const setDashboardCurrency = vi.fn();
+  liveData.current = {
+    ...defaultLiveData(),
+    pricesLive: true,
+    dashboardCurrency: 'USD',
+    setDashboardCurrency,
+    availableCurrencies: ['USD', 'SGD'],
+    dataMode: 'LIVE',
+    marketUpdatedLabel: 'updated 2s ago',
+    marketRefreshing: false,
+    refreshMarketSnapshot: vi.fn(),
+    useMarketV2: true,
+  };
+
+  render(<Nav active="Overview" setActive={vi.fn()} onOpenAlerts={vi.fn()} onOpenPalette={vi.fn()} />);
+  const currency = screen.getByRole('combobox', { name: /display currency/i });
+  expect(currency.closest('label').className).not.toMatch(/\bhidden\b/);
+  expect(screen.getByRole('button', { name: /open command palette/i }).className).not.toMatch(/\bhidden\b/);
+  await user.selectOptions(currency, 'SGD');
+  expect(setDashboardCurrency).toHaveBeenCalledWith('SGD');
 });
 
 describe('AI refresh controls', () => {
@@ -362,7 +387,7 @@ describe('AI refresh controls', () => {
     expect(screen.getByText('Current briefing 3')).toBeInTheDocument();
   });
 
-  it('refreshes asset analysis without adding a cache-busting query parameter', async () => {
+  it('refreshes asset analysis through the stable no-store refresh route', async () => {
     const user = userEvent.setup();
     const { fake, calls } = jsonFetch({ ok: true, signals: [] });
     globalThis.fetch = fake;
@@ -374,7 +399,7 @@ describe('AI refresh controls', () => {
     await waitFor(() => expect(calls).toHaveLength(2));
     expect(calls).toEqual([
       '/api/analysis?ticker=NVDA',
-      '/api/analysis?ticker=NVDA',
+      '/api/analysis?ticker=NVDA&refresh=1',
     ]);
   });
 
@@ -646,6 +671,60 @@ describe('Prices heatmap', () => {
     expect(screen.getByText('No items.')).toBeInTheDocument();
   });
 
+  it('names the Prices search and makes table asset selection keyboard-operable', async () => {
+    const user = userEvent.setup();
+    const rows = [priceRow('CL', 'yahoo', false), priceRow('NVDA', 'yahoo', false)];
+    liveData.current = pricesLiveData(rows);
+    globalThis.fetch = jsonFetch({ ok: false, items: [] }).fake;
+    const onTickerChange = vi.fn();
+
+    render(<Prices onTickerChange={onTickerChange} />);
+
+    expect(screen.getByRole('searchbox', { name: /search prices/i })).toBeInTheDocument();
+    const nvda = screen.getByRole('button', { name: /select nvda/i });
+    expect(nvda.tagName).toBe('BUTTON');
+    expect(nvda.querySelector('button, input, select, textarea, a[href]')).toBeNull();
+    nvda.focus();
+    await user.keyboard('{Enter}');
+    expect(onTickerChange).toHaveBeenCalledWith('NVDA');
+  });
+
+  it('names comparison choices and disables unchecked symbols at the five-symbol cap', async () => {
+    const user = userEvent.setup();
+    const rows = ['NVDA', 'AAPL', 'BTC', 'MSFT', 'GOOG', 'AMZN'].map((ticker) => priceRow(ticker, 'yahoo', false));
+    liveData.current = pricesLiveData(rows);
+    globalThis.fetch = jsonFetch({ ok: false, items: [] }).fake;
+
+    render(<Prices />);
+    await user.click(screen.getByRole('button', { name: /^compare$/i }));
+    await user.click(screen.getByRole('checkbox', { name: /compare msft/i }));
+    await user.click(screen.getByRole('checkbox', { name: /compare goog/i }));
+
+    expect(screen.getByRole('checkbox', { name: /compare amzn/i })).toBeDisabled();
+    expect(screen.getByText(/maximum 5 symbols/i)).toBeVisible();
+  });
+
+  it('offers a selectable share link when clipboard access is denied', async () => {
+    const user = userEvent.setup();
+    const originalClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(async () => { throw new DOMException('Denied', 'NotAllowedError'); }) },
+    });
+    liveData.current = pricesLiveData([priceRow('NVDA', 'yahoo', false)]);
+    globalThis.fetch = jsonFetch({ ok: false, items: [] }).fake;
+
+    try {
+      render(<Prices />);
+      await user.click(screen.getByRole('button', { name: /share nvda/i }));
+
+      expect(await screen.findByRole('status', { name: /share link status/i })).toHaveTextContent(/unable to copy/i);
+      expect(screen.getByRole('textbox', { name: /share link/i }).value).toMatch(/\?tab=Prices&t=NVDA$/);
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+    }
+  });
+
   it('never renders prior-asset headlines under a newly selected asset', async () => {
     const user = userEvent.setup();
     const rows = [
@@ -743,6 +822,21 @@ describe('Overview sector heatmap', () => {
     expect(screen.getByText('-0.8%')).toBeInTheDocument();
     expect(screen.queryByText('+-0.8%')).not.toBeInTheDocument();
   });
+
+  it('honors a requested ticker without echoing the stale default ticker to its parent', async () => {
+    const rows = [
+      { ...priceRow('CL', 'yahoo', false), name: 'WTI Crude', symbol: 'CL=F', category: 'ENERGY' },
+      { ...priceRow('NVDA', 'yahoo', false), name: 'NVIDIA', symbol: 'NVDA', category: 'TECH' },
+    ];
+    liveData.current = pricesLiveData(rows);
+    globalThis.fetch = jsonFetch({ ok: false, items: [] }).fake;
+    const onTickerChange = vi.fn();
+
+    render(<Prices initialTicker="NVDA" onTickerChange={onTickerChange} />);
+
+    await waitFor(() => expect(screen.getAllByText('NVIDIA').length).toBeGreaterThan(0));
+    expect(onTickerChange).not.toHaveBeenCalledWith('CL');
+  });
 });
 
 describe('Ticker V2-only state', () => {
@@ -781,6 +875,27 @@ describe('Ticker V2-only state', () => {
 });
 
 describe('Currency converter', () => {
+  it('exposes a disabled busy refresh control while a route refresh is running', () => {
+    liveData.current = {
+      ...defaultLiveData(),
+      availableCurrencies: ['USD', 'SGD'],
+      getRate: (from, to) => (from === to ? 1 : 1.28),
+      dashboardCurrency: 'USD',
+      dataMode: 'LIVE',
+      pricesUpdatedAt: null,
+      pricesLoading: true,
+      newsLoading: false,
+      refresh: vi.fn(),
+      intel: [],
+    };
+
+    render(<Currency />);
+
+    const refresh = screen.getByRole('button', { name: /refreshing currency data/i });
+    expect(refresh).toBeDisabled();
+    expect(refresh).toHaveAttribute('aria-busy', 'true');
+  });
+
   it('gives every converter control and result an accessible name', () => {
     liveData.current = {
       ...defaultLiveData(),
@@ -896,6 +1011,103 @@ describe('NotificationsDrawer', () => {
 });
 
 describe('Price alert dialog', () => {
+  it('exposes a named modal, focuses the price threshold, and describes every control', async () => {
+    const user = userEvent.setup();
+    liveData.current = {
+      ...defaultLiveData(),
+      alerts: [],
+      addAlert: vi.fn(),
+      removeAlert: vi.fn(),
+      toggleAlert: vi.fn(),
+    };
+
+    render(<AlertButton asset={{ ticker: 'WTI', name: 'WTI Crude', price: 80 }} />);
+    await user.click(screen.getByRole('button', { name: /price alerts/i }));
+
+    const dialog = screen.getByRole('dialog', { name: /price alerts for wti crude/i });
+    const priceInput = screen.getByRole('spinbutton', { name: /price threshold/i });
+    const above = screen.getByRole('button', { name: /price is above/i });
+    const below = screen.getByRole('button', { name: /price is below/i });
+
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(priceInput).toHaveFocus();
+    expect(screen.getByRole('button', { name: /close price alert dialog/i })).toBeInTheDocument();
+    expect(above).toHaveAttribute('aria-pressed', 'true');
+    expect(below).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(below);
+    expect(above).toHaveAttribute('aria-pressed', 'false');
+    expect(below).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('contains keyboard focus, closes on Escape, and restores focus to its trigger', async () => {
+    const user = userEvent.setup();
+    liveData.current = {
+      ...defaultLiveData(),
+      alerts: [],
+      addAlert: vi.fn(),
+      removeAlert: vi.fn(),
+      toggleAlert: vi.fn(),
+    };
+
+    render(<AlertButton asset={{ ticker: 'WTI', name: 'WTI Crude', price: 80 }} />);
+    const trigger = screen.getByRole('button', { name: /price alerts/i });
+    await user.click(trigger);
+
+    const close = screen.getByRole('button', { name: /close price alert dialog/i });
+    const priceInput = screen.getByRole('spinbutton', { name: /price threshold/i });
+    close.focus();
+    await user.tab({ shift: true });
+    expect(priceInput).toHaveFocus();
+    await user.tab();
+    expect(close).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: /price alerts for wti crude/i })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('keeps add, pause, enable, and remove alert actions usable', async () => {
+    const user = userEvent.setup();
+    const addAlert = vi.fn();
+    const toggleAlert = vi.fn();
+    const removeAlert = vi.fn();
+    const requestNotificationPermission = vi.fn(async () => 'granted');
+    liveData.current = {
+      ...defaultLiveData(),
+      alerts: [
+        { id: 'active-alert', ticker: 'WTI', op: '>', price: 90, enabled: true },
+        { id: 'paused-alert', ticker: 'WTI', op: '<', price: 70, enabled: false },
+      ],
+      addAlert,
+      removeAlert,
+      toggleAlert,
+      requestNotificationPermission,
+    };
+    Object.defineProperty(globalThis, 'Notification', {
+      configurable: true,
+      value: { permission: 'default' },
+    });
+
+    render(<AlertButton asset={{ ticker: 'WTI', name: 'WTI Crude', price: 80 }} />);
+    await user.click(screen.getByRole('button', { name: /price alerts/i }));
+    await user.click(screen.getByRole('button', { name: /price is below/i }));
+    await user.type(screen.getByRole('spinbutton', { name: /price threshold/i }), '75');
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+    expect(requestNotificationPermission).toHaveBeenCalledOnce();
+    expect(addAlert).toHaveBeenCalledWith({ ticker: 'WTI', op: '<', price: 75, name: 'WTI Crude' });
+
+    await user.click(screen.getByRole('button', { name: /^pause$/i }));
+    await user.click(screen.getByRole('button', { name: /^enable$/i }));
+    const removeButtons = screen.getAllByRole('button', { name: /^remove$/i });
+    await user.click(removeButtons[0]);
+
+    expect(toggleAlert).toHaveBeenNthCalledWith(1, 'active-alert');
+    expect(toggleAlert).toHaveBeenNthCalledWith(2, 'paused-alert');
+    expect(removeAlert).toHaveBeenCalledWith('active-alert');
+  });
+
   it('states that threshold checks and browser alerts require the dashboard to remain open', async () => {
     const user = userEvent.setup();
     liveData.current = {

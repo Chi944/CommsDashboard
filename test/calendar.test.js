@@ -243,6 +243,29 @@ test('BLS ICS parsing preserves the official Eastern time as an exact UTC instan
   });
 });
 
+test('ICS parsing retains only a same-provider human event page', async () => {
+  // Catches exposing a provider-wide feed or an injected third-party URL as event details.
+  const { parseIcsCalendar } = await calendarModule('../lib/calendar/ics.js');
+  const source = {
+    id: 'bls',
+    name: 'U.S. Bureau of Labor Statistics',
+    shortName: 'BLS',
+    sourceUrl: 'https://www.bls.gov/schedule/news_release/bls.ics',
+    kind: 'economic-release',
+  };
+  const withOfficialPage = BLS_ICS.replace(
+    'SUMMARY:Consumer Price Index\nEND:VEVENT',
+    'SUMMARY:Consumer Price Index\nURL:https://www.bls.gov/cpi/\nEND:VEVENT',
+  );
+  const withForeignPage = BLS_ICS.replace(
+    'SUMMARY:Consumer Price Index\nEND:VEVENT',
+    'SUMMARY:Consumer Price Index\nURL:https://example.com/trade-now\nEND:VEVENT',
+  );
+
+  assert.equal(parseIcsCalendar(withOfficialPage, source)[0].eventUrl, 'https://www.bls.gov/cpi/');
+  assert.equal(parseIcsCalendar(withForeignPage, source)[0].eventUrl, undefined);
+});
+
 test('OMB principal-indicator parsing returns only supported BLS rows without inventing release times', async () => {
   const { parseOmbBlsText } = await calendarModule('../lib/calendar/omb.js');
   assert.equal(typeof parseOmbBlsText, 'function');
@@ -514,6 +537,7 @@ test('calendar transparently attributes FRED when the BLS network blocks every d
   assert.equal(event.sourceName, 'BLS releases via FRED');
   assert.equal(event.sourceShortName, 'FRED/BLS');
   assert.match(event.sourceUrl, /^https:\/\/fred\.stlouisfed\.org\/releases\/calendar\?/);
+  assert.equal(event.eventUrl, 'https://fred.stlouisfed.org/release?rid=50');
   assert.equal(event.startsAt, '2026-09-04T12:30:00.000Z');
   assert.equal(event.timeLabel, '8:30 AM ET');
 });

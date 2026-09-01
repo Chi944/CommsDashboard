@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 const ROUTES = [
   ['Overview', '/'],
-  ['Prices', '/?tab=Prices&ticker=NVDA'],
+  ['Prices', '/?tab=Prices&t=NVDA'],
   ['Currency', '/?tab=Currency'],
   ['Portfolio holdings', '/?tab=Portfolio&view=holdings'],
   ['Portfolio simulation boundary', '/?tab=Portfolio&view=simulation-readiness'],
@@ -21,18 +21,24 @@ function approvedCalendarUrl(value, { provider = false } = {}) {
     const url = new URL(value);
     if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash) return false;
     if (url.origin === 'https://www.bls.gov') {
-      return !url.search && (
-        url.pathname === '/schedule/news_release/bls.ics'
-        || /^\/schedule\/20\d{2}\/$/.test(url.pathname)
-      );
+      if (url.search) return false;
+      if (url.pathname === '/schedule/news_release/bls.ics') return provider;
+      return provider ? /^\/schedule\/20\d{2}\/$/.test(url.pathname) : !/\.(?:ics|pdf)$/i.test(url.pathname);
     }
     if (url.origin === 'https://www.bea.gov') {
-      return !url.search && url.pathname === '/news/schedule/ics/online-calendar-subscription.ics';
+      return provider && !url.search && url.pathname === '/news/schedule/ics/online-calendar-subscription.ics';
     }
     if (url.origin === 'https://www.federalreserve.gov') {
       return !url.search && url.pathname === '/monetarypolicy/fomccalendars.htm';
     }
     if (url.origin === 'https://fred.stlouisfed.org') {
+      if (url.pathname === '/release') {
+        const keys = [...url.searchParams.keys()];
+        return !provider
+          && keys.length === 1
+          && keys[0] === 'rid'
+          && ['10', '11', '46', '47', '50', '188', '192'].includes(url.searchParams.get('rid'));
+      }
       if (url.pathname !== '/releases/calendar') return false;
       if (provider) return !url.search;
       if (!url.search) return true;
@@ -46,7 +52,7 @@ function approvedCalendarUrl(value, { provider = false } = {}) {
         && url.searchParams.get('od') === 'asc';
     }
     if (url.origin === 'https://www.census.gov') {
-      return !url.search
+      return provider && !url.search
         && /^\/economic-indicators\/econcards\/assets\/pdf\/censusreleaseglance_20\d{2}\.pdf$/.test(url.pathname);
     }
     return provider
@@ -108,6 +114,63 @@ for (const [viewportName, viewport] of VIEWPORTS) {
   }
 }
 
+test('mobile navigation exposes working currency and command controls', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/', { waitUntil: 'networkidle' });
+
+  const currency = page.getByRole('combobox', { name: 'Display currency' });
+  await expect(currency).toBeVisible();
+  await currency.selectOption('SGD');
+  await expect(currency).toHaveValue('SGD');
+  await expect(page.getByRole('button', { name: /open command palette/i })).toBeVisible();
+});
+
+test('price alerts are a keyboard-complete dialog', async ({ page }) => {
+  await page.goto('/?tab=Prices&t=NVDA', { waitUntil: 'networkidle' });
+  const trigger = page.getByRole('button', { name: /price alerts for nvda/i }).first();
+  await trigger.click();
+
+  const dialog = page.getByRole('dialog', { name: /price alerts for nvidia/i });
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole('spinbutton', { name: /price threshold/i })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
+test('portfolio form validates and adds a local-only holding with the keyboard', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?tab=Portfolio&view=holdings', { waitUntil: 'networkidle' });
+
+  const ticker = page.getByRole('combobox', { name: 'Ticker' });
+  const add = page.getByRole('button', { name: 'Add' });
+  await expect(add).toBeDisabled();
+  await ticker.fill('NV');
+  await ticker.press('ArrowDown');
+  await ticker.press('Enter');
+  await page.getByRole('spinbutton', { name: 'Quantity' }).fill('2');
+  await page.getByRole('spinbutton', { name: 'Average cost ($)' }).fill('100');
+  await expect(add).toBeEnabled();
+  await add.click();
+
+  await expect(page.getByRole('button', { name: 'Remove NVDA position' })).toBeVisible();
+});
+
+test('Smart Money following, profiles, and SEC evidence links are usable', async ({ page }) => {
+  await page.addInitScript(() => localStorage.clear());
+  await page.goto('/?tab=Intel&view=smart-money', { waitUntil: 'networkidle' });
+
+  const follow = page.getByRole('button', { name: 'Follow ARK 21Shares Bitcoin ETF' });
+  await follow.click();
+  await expect(page.getByRole('button', { name: 'Unfollow ARK 21Shares Bitcoin ETF' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: /following \(1\)/i }).click();
+  await expect(page.getByRole('button', { name: /open ark 21shares bitcoin etf research profile/i })).toBeVisible();
+  await page.getByRole('button', { name: /open ark 21shares bitcoin etf research profile/i }).click();
+  await expect(page.getByRole('region', { name: 'ARK 21Shares Bitcoin ETF' })).toBeFocused();
+
+  await expect(page.locator('a[href*="data.sec.gov"], a[href$="/index.json"]')).toHaveCount(0);
+});
+
 test('live economic calendar exposes an official source instead of static estimates', async ({ page }) => {
   await page.goto('/?tab=Intel&view=news', { waitUntil: 'networkidle' });
   const heading = page.getByText('Economic Calendar', { exact: true });
@@ -125,7 +188,6 @@ test('live economic calendar exposes an official source instead of static estima
     ).toBe(true);
   }
   if ((await card.textContent()).includes('OMB/BLS')) {
-    expect(links.some(({ href, provider }) => !provider && new URL(href).origin === 'https://www.census.gov')).toBe(true);
     expect(links.some(({ href, provider }) => provider && [
       'https://www.census.gov',
       'https://www.whitehouse.gov',
@@ -137,6 +199,25 @@ test('live economic calendar exposes an official source instead of static estima
 test('market heatmap never prefixes a negative change with plus', async ({ page }) => {
   await page.goto('/', { waitUntil: 'networkidle' });
   await expect(page.locator('main')).not.toContainText(/\+\-\d/);
+});
+
+test('a shared Prices ticker remains stable without an API request loop', async ({ page }) => {
+  const assetRequests = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.origin === new URL(page.url()).origin
+        && ['/api/analysis', '/api/asset-news', '/api/history'].includes(url.pathname)) {
+      assetRequests.push(`${url.pathname}${url.search}`);
+    }
+  });
+
+  await page.goto('/?tab=Prices&t=NVDA', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByText('NVIDIA', { exact: true }).first()).toBeVisible();
+  await page.waitForTimeout(2_000);
+
+  expect(new URL(page.url()).searchParams.get('t')).toBe('NVDA');
+  expect(assetRequests.length, `asset requests: ${assetRequests.join(', ')}`).toBeLessThanOrEqual(6);
+  expect(assetRequests.some((value) => /ticker=CL|q=WTI/i.test(value))).toBe(false);
 });
 
 test('live and research-only boundaries are explicit', async ({ page }) => {

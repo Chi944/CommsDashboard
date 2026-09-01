@@ -10,6 +10,7 @@ import {
   writeSmartMoneySnapshot,
 } from '../lib/smart-money/store.js';
 import { createMemoryRefreshLockAdapter, withRefreshLock } from '../lib/smart-money/lock.js';
+import { createRefreshDeps } from './fixtures/smart-money/scenarios.js';
 
 function snapshot(refreshStartedAt, marker, refreshedAt = refreshStartedAt) {
   return { refreshStartedAt, refreshedAt, marker };
@@ -501,6 +502,49 @@ test('snapshot reads select the newest durable generation and keep diagnostics s
   assert.equal(result.diagnostics.selectedSource, 'blob');
   assert.equal(result.diagnostics.redisError, 'redis_read_failed');
   assert.equal(JSON.stringify(result).includes('raw-secret'), false);
+});
+
+test('snapshot read diagnostics fingerprint each configured durable store independently', async () => {
+  const durable = structuredClone(createRefreshDeps({ signals: [] }).previous);
+  const digest = durable.stateDigest;
+  const generation = durable.refreshStartedAt;
+  const result = await readSmartMoneySnapshot({
+    withDiagnostics: true,
+    memory: snapshot('2026-08-26T03:00:00.000Z', 'memory'),
+    blobConfigured: true,
+    redisConfigured: true,
+    readBlob: async () => ({
+      data: structuredClone(durable),
+      error: null,
+    }),
+    readRedis: async () => ({ data: null, error: null }),
+  });
+
+  assert.equal(result.diagnostics.blobHit, true);
+  assert.equal(result.diagnostics.blobGeneration, generation);
+  assert.equal(result.diagnostics.blobDigest, digest);
+  assert.equal(result.diagnostics.redisHit, false);
+  assert.equal(result.diagnostics.redisGeneration, null);
+  assert.equal(result.diagnostics.redisDigest, null);
+});
+
+test('snapshot read diagnostics never copy a noncanonical stored digest', async () => {
+  const privateDetail = 'https://blob.invalid/?token=raw-secret';
+  const durable = structuredClone(createRefreshDeps({ signals: [] }).previous);
+  durable.stateDigest = privateDetail;
+  const result = await readSmartMoneySnapshot({
+    withDiagnostics: true,
+    memory: null,
+    blobConfigured: true,
+    redisConfigured: false,
+    readBlob: async () => ({
+      data: durable,
+      error: null,
+    }),
+  });
+
+  assert.equal(result.diagnostics.blobDigest, null);
+  assert.equal(JSON.stringify(result.diagnostics).includes(privateDetail), false);
 });
 
 test('refresh lock excludes concurrent workers and releases only its ownership token', async () => {

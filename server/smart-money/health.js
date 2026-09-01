@@ -23,7 +23,9 @@ export function createSmartMoneyHealthHandler(deps = {}) {
       readSmartMoneySnapshot({ withDiagnostics: true }),
     ]);
     const diagnostics = raw.status === 'fulfilled' ? raw.value.diagnostics : {
-      blob: false, redis: false, blobError: 'blob_read_failed', redisError: 'redis_read_failed',
+      blob: false, blobHit: false, blobGeneration: null, blobDigest: null,
+      redis: false, redisHit: false, redisGeneration: null, redisDigest: null,
+      blobError: 'blob_read_failed', redisError: 'redis_read_failed',
       selectedSource: null,
     };
     if (accepted.status === 'rejected') diagnostics.blobError = 'journal_read_failed';

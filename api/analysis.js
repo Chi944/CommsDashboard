@@ -57,14 +57,17 @@ function boundedPromptText(value, maxBytes) {
   return result;
 }
 
-function hasOnlyAllowedQuery(req, bypassCache) {
-  const allowed = new Set(['ticker']);
-  if (bypassCache) allowed.add('aiSmoke');
-  return Object.keys(req?.query || {}).every((key) => allowed.has(key));
+function hasOnlyAllowedQuery(req, aiCacheBypass) {
+  return Object.entries(req?.query || {}).every(([key, value]) => {
+    if (key === 'ticker') return true;
+    if (key === 'refresh') return value === '1';
+    if (key === 'aiSmoke') return aiCacheBypass;
+    return false;
+  });
 }
 
-function setResponseCacheControl(res, aiStatus, bypassCache) {
-  if (bypassCache || aiStatus.state === 'degraded' || aiStatus.state === 'rate_limited') {
+function setResponseCacheControl(res, aiStatus, bypassEdgeCache) {
+  if (bypassEdgeCache || aiStatus.state === 'degraded' || aiStatus.state === 'rate_limited') {
     res.setHeader('Cache-Control', 'no-store');
   } else if (aiStatus.state === 'ready') {
     res.setHeader('Cache-Control', 'public, s-maxage=1800, stale-while-revalidate=3600');
@@ -345,8 +348,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  const bypassCache = isAiSmokeBypassAuthorized(req);
-  if (!hasOnlyAllowedQuery(req, bypassCache)) {
+  const aiCacheBypass = isAiSmokeBypassAuthorized(req);
+  const publicRefresh = req?.query?.refresh === '1';
+  if (!hasOnlyAllowedQuery(req, aiCacheBypass)) {
     res.setHeader('Cache-Control', 'no-store');
     res.status(400).json({ ok: false, error: INVALID_QUERY_ERROR });
     return;
@@ -384,7 +388,7 @@ export default async function handler(req, res) {
           clientId: getClientId(req),
           ttlMs: getAiTtlMs('AI_ANALYSIS_TTL_SECONDS', 1800),
           generate: () => callLLM({ symbol: sym, technicals, headlines }),
-          bypassCache,
+          bypassCache: aiCacheBypass,
         });
         ai = result.value;
         aiStatus = readyAiStatus(result.source);
@@ -438,7 +442,7 @@ export default async function handler(req, res) {
       }
     }
 
-    setResponseCacheControl(res, aiStatus, bypassCache);
+    setResponseCacheControl(res, aiStatus, publicRefresh || aiCacheBypass);
     res.status(200).json({
       ok: true,
       ticker: sym.ticker,

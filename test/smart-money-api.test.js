@@ -8,6 +8,7 @@ import { createSmartMoneyRefreshHandler } from '../server/smart-money/refresh.js
 import { buildSmartMoneyHealth } from '../lib/smart-money/health.js';
 import { buildSmartMoneyPrivateSnapshot } from '../lib/smart-money/refresh.js';
 import { SOURCE_RIGHTS } from '../lib/smart-money/rights.js';
+import { readSmartMoneySnapshot } from '../lib/smart-money/store.js';
 import { mockRequest } from './helpers/api.js';
 import {
   ACCEPTED_HISTORY,
@@ -53,6 +54,23 @@ function enabledStatuses() {
     cacheAgeSeconds: 0,
     errorCode: index === 3 ? 'timeout' : null,
   }));
+}
+
+function durableDiagnostics(snapshot, overrides = {}) {
+  return {
+    blob: true,
+    redis: true,
+    blobHit: true,
+    redisHit: true,
+    blobGeneration: snapshot.refreshStartedAt,
+    redisGeneration: snapshot.refreshStartedAt,
+    blobDigest: snapshot.stateDigest,
+    redisDigest: snapshot.stateDigest,
+    blobError: null,
+    redisError: null,
+    selectedSource: 'memory',
+    ...overrides,
+  };
 }
 
 test('public refresh=1 only rereads accepted data and uses no-store', async () => {
@@ -326,13 +344,7 @@ test('public Smart Money responses never serialize the configured SEC contact', 
     const health = createSmartMoneyHealthHandler({
       readSnapshot: async () => ({
         snapshot: stored,
-        diagnostics: {
-          blob: true,
-          redis: true,
-          blobError: null,
-          redisError: null,
-          selectedSource: 'blob',
-        },
+        diagnostics: durableDiagnostics(stored, { selectedSource: 'blob' }),
       }),
       now: () => new Date('2026-08-26T12:00:00.000Z'),
     });
@@ -374,9 +386,7 @@ test('health exposes exact enabled children, deterministic rollups, deployment, 
     adapters: ENABLED_ADAPTER_IDS.map((id) => ({ id })),
     rights: SOURCE_RIGHTS,
     rightsValid: true,
-    storageDiagnostics: {
-      blob: true, redis: true, blobError: null, redisError: null, selectedSource: 'blob',
-    },
+    storageDiagnostics: durableDiagnostics(snapshot, { selectedSource: 'blob' }),
     deploymentCommit: 'abc123',
     deploymentEnvironment: 'production',
     groqConfigured: false,
@@ -421,6 +431,105 @@ test('health distinguishes never-run and optional Groq never degrades provider s
   assert.ok(health.providerStatuses.every((row) => row.state === 'never-run'));
   assert.equal(health.configuration.groq, 'missing_optional');
   assert.equal(health.providerRollups.find((row) => row.id === 'all-enabled').state, 'never-run');
+});
+
+test('health verifies both durable stores contain the exact accepted generation and digest', async (t) => {
+  const snapshot = acceptedStoredSnapshot();
+  const mismatchDigest = `sha256:${'f'.repeat(64)}`;
+  const cases = [
+    {
+      name: 'both configured stores are empty',
+      overrides: {
+        blobHit: false,
+        redisHit: false,
+        blobGeneration: null,
+        redisGeneration: null,
+        blobDigest: null,
+        redisDigest: null,
+      },
+      expectedConfiguration: 'unavailable',
+      expectedBlobState: 'empty',
+      expectedRedisState: 'empty',
+    },
+    {
+      name: 'one configured store is missing the accepted snapshot',
+      overrides: {
+        redisHit: false,
+        redisGeneration: null,
+        redisDigest: null,
+      },
+      expectedConfiguration: 'unavailable',
+      expectedBlobState: 'ready',
+      expectedRedisState: 'empty',
+    },
+    {
+      name: 'configured stores disagree on the accepted digest',
+      overrides: { redisDigest: mismatchDigest },
+      expectedConfiguration: 'unavailable',
+      expectedBlobState: 'ready',
+      expectedRedisState: 'mismatch',
+    },
+    {
+      name: 'configured stores disagree on the accepted generation',
+      overrides: { redisGeneration: '2026-08-26T10:58:00.000Z' },
+      expectedConfiguration: 'unavailable',
+      expectedBlobState: 'ready',
+      expectedRedisState: 'mismatch',
+    },
+    {
+      name: 'both configured stores agree with the accepted snapshot',
+      overrides: {},
+      expectedConfiguration: 'ready',
+      expectedBlobState: 'ready',
+      expectedRedisState: 'ready',
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, () => {
+      const health = buildSmartMoneyHealth({
+        snapshot,
+        adapters: ENABLED_ADAPTER_IDS.map((id) => ({ id })),
+        rights: SOURCE_RIGHTS,
+        rightsValid: true,
+        storageDiagnostics: durableDiagnostics(snapshot, scenario.overrides),
+        secUserAgent: 'CommsDashboard ops@company.com',
+        now: new Date('2026-08-26T12:00:00.000Z'),
+      });
+
+      assert.equal(health.configuration.storage, scenario.expectedConfiguration);
+      assert.equal(health.storage.blobState, scenario.expectedBlobState);
+      assert.equal(health.storage.redisState, scenario.expectedRedisState);
+    });
+  }
+});
+
+test('health rejects identically tampered durable payloads that retain the accepted digest', async () => {
+  const accepted = acceptedStoredSnapshot();
+  const tampered = structuredClone(accepted);
+  tampered.publicSnapshot.warnings = [...tampered.publicSnapshot.warnings, 'tampered-after-digest'];
+  const { diagnostics } = await readSmartMoneySnapshot({
+    withDiagnostics: true,
+    memory: null,
+    blobConfigured: true,
+    redisConfigured: true,
+    readBlob: async () => ({ data: structuredClone(tampered), error: null }),
+    readRedis: async () => ({ data: structuredClone(tampered), error: null }),
+  });
+
+  const health = buildSmartMoneyHealth({
+    snapshot: accepted,
+    adapters: ENABLED_ADAPTER_IDS.map((id) => ({ id })),
+    rights: SOURCE_RIGHTS,
+    rightsValid: true,
+    storageDiagnostics: diagnostics,
+    secUserAgent: 'CommsDashboard ops@company.com',
+    now: new Date('2026-08-26T12:00:00.000Z'),
+  });
+
+  assert.equal(health.configuration.storage, 'unavailable');
+  assert.equal(health.storage.blobState, 'mismatch');
+  assert.equal(health.storage.redisState, 'mismatch');
 });
 
 test('health recomputes stored live children as stale against the wall clock', () => {

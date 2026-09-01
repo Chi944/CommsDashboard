@@ -112,6 +112,78 @@ test('CoinGecko provider forwards last_updated_at into the normalized row contra
   }
 });
 
+test('CoinGecko volume request targets every configured id so lower-ranked ATOM remains live', async () => {
+  const originalFetch = globalThis.fetch;
+  const expectedIds = [
+    'aptos',
+    'avalanche-2',
+    'binancecoin',
+    'bitcoin',
+    'cardano',
+    'chainlink',
+    'cosmos',
+    'dogecoin',
+    'ethereum',
+    'litecoin',
+    'near',
+    'polkadot',
+    'polygon-ecosystem-token',
+    'ripple',
+    'solana',
+    'tron',
+  ];
+  let requestedUrl;
+
+  globalThis.fetch = async (input) => {
+    requestedUrl = new URL(String(input));
+    const requestedIds = requestedUrl.searchParams.get('ids')?.split(',') || [];
+    const returnedIds = requestedIds.includes('cosmos')
+      ? requestedIds
+      : expectedIds.filter((id) => id !== 'cosmos');
+
+    return Response.json(returnedIds.map((id, index) => ({
+      id,
+      symbol: id === 'cosmos' ? 'atom' : `asset-${index}`,
+      name: id === 'cosmos' ? 'Cosmos Hub' : `Configured asset ${index}`,
+      image: 'https://assets.coingecko.com/coins/images/1/large/asset.png',
+      current_price: 100 + index,
+      market_cap: 1_000_000_000 + index,
+      market_cap_rank: 101 + index,
+      fully_diluted_valuation: 1_100_000_000 + index,
+      total_volume: id === 'cosmos' ? 16_000_000 : 10_000_000 + index,
+      high_24h: 110 + index,
+      low_24h: 90 + index,
+      price_change_24h: 1,
+      price_change_percentage_24h: 1,
+      market_cap_change_24h: 10_000,
+      market_cap_change_percentage_24h: 1,
+      circulating_supply: 100_000_000,
+      total_supply: 110_000_000,
+      max_supply: null,
+      ath: 200,
+      ath_change_percentage: -50,
+      ath_date: '2021-01-01T00:00:00.000Z',
+      atl: 1,
+      atl_change_percentage: 10_000,
+      atl_date: '2020-01-01T00:00:00.000Z',
+      roi: null,
+      last_updated: '2026-09-01T00:00:00.000Z',
+    })));
+  };
+
+  try {
+    const result = await fetchCoinGeckoVolumes();
+    const requestedIds = requestedUrl.searchParams.get('ids')?.split(',') || [];
+
+    assert.deepEqual(requestedIds.toSorted(), expectedIds);
+    assert.equal(new Set(requestedIds).size, expectedIds.length);
+    assert.equal(result.volumes.ATOM, 16_000_000);
+    assert.deepEqual(result.errors, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('Alpha Vantage and EIA rows use the latest provider period as asOf', () => {
   const nowMs = Date.parse('2026-08-26T00:00:00.000Z');
   const meta = {
