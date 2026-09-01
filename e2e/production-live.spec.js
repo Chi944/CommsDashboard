@@ -171,6 +171,28 @@ test('Smart Money following, profiles, and SEC evidence links are usable', async
   await expect(page.locator('a[href*="data.sec.gov"], a[href$="/index.json"]')).toHaveCount(0);
 });
 
+test('a source-only person profile provides official reading and related monitored evidence', async ({ page }) => {
+  await page.goto('/?tab=Intel&view=smart-money&record=leopold-aschenbrenner', { waitUntil: 'networkidle' });
+
+  const profile = page.getByRole('region', { name: 'Leopold Aschenbrenner' });
+  await expect(profile).toBeFocused();
+  await expect(profile.getByText('Accepted activity')).toHaveCount(0);
+  await expect(profile.getByText('Research signals')).toHaveCount(0);
+  await expect(profile.getByText(/official-source profile/i)).toBeVisible();
+  await expect(profile.getByRole('link', { name: /read situational awareness: the decade ahead/i })).toBeVisible();
+  await expect(profile.getByRole('link', { name: /open for our posterity/i })).toBeVisible();
+
+  const related = profile.getByRole('button', { name: /view situational awareness lp research profile/i });
+  await expect(related).toContainText(/accepted public filings?/i);
+  await related.click();
+  const firmProfile = page.getByRole('region', { name: 'Situational Awareness LP' });
+  await expect(firmProfile).toBeFocused();
+  expect(new URL(page.url()).searchParams.get('record')).toBe('situational-awareness-lp');
+  await firmProfile.getByRole('button', { name: /close profile/i }).click();
+  await expect(page.getByRole('button', { name: /open situational awareness lp research profile/i })).toBeFocused();
+  expect(new URL(page.url()).searchParams.has('record')).toBe(false);
+});
+
 test('live economic calendar exposes an official source instead of static estimates', async ({ page }) => {
   await page.goto('/?tab=Intel&view=news', { waitUntil: 'networkidle' });
   const heading = page.getByText('Economic Calendar', { exact: true });
@@ -227,6 +249,8 @@ test('live and research-only boundaries are explicit', async ({ page }) => {
   await expect(page.getByText('LIVE', { exact: true }).first()).toBeVisible();
   await page.goto('/?tab=Intel&view=smart-money', { waitUntil: 'networkidle' });
   await expect(page.getByText(/7\/7 live/i).first()).toBeVisible();
+  await expect(page.getByRole('note', { name: /research-only boundary/i })).toContainText(/never recommends or executes trades/i);
+  await expect(page.getByRole('region', { name: 'Simulation readiness' })).toHaveCount(0);
   await page.goto('/?tab=Portfolio&view=simulation-readiness', { waitUntil: 'networkidle' });
   const simulationBoundary = page.getByRole('region', { name: 'Simulation readiness' });
   await expect(simulationBoundary).toContainText(/research only/i);

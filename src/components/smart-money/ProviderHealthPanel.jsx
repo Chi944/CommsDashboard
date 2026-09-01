@@ -13,7 +13,12 @@ export default function ProviderHealthPanel({ statuses, sourceLinks }) {
   return (
     <section aria-labelledby="provider-coverage-title" className="rounded-xl border border-gray-800 bg-gray-900/60 p-4 sm:p-5">
       <div className="flex items-center justify-between gap-3">
-        <h3 id="provider-coverage-title" className="text-sm font-semibold text-gray-100">Provider coverage</h3>
+        <div>
+          <h3 id="provider-coverage-title" className="text-sm font-semibold text-gray-100">Dashboard source health</h3>
+          <p className="mt-1 text-[10px] leading-relaxed text-gray-500">
+            Global monitoring for SEC and institutional feeds. Official-source profiles use their own attributed links.
+          </p>
+        </div>
         <span className="font-mono text-[10px] text-gray-500">{live}/{statuses?.length || 0} live</span>
       </div>
       <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
