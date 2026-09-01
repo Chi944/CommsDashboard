@@ -15,6 +15,7 @@ import ProviderHealthPanel from '../src/components/smart-money/ProviderHealthPan
 import SimulationReadiness from '../src/components/smart-money/SimulationReadiness.jsx';
 import SmartMoneyView from '../src/components/smart-money/SmartMoneyView.jsx';
 import { SmartMoneyProvider } from '../src/state/SmartMoney.jsx';
+import { getEntity } from '../lib/smart-money/entities.js';
 import {
   RESEARCH_ONLY_CAPABILITY,
   SMART_MONEY_BRIEFING_RESPONSE,
@@ -351,26 +352,103 @@ it('labels an SEC profile source as SEC EDGAR instead of an official site', () =
   expect(screen.queryByRole('link', { name: 'Official site' })).not.toBeInTheDocument();
 });
 
-it('clearly identifies source-only profiles without implying a monitored feed', () => {
-  const sourceOnly = {
-    ...SMART_MONEY_RESPONSE.entities[0],
-    id: 'pershing-square',
-    displayName: 'Pershing Square',
-    evidenceCoverage: 'official-performance-link-only',
-    performanceVerification: { status: 'official_reported' },
-    officialUrls: ['https://pershingsquareholdings.com/performance/nav/'],
+it('turns a source-only profile into official and related research paths instead of zero counters', async () => {
+  const user = userEvent.setup();
+  const onRecordChange = vi.fn();
+  const leopold = {
+    ...getEntity('leopold-aschenbrenner'),
+    // Durable snapshots accepted before this UI release contain only the original official URL.
+    officialUrls: ['https://www.forourposterity.com/'],
   };
+  const firm = getEntity('situational-awareness-lp');
+  const snapshot = {
+    ...SMART_MONEY_RESPONSE,
+    entities: [leopold, firm],
+    activities: [{
+      id: 'activity:sec-edgar:firm-filing',
+      entityId: firm.id,
+      providerId: 'sec-edgar',
+      kind: 'filing',
+      summary: 'Accepted public filing for the related firm.',
+      effectiveAt: '2026-06-30T00:00:00.000Z',
+      disclosedAt: '2026-08-14T00:00:00.000Z',
+      observedAt: '2026-08-27T00:00:00.000Z',
+    }, {
+      id: 'activity:sec-edgar:firm-holding-change',
+      entityId: firm.id,
+      providerId: 'sec-edgar',
+      kind: 'holding_change',
+      summary: 'Derived holding change for the related firm.',
+      effectiveAt: '2026-06-30T00:00:00.000Z',
+      disclosedAt: '2026-08-14T00:00:00.000Z',
+      observedAt: '2026-08-27T00:00:00.000Z',
+    }],
+  };
+  installRoutes(snapshot);
+  render(
+    <SmartMoneyProvider>
+      <SmartMoneyView onRecordChange={onRecordChange} />
+    </SmartMoneyProvider>,
+  );
+
+  const originalOpener = await screen.findByRole('button', { name: /open leopold aschenbrenner research profile/i });
+  await user.click(originalOpener);
+  const profile = await screen.findByRole('region', { name: 'Leopold Aschenbrenner' });
+  expect(within(profile).queryByText('Accepted activity')).not.toBeInTheDocument();
+  expect(within(profile).queryByText('Research signals')).not.toBeInTheDocument();
+  expect(within(profile).getByText(/official-source profile/i)).toBeVisible();
+  expect(within(profile).getByText(/does not establish investment performance/i)).toBeVisible();
+  expect(within(profile).getByRole('link', { name: /read situational awareness: the decade ahead/i }))
+    .toHaveAttribute('href', 'https://situational-awareness.ai/');
+  expect(within(profile).getByRole('link', { name: /open for our posterity/i }))
+    .toHaveAttribute('href', 'https://www.forourposterity.com/');
+  const related = within(profile).getByRole('button', { name: /view situational awareness lp research profile/i });
+  expect(related).toHaveTextContent(/1 accepted public filing/i);
+  expect(within(profile).getByText(/not leopold aschenbrenner's personal holdings, trades, or performance/i)).toBeVisible();
+
+  await user.click(related);
+  expect(onRecordChange).toHaveBeenCalledWith(firm.id);
+  const firmProfile = await screen.findByRole('region', { name: 'Situational Awareness LP' });
+  expect(firmProfile).toBeVisible();
+  await user.click(within(firmProfile).getByRole('button', { name: /close profile/i }));
+  await waitFor(() => expect(originalOpener).toHaveFocus());
+});
+
+it('labels an unmonitored source-only relationship as a profile without inventing a filing count', () => {
+  const warren = getEntity('warren-buffett');
+  const berkshire = getEntity('berkshire-hathaway');
   render(
     <EntityProfile
-      entity={sourceOnly}
+      entity={warren}
+      entities={[warren, berkshire]}
       activities={[]}
       signals={[]}
       onClose={vi.fn()}
+      onOpenEntity={vi.fn()}
     />,
   );
 
-  expect(screen.getByText(/source-only profile/i)).toBeVisible();
-  expect(screen.getByText(/no monitored activity feed/i)).toBeVisible();
+  const profile = screen.getByRole('region', { name: 'Warren Buffett' });
+  expect(within(profile).getByText('Related profiles')).toBeVisible();
+  expect(within(profile).getByText(/official sources only; no monitored filing feed/i)).toBeVisible();
+  expect(within(profile).queryByText(/0 accepted public filings/i)).not.toBeInTheDocument();
+});
+
+it('keeps the Smart Money trading boundary concise and leaves simulation detail to Portfolio', async () => {
+  installRoutes();
+  render(
+    <SmartMoneyProvider>
+      <SmartMoneyView />
+    </SmartMoneyProvider>,
+  );
+
+  const boundary = await screen.findByRole('note', { name: /research-only boundary/i });
+  expect(boundary).toHaveTextContent(/public-source research only/i);
+  expect(boundary).toHaveTextContent(/never recommends or executes trades/i);
+  expect(screen.queryByRole('region', { name: /simulation readiness/i })).not.toBeInTheDocument();
+  expect(screen.queryByText('Entry sources')).not.toBeInTheDocument();
+  expect(screen.queryByText('Daily mark sources')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /buy|sell|trade|execute|connect wallet/i })).not.toBeInTheDocument();
 });
 
 it('shows exact fail-closed simulation readiness with no activation controls', () => {

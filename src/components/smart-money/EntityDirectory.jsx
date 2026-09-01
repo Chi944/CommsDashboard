@@ -113,6 +113,7 @@ export default function EntityDirectory({
                     type="button"
                     onClick={() => onOpen(entity.id)}
                     aria-label={`Open ${entity.displayName} research profile`}
+                    data-smart-money-profile-trigger={entity.id}
                     className="block w-full text-left"
                   >
                     <div className="text-sm font-semibold text-gray-100">{entity.displayName}</div>

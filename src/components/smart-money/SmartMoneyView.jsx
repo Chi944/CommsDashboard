@@ -4,7 +4,6 @@ import { useSmartMoney } from '../../state/SmartMoney.jsx';
 import EntityDirectory from './EntityDirectory.jsx';
 import EntityProfile from './EntityProfile.jsx';
 import ProviderHealthPanel from './ProviderHealthPanel.jsx';
-import SimulationReadiness from './SimulationReadiness.jsx';
 
 export default function SmartMoneyView({ recordId = null, onRecordChange }) {
   const smart = useSmartMoney();
@@ -22,14 +21,27 @@ export default function SmartMoneyView({ recordId = null, onRecordChange }) {
     profileRef.current.focus({ preventScroll: true });
   }, [selected]);
   const openRecord = (id) => {
-    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const activeElement = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    if (activeElement && !profileRef.current?.contains(activeElement)) {
+      openerRef.current = activeElement;
+    }
     setLocalRecordId(id);
     onRecordChange?.(id);
   };
   const closeRecord = () => {
+    const closingRecordId = selected?.id || localRecordId;
+    const originalOpener = openerRef.current;
     setLocalRecordId(null);
     onRecordChange?.(null);
-    setTimeout(() => openerRef.current?.focus(), 0);
+    setTimeout(() => {
+      const fallbackOpener = [...document.querySelectorAll('[data-smart-money-profile-trigger]')]
+        .find((element) => element.dataset.smartMoneyProfileTrigger === closingRecordId);
+      const focusTarget = originalOpener?.isConnected ? originalOpener : fallbackOpener;
+      focusTarget?.focus();
+      openerRef.current = null;
+    }, 0);
   };
   const acceptedDate = smart.snapshot?.fetchedAt
     ? String(smart.snapshot.fetchedAt).slice(0, 10)
@@ -64,13 +76,24 @@ export default function SmartMoneyView({ recordId = null, onRecordChange }) {
         </div>
       )}
 
+      <aside
+        role="note"
+        aria-label="Research-only boundary"
+        className="flex flex-col gap-1 rounded-lg border border-amber-800/30 bg-amber-950/10 px-3 py-2 text-[11px] text-gray-400 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <span><strong className="font-medium text-amber-200">Public-source research only.</strong> This dashboard never recommends or executes trades.</span>
+        <span className="text-[10px] text-gray-600">No transactions or wallet connections</span>
+      </aside>
+
       {selected && (
         <EntityProfile
           ref={profileRef}
           entity={selected}
           activities={smart.activities}
           signals={smart.signals}
+          entities={smart.entities}
           onClose={closeRecord}
+          onOpenEntity={openRecord}
         />
       )}
 
@@ -81,8 +104,6 @@ export default function SmartMoneyView({ recordId = null, onRecordChange }) {
         </div>
       )}
 
-      <ProviderHealthPanel statuses={smart.providerStatuses} sourceLinks={smart.sourceLinks} />
-
       <EntityDirectory
         entities={smart.entities}
         followedEntityIds={smart.followedEntityIds}
@@ -91,7 +112,7 @@ export default function SmartMoneyView({ recordId = null, onRecordChange }) {
         onOpen={openRecord}
       />
 
-      <SimulationReadiness capability={smart.simulationCapability} />
+      <ProviderHealthPanel statuses={smart.providerStatuses} sourceLinks={smart.sourceLinks} />
     </div>
   );
 }

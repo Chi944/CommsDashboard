@@ -947,6 +947,78 @@ test('a new SEC quarter compares against the previous accepted latest quarter', 
   assert.equal(changes[0].currentShares, 800);
 });
 
+test('SEC 13F values use dollars for modern filings and thousands only for legacy filings', () => {
+  const holding = ({ accessionNumber, filedAt, periodEnd, reportedValue }) => ({
+    accessionNumber,
+    periodEnd,
+    filedAt,
+    isAmendment: false,
+    amendmentChain: [accessionNumber],
+    issuer: 'NVIDIA Corporation',
+    securityClass: 'COM',
+    cusip: '67066G104',
+    ticker: null,
+    reportedValue,
+    shares: 1_000,
+    putCall: null,
+    shareType: 'SH',
+    paperEligible: false,
+  });
+  const sourceFor = (row) => ({
+    kind: 'sec',
+    snapshot: { filings: [], disclosures: [], holdings: [row] },
+  });
+  const emptySource = {
+    kind: 'sec',
+    snapshot: { filings: [], disclosures: [], holdings: [] },
+  };
+
+  const modern = buildSecHoldingChanges(sourceFor(holding({
+    accessionNumber: '0002045724-26-000002',
+    filedAt: '2026-08-14T00:00:00.000Z',
+    periodEnd: '2026-06-30',
+    reportedValue: 469_022_807,
+  })), emptySource, new Date('2026-08-28T12:00:00.000Z'));
+  const legacy = buildSecHoldingChanges(sourceFor(holding({
+    accessionNumber: '0002045724-22-000002',
+    filedAt: '2022-11-14T00:00:00.000Z',
+    periodEnd: '2022-09-30',
+    reportedValue: 469_023,
+  })), emptySource, new Date('2022-11-15T12:00:00.000Z'));
+  const effectiveDate = buildSecHoldingChanges(sourceFor(holding({
+    accessionNumber: '0002045724-23-000001',
+    filedAt: '2023-01-03T00:00:00.000Z',
+    periodEnd: '2022-12-31',
+    reportedValue: 123,
+  })), emptySource, new Date('2023-01-04T12:00:00.000Z'));
+  const currentBoundaryHolding = {
+    ...holding({
+      accessionNumber: '0002045724-23-000002',
+      filedAt: '2023-02-14T00:00:00.000Z',
+      periodEnd: '2022-12-31',
+      reportedValue: 1_000_000,
+    }),
+    cusip: '111111111',
+  };
+  const legacyExitHolding = holding({
+    accessionNumber: '0002045724-22-000002',
+    filedAt: '2022-11-14T00:00:00.000Z',
+    periodEnd: '2022-09-30',
+    reportedValue: 469_023,
+  });
+  const boundaryChanges = buildSecHoldingChanges(
+    sourceFor(currentBoundaryHolding),
+    sourceFor(legacyExitHolding),
+    new Date('2023-02-15T12:00:00.000Z'),
+  );
+  const legacyExit = boundaryChanges.find((row) => row.classification === 'exited');
+
+  assert.equal(modern[0].reportedValueUsd, 469_022_807);
+  assert.equal(legacy[0].reportedValueUsd, 469_023_000);
+  assert.equal(effectiveDate[0].reportedValueUsd, 123);
+  assert.equal(legacyExit.reportedValueUsd, 469_023_000);
+});
+
 test('a Q2 exit uses only Q2 filing evidence while Q1 supplies prior numerical state', () => {
   const holding = (periodEnd, shares, accessionNumber, filedAt, cusip) => ({
     accessionNumber, periodEnd, filedAt, isAmendment: false,
