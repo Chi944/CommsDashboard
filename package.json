@@ -20,15 +20,15 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.8",
-    "@upstash/redis": "^1.38.2",
-    "@vercel/analytics": "^1.6.1",
+    "@upstash/redis": "^1.38.3",
+    "@vercel/analytics": "^2.0.1",
     "@vercel/blob": "^2.8.0",
     "cheerio": "^1.2.0",
-    "fast-xml-parser": "^5.11.0",
+    "fast-xml-parser": "^5.11.1",
     "pdfjs-dist": "6.2.108",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "recharts": "^2.12.7"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
