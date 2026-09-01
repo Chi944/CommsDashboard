@@ -32,6 +32,16 @@ function routeRequest(url) {
   }
 }
 
+function isApiPath(url) {
+  if (typeof url !== 'string') return false;
+  try {
+    const { pathname } = new URL(url, 'https://dashboard.invalid');
+    return pathname === '/api' || pathname.startsWith('/api/');
+  } catch {
+    return false;
+  }
+}
+
 function pathError(res, status, code, message) {
   res.setHeader('Cache-Control', 'no-store');
   res.status(status).json({ ok: false, error: { code, message } });
@@ -60,9 +70,9 @@ export function createSmartMoneyRouteHandler(deps = {}) {
     if (!request) {
       pathError(
         res,
-        400,
-        'invalid_route_parameter',
-        'Invalid Smart Money route parameter.',
+        isApiPath(req?.url) ? 404 : 400,
+        isApiPath(req?.url) ? 'api_route_not_found' : 'invalid_route_parameter',
+        isApiPath(req?.url) ? 'API route not found.' : 'Invalid Smart Money route parameter.',
       );
       return;
     }
