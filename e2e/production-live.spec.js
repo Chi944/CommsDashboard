@@ -212,7 +212,9 @@ test('a shared Prices ticker remains stable without an API request loop', async 
   });
 
   await page.goto('/?tab=Prices&t=NVDA', { waitUntil: 'domcontentloaded' });
-  await expect(page.getByText('NVIDIA', { exact: true }).first()).toBeVisible();
+  const selectedAsset = page.getByRole('button', { name: /select nvda — nvidia/i });
+  await expect(selectedAsset).toBeVisible();
+  await expect(selectedAsset).toHaveAttribute('aria-pressed', 'true');
   await page.waitForTimeout(2_000);
 
   expect(new URL(page.url()).searchParams.get('t')).toBe('NVDA');
