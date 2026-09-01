@@ -69,6 +69,17 @@ async function fetchTopic({ category, q }, referenceMs) {
 }
 
 export default async function handler(req, res) {
+  if (String(req?.method || 'GET').toUpperCase() !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(405).json({ ok: false, error: 'method not allowed' });
+    return;
+  }
+  if (Object.keys(req?.query || {}).length > 0) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(400).json({ ok: false, error: 'unsupported query' });
+    return;
+  }
   try {
     const referenceMs = Date.now();
     const settled = await Promise.allSettled(QUERIES.map((topic) => fetchTopic(topic, referenceMs)));

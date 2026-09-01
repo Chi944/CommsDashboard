@@ -3,13 +3,18 @@
 import React, { useState } from 'react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const liveData = vi.hoisted(() => ({ current: null }));
+const csvDownload = vi.hoisted(() => vi.fn());
 
 vi.mock('../src/state/LiveData.jsx', () => ({
   useLiveData: () => liveData.current,
+}));
+
+vi.mock('../src/utils/csv.js', () => ({
+  downloadCSV: csvDownload,
 }));
 
 import AnalysisPanel from '../src/components/AnalysisPanel.jsx';
@@ -131,6 +136,8 @@ function pricesLiveData(commodities, resolveHeatmapAsset = (asset) => asset) {
     activeWatchSet: new Set(),
     setActiveList: vi.fn(),
     createList: vi.fn(),
+    renameList: vi.fn(),
+    deleteList: vi.fn(),
     toggleWatch: vi.fn(),
     alerts: [],
     addAlert: vi.fn(),
@@ -156,6 +163,7 @@ function priceRow(ticker, source, stale) {
 }
 
 beforeEach(() => {
+  csvDownload.mockReset();
   liveData.current = defaultLiveData();
   globalThis.ResizeObserver = class ResizeObserver {
     observe() {}
@@ -806,6 +814,136 @@ describe('Prices heatmap', () => {
     expect(busyButton).toHaveAttribute('aria-busy', 'true');
     await user.click(busyButton);
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('renames and deletes watchlists without overwriting an existing name or deleting the last list', async () => {
+    const user = userEvent.setup();
+    const rows = [priceRow('NVDA', 'yahoo', false)];
+    const renameList = vi.fn();
+    const deleteList = vi.fn();
+    liveData.current = {
+      ...pricesLiveData(rows),
+      watchlistNames: ['Default', 'Macro'],
+      activeWatchlist: 'Default',
+      renameList,
+      deleteList,
+    };
+    globalThis.fetch = jsonFetch({ ok: false, items: [] }).fake;
+    const prompt = vi.spyOn(window, 'prompt');
+    prompt.mockReturnValueOnce('Macro').mockReturnValueOnce('Growth');
+
+    const { rerender } = render(<Prices />);
+    await user.click(screen.getByRole('button', { name: /watchlist \(0\)/i }));
+
+    const rename = screen.getByRole('button', { name: /rename default watchlist/i });
+    await user.click(rename);
+    expect(renameList).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert', { name: /watchlist error/i })).toHaveTextContent(/Macro already exists/i);
+
+    await user.click(rename);
+    expect(renameList).toHaveBeenCalledWith('Default', 'Growth');
+    expect(screen.queryByRole('alert', { name: /watchlist error/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /delete default watchlist/i }));
+    expect(deleteList).toHaveBeenCalledWith('Default');
+
+    liveData.current = {
+      ...pricesLiveData(rows),
+      watchlistNames: ['Default'],
+      activeWatchlist: 'Default',
+      renameList,
+      deleteList,
+    };
+    rerender(<Prices />);
+    expect(screen.getByRole('button', { name: /delete default watchlist/i })).toBeDisabled();
+  });
+
+  it('exports only resolved trusted price rows with freshness provenance', async () => {
+    const user = userEvent.setup();
+    const rows = [
+      priceRow('TRUST', 'yahoo', false),
+      priceRow('STALE', 'yahoo', true),
+      priceRow('MOCK', 'mock', true),
+    ];
+    const trustedAsOf = '2026-09-01T12:00:00.000Z';
+    liveData.current = {
+      ...pricesLiveData(rows),
+      resolveTablePrice: (asset) => asset.ticker === 'TRUST'
+        ? { ...asset, price: 123, source: 'yahoo', asOf: trustedAsOf, stale: false, isLive: true }
+        : asset,
+    };
+    globalThis.fetch = jsonFetch({ ok: false, items: [] }).fake;
+
+    render(<Prices />);
+    const exportButton = screen.getByRole('button', { name: /export csv/i });
+    expect(exportButton).toBeEnabled();
+    await user.click(exportButton);
+
+    expect(csvDownload).toHaveBeenCalledTimes(1);
+    expect(csvDownload.mock.calls[0][1]).toEqual([
+      expect.objectContaining({
+        ticker: 'TRUST',
+        price_usd: 123,
+        source: 'yahoo',
+        asOf: trustedAsOf,
+        stale: false,
+      }),
+    ]);
+  });
+
+  it('disables price export when no resolved row is trusted', () => {
+    const rows = [priceRow('STALE', 'yahoo', true), priceRow('MOCK', 'mock', true)];
+    liveData.current = pricesLiveData(rows);
+    globalThis.fetch = jsonFetch({ ok: false, items: [] }).fake;
+
+    render(<Prices />);
+
+    expect(screen.getByRole('button', { name: /export csv/i })).toBeDisabled();
+  });
+
+  it('cancels a note draft on Escape even if blur follows the key event', async () => {
+    const user = userEvent.setup();
+    const rows = [priceRow('NVDA', 'yahoo', false)];
+    localStorage.setItem('comms.notes.v1', JSON.stringify({ NVDA: 'original note' }));
+    liveData.current = pricesLiveData(rows);
+    globalThis.fetch = jsonFetch({ ok: false, items: [] }).fake;
+
+    try {
+      render(<Prices />);
+      await user.click(screen.getByRole('button', { name: /edit note for NVDA/i }));
+      const input = screen.getByRole('textbox', { name: /note for NVDA/i });
+      await user.clear(input);
+      await user.type(input, 'discard this draft');
+      fireEvent.keyDown(input, { key: 'Escape' });
+      fireEvent.blur(input);
+
+      await user.click(screen.getByRole('button', { name: /edit note for NVDA/i }));
+      expect(screen.getByRole('textbox', { name: /note for NVDA/i })).toHaveValue('original note');
+    } finally {
+      localStorage.removeItem('comms.notes.v1');
+    }
+  });
+
+  it('continues to save note edits on Enter and blur', async () => {
+    const user = userEvent.setup();
+    const rows = [priceRow('NVDA', 'yahoo', false)];
+    localStorage.removeItem('comms.notes.v1');
+    liveData.current = pricesLiveData(rows);
+    globalThis.fetch = jsonFetch({ ok: false, items: [] }).fake;
+
+    render(<Prices />);
+    await user.click(screen.getByRole('button', { name: /add note for NVDA/i }));
+    await user.type(screen.getByRole('textbox', { name: /note for NVDA/i }), 'saved with Enter{Enter}');
+    await user.click(screen.getByRole('button', { name: /edit note for NVDA/i }));
+    expect(screen.getByRole('textbox', { name: /note for NVDA/i })).toHaveValue('saved with Enter');
+
+    const input = screen.getByRole('textbox', { name: /note for NVDA/i });
+    await user.clear(input);
+    await user.type(input, 'saved with blur');
+    await user.tab();
+    await user.click(screen.getByRole('button', { name: /edit note for NVDA/i }));
+    expect(screen.getByRole('textbox', { name: /note for NVDA/i })).toHaveValue('saved with blur');
+    localStorage.removeItem('comms.notes.v1');
   });
 });
 

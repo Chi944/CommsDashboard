@@ -116,6 +116,10 @@ export function LiveDataProvider({ children }) {
     if (!trimmed || trimmed === oldName) return;
     setWatchState((p) => {
       if (!p.lists[oldName]) return p;
+      const duplicate = Object.keys(p.lists).some(
+        (name) => name !== oldName && name.toLocaleLowerCase() === trimmed.toLocaleLowerCase(),
+      );
+      if (duplicate) return p;
       const { [oldName]: items, ...rest } = p.lists;
       return {
         active: p.active === oldName ? trimmed : p.active,

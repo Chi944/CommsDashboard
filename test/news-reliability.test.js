@@ -28,6 +28,121 @@ function rss(items) {
     </item>`).join('')}</channel></rss>`;
 }
 
+test('public market GET routes reject unsupported methods before upstream access', async () => {
+  const originalFetch = globalThis.fetch;
+  let upstreamCalls = 0;
+  globalThis.fetch = async () => {
+    upstreamCalls += 1;
+    throw new Error('upstream must not be called');
+  };
+
+  try {
+    const cases = [
+      [newsHandler, {}],
+      [fearGreedHandler, {}],
+      [historyHandler, { ticker: 'NVDA', range: '1mo' }],
+      [assetNewsHandler, { q: 'Nvidia', limit: '6' }],
+    ];
+    for (const method of ['POST', 'PUT']) {
+      for (const [handler, query] of cases) {
+        const response = responseRecorder();
+        await handler({ method, query }, response);
+        assert.equal(response.statusCode, 405);
+        assert.equal(response.headers.Allow, 'GET');
+        assert.equal(response.headers['Cache-Control'], 'no-store');
+        assert.deepEqual(response.body, { ok: false, error: 'method not allowed' });
+      }
+    }
+    assert.equal(upstreamCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('public market GET routes reject unsupported query keys before upstream access', async () => {
+  const originalFetch = globalThis.fetch;
+  let upstreamCalls = 0;
+  globalThis.fetch = async () => {
+    upstreamCalls += 1;
+    throw new Error('upstream must not be called');
+  };
+
+  try {
+    const cases = [
+      [newsHandler, { cacheBust: '1' }],
+      [fearGreedHandler, { cacheBust: '1' }],
+      [historyHandler, { ticker: 'NVDA', range: '1mo', cacheBust: '1' }],
+      [assetNewsHandler, { q: 'Nvidia', limit: '6', cacheBust: '1' }],
+    ];
+    for (const [handler, query] of cases) {
+      const response = responseRecorder();
+      await handler({ method: 'GET', query }, response);
+      assert.equal(response.statusCode, 400);
+      assert.equal(response.headers['Cache-Control'], 'no-store');
+      assert.deepEqual(response.body, { ok: false, error: 'unsupported query' });
+    }
+    assert.equal(upstreamCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('asset news rejects malformed limits instead of returning a successful empty feed', async () => {
+  const originalFetch = globalThis.fetch;
+  let upstreamCalls = 0;
+  globalThis.fetch = async () => {
+    upstreamCalls += 1;
+    throw new Error('upstream must not be called');
+  };
+
+  try {
+    const invalidQueries = [
+      { q: 'Nvidia', limit: 'abc' },
+      { q: 'Nvidia', limit: '0' },
+      { q: 'Nvidia', limit: '13' },
+      { q: 'Nvidia', limit: ['6', '7'] },
+      { q: ['Nvidia', 'Apple'], limit: '6' },
+      { q: ' ', limit: '6' },
+      { q: 'x'.repeat(161), limit: '6' },
+    ];
+    for (const query of invalidQueries) {
+      const response = responseRecorder();
+      await assetNewsHandler({ method: 'GET', query }, response);
+      assert.equal(response.statusCode, 400);
+      assert.equal(response.headers['Cache-Control'], 'no-store');
+      assert.deepEqual(response.body, { ok: false, error: 'invalid query' });
+    }
+    assert.equal(upstreamCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('history rejects duplicate scalar parameters before upstream access', async () => {
+  const originalFetch = globalThis.fetch;
+  let upstreamCalls = 0;
+  globalThis.fetch = async () => {
+    upstreamCalls += 1;
+    throw new Error('upstream must not be called');
+  };
+
+  try {
+    for (const query of [
+      { ticker: ['NVDA', 'AAPL'], range: '1mo' },
+      { ticker: 'NVDA', range: ['1mo', '3mo'] },
+    ]) {
+      const response = responseRecorder();
+      await historyHandler({ method: 'GET', query }, response);
+      assert.equal(response.statusCode, 400);
+      assert.equal(response.headers['Cache-Control'], 'no-store');
+      assert.deepEqual(response.body, { ok: false, error: 'invalid query' });
+    }
+    assert.equal(upstreamCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('general news excludes articles older than seven days and reports publication freshness separately', async () => {
   const originalFetch = globalThis.fetch;
   const startedAt = Date.now();

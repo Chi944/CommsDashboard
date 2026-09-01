@@ -31,11 +31,7 @@ function safeId(value) {
 
 function viewFor(tab, value) {
   if (tab === 'Intel') return value === 'smart-money' ? 'smart-money' : 'news';
-  if (tab === 'Portfolio') {
-    return ['paper-copy', 'simulation-readiness'].includes(value)
-      ? 'simulation-readiness'
-      : 'holdings';
-  }
+  if (tab === 'Portfolio') return 'holdings';
   return null;
 }
 

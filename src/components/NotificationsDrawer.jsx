@@ -16,7 +16,15 @@ const focusableElements = (container) => (
 );
 
 export default function NotificationsDrawer({ open, onClose }) {
-  const { notifications, triggeredAlerts, clearTriggered, newsLive, newsUpdatedAt, requestNotificationPermission } = useLiveData();
+  const {
+    notifications,
+    triggeredAlerts,
+    clearTriggered,
+    newsLive,
+    newsLoading,
+    newsUpdatedAt,
+    requestNotificationPermission,
+  } = useLiveData();
   const [notifPerm, setNotifPerm] = useState(() => {
     try { return typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'; } catch { return 'unsupported'; }
   });
@@ -119,7 +127,11 @@ export default function NotificationsDrawer({ open, onClose }) {
           <div className="mt-2 flex items-center gap-2 text-[10px] flex-wrap">
             <span className={`flex items-center gap-1.5 ${newsLive ? 'text-emerald-400' : 'text-amber-400'}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${newsLive ? 'bg-emerald-400 animate-pulse-soft' : 'bg-amber-400'}`} />
-              {newsLive ? 'live news + price alerts' : 'fetching'}
+              {newsLive
+                ? 'live news + price alerts'
+                : newsLoading
+                  ? 'fetching'
+                  : 'news unavailable · price alerts remain active'}
             </span>
             {newsUpdatedAt && (
               <span className="text-gray-500 font-mono">

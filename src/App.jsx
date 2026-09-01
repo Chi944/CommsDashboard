@@ -111,8 +111,6 @@ export function Dashboard() {
             {tab === 'Currency'   && <Currency />}
             {tab === 'Portfolio'  && (
               <Portfolio
-                view={view || 'holdings'}
-                onViewChange={(nextView) => setView(nextView)}
                 onSelectAsset={openInPrices}
               />
             )}

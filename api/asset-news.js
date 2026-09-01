@@ -22,13 +22,33 @@ function timeAgo(date) {
 }
 
 export default async function handler(req, res) {
+  if (String(req?.method || 'GET').toUpperCase() !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(405).json({ ok: false, error: 'method not allowed' });
+    return;
+  }
+  const query = req?.query || {};
+  if (Object.keys(query).some((key) => !['q', 'limit'].includes(key))) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(400).json({ ok: false, error: 'unsupported query' });
+    return;
+  }
+  const rawQuery = query.q;
+  const rawLimit = query.limit;
+  const validQuery = typeof rawQuery === 'string'
+    && rawQuery.trim().length > 0
+    && rawQuery.trim().length <= 160;
+  const validLimit = rawLimit === undefined
+    || (typeof rawLimit === 'string' && /^(?:[1-9]|1[0-2])$/.test(rawLimit));
+  if (!validQuery || !validLimit) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(400).json({ ok: false, error: 'invalid query' });
+    return;
+  }
   try {
-    const q = (req.query?.q || '').toString().trim();
-    if (!q) {
-      res.status(400).json({ ok: false, error: 'missing query' });
-      return;
-    }
-    const limit = Math.max(1, Math.min(12, parseInt(req.query?.limit || '6', 10)));
+    const q = rawQuery.trim();
+    const limit = Number.parseInt(rawLimit || '6', 10);
 
     const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
     const r = await fetchWithTimeout(url, {

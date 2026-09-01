@@ -7,17 +7,14 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 
 import Intel from '../src/components/Intel.jsx';
-import Portfolio from '../src/components/Portfolio.jsx';
 import SegmentedTabs from '../src/components/SegmentedTabs.jsx';
 import EntityDirectory from '../src/components/smart-money/EntityDirectory.jsx';
 import EntityProfile from '../src/components/smart-money/EntityProfile.jsx';
 import ProviderHealthPanel from '../src/components/smart-money/ProviderHealthPanel.jsx';
-import SimulationReadiness from '../src/components/smart-money/SimulationReadiness.jsx';
 import SmartMoneyView from '../src/components/smart-money/SmartMoneyView.jsx';
 import { SmartMoneyProvider } from '../src/state/SmartMoney.jsx';
 import { getEntity } from '../lib/smart-money/entities.js';
 import {
-  RESEARCH_ONLY_CAPABILITY,
   SMART_MONEY_BRIEFING_RESPONSE,
   SMART_MONEY_RESPONSE,
   jsonResponse,
@@ -75,22 +72,6 @@ it('associates the active Intel view with its selected tab', () => {
   expect(tab).toHaveAttribute('aria-controls', 'intel-view-panel-smart-money');
   expect(panel).toHaveAttribute('id', 'intel-view-panel-smart-money');
   expect(panel).toHaveAttribute('aria-labelledby', 'intel-view-tab-smart-money');
-});
-
-it('associates the active Portfolio view with its selected tab', () => {
-  installRoutes();
-  render(
-    <SmartMoneyProvider>
-      <Portfolio view="simulation-readiness" />
-    </SmartMoneyProvider>,
-  );
-
-  const tab = screen.getByRole('tab', { name: 'Simulation readiness' });
-  const panel = screen.getByRole('tabpanel');
-  expect(tab).toHaveAttribute('id', 'portfolio-view-tab-simulation-readiness');
-  expect(tab).toHaveAttribute('aria-controls', 'portfolio-view-panel-simulation-readiness');
-  expect(panel).toHaveAttribute('id', 'portfolio-view-panel-simulation-readiness');
-  expect(panel).toHaveAttribute('aria-labelledby', 'portfolio-view-tab-simulation-readiness');
 });
 
 it('integrates Leopold and firms without claiming unverified performance', async () => {
@@ -434,7 +415,7 @@ it('labels an unmonitored source-only relationship as a profile without inventin
   expect(within(profile).queryByText(/0 accepted public filings/i)).not.toBeInTheDocument();
 });
 
-it('keeps the Smart Money trading boundary concise and leaves simulation detail to Portfolio', async () => {
+it('keeps the Smart Money trading boundary concise', async () => {
   installRoutes();
   render(
     <SmartMoneyProvider>
@@ -449,15 +430,4 @@ it('keeps the Smart Money trading boundary concise and leaves simulation detail 
   expect(screen.queryByText('Entry sources')).not.toBeInTheDocument();
   expect(screen.queryByText('Daily mark sources')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /buy|sell|trade|execute|connect wallet/i })).not.toBeInTheDocument();
-});
-
-it('shows exact fail-closed simulation readiness with no activation controls', () => {
-  const { container } = render(<SimulationReadiness capability={RESEARCH_ONLY_CAPABILITY} />);
-  expect(screen.getByText(
-    'No rights-cleared free market-price source is currently enabled for simulation entry or daily marking. Dashboard market data remains display-only; signals are research-only, and no simulated transaction was created.',
-  )).toBeVisible();
-  expect(screen.getByText(/does not recommend, prepare, route, sign, or execute trades/i)).toBeVisible();
-  expect(within(container).queryByRole('button')).not.toBeInTheDocument();
-  expect(within(container).queryByRole('spinbutton')).not.toBeInTheDocument();
-  expect(container.textContent).not.toMatch(/starting balance|cash|equity|performance return/i);
 });
