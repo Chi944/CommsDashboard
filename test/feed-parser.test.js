@@ -54,7 +54,8 @@ test('canonicalizeSourceUrl strips tracking parameters and enforces exact origin
   assert.equal(canonicalizeSourceUrl('https://example.com.evil/a', ['https://example.com']), null);
 });
 
-test('strict parseFeed has no external-link bypass while Google News handlers preserve response shape', async () => {
+test('strict parseFeed has no external-link bypass while Google News handlers preserve response shape', async (t) => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-08-26T01:00:00Z'));
   const xml = '<rss><channel><item><title>News</title><link>https://publisher.example/story?utm_source=x</link><pubDate>Wed, 26 Aug 2026 00:00:00 GMT</pubDate><description><![CDATA[<b>Details</b>]]></description><source>Publisher</source></item></channel></rss>';
   assert.deepEqual(parseFeed(xml, { allowedOrigins: ['https://news.google.com'] }), []);
 

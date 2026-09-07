@@ -40,12 +40,20 @@ function timeAgo(date) {
 
 async function fetchTopic({ category, q }, referenceMs) {
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
-  const r = await fetchWithTimeout(url, {
+  const options = {
     headers: {
       'User-Agent': 'Mozilla/5.0 (compatible; CommsDashboard/1.0)',
       'Accept': 'application/rss+xml, application/xml, text/xml',
     },
-  });
+  };
+  let r = await fetchWithTimeout(url, options);
+  // A short provider failure should not discard an otherwise usable feed.
+  // Retry once for gateway/service failures; never amplify rate limits,
+  // access denials, or requests that already exhausted their deadline.
+  if ([502, 503, 504].includes(r.status)) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    r = await fetchWithTimeout(url, options);
+  }
   if (!r.ok) throw new Error(`${category} ${r.status}`);
   const xml = await r.text();
   const items = parseGoogleNewsFeed(xml, {
@@ -88,6 +96,7 @@ export default async function handler(req, res) {
       .flatMap((r) => r.value);
 
     if (all.length === 0) {
+      res.setHeader('Cache-Control', 'no-store');
       res.status(502).json({ ok: false, error: 'all news fetches failed' });
       return;
     }
@@ -118,6 +127,7 @@ export default async function handler(req, res) {
       items,
     });
   } catch (e) {
+    res.setHeader('Cache-Control', 'no-store');
     res.status(500).json({ ok: false, error: 'news service unavailable' });
   }
 }

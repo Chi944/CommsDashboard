@@ -172,6 +172,44 @@ test('general news excludes articles older than seven days and reports publicati
   }
 });
 
+test('general news recovers from a transient service failure with one retry per topic', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = new Map();
+  const xml = rss([{ title: 'Recovered headline', url: 'https://publisher.example/recovered',
+    pubDate: new Date(Date.now() - 60_000).toUTCString() }]);
+  globalThis.fetch = async (url) => {
+    const count = (calls.get(url) || 0) + 1;
+    calls.set(url, count);
+    return count === 1 ? new Response('', { status: 503 }) : new Response(xml);
+  };
+  try {
+    const response = responseRecorder();
+    await newsHandler({ method: 'GET', query: {} }, response);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.items[0].headline, 'Recovered headline');
+    assert.equal(calls.size, 10);
+    assert.ok([...calls.values()].every((count) => count === 2));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('general news bounds retries and does not retry rate limits or access denials', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const status of [502, 503, 504, 429, 403]) {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        return new Response('', { status });
+      };
+      const response = responseRecorder();
+      await newsHandler({ method: 'GET', query: {} }, response);
+      assert.equal(response.statusCode, 502);
+      assert.equal(response.headers['Cache-Control'], 'no-store');
+      assert.equal(calls, [502, 503, 504].includes(status) ? 20 : 10);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('general news gives every upstream request an abort deadline', async () => {
   const originalFetch = globalThis.fetch;
   const originalTimeout = process.env.MARKET_FETCH_TIMEOUT_MS;
