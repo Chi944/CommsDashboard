@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Analytics } from '@vercel/analytics/react';
 import Ticker from './components/Ticker.jsx';
 import Nav from './components/Nav.jsx';
+import WorkspaceNav from './components/WorkspaceNav.jsx';
 import BottomNav from './components/BottomNav.jsx';
 import NotificationsDrawer from './components/NotificationsDrawer.jsx';
 import CommandPalette from './components/CommandPalette.jsx';
@@ -92,6 +93,7 @@ export function Dashboard() {
 
   return (
       <div className="min-h-screen text-gray-100">
+        <WorkspaceNav />
         <div className="sticky top-0 z-30">
           <Ticker />
           <Nav

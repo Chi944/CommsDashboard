@@ -3,7 +3,7 @@
 //
 // Allowed ranges: 1d, 5d, 1mo, 3mo, 6mo, 1y, ytd
 
-import { SYMBOLS, ALLOWED_RANGES, findSymbol } from '../lib/symbols.js';
+import { ALLOWED_RANGES, findSymbol } from '../lib/symbols.js';
 import { fetchWithTimeout } from '../lib/market/fetch.js';
 
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -16,6 +16,7 @@ const fmtDate = (d, range) => {
 };
 
 export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store');
   if (String(req?.method || 'GET').toUpperCase() !== 'GET') {
     res.setHeader('Allow', 'GET');
     res.setHeader('Cache-Control', 'no-store');
@@ -41,7 +42,7 @@ export default async function handler(req, res) {
       res.status(400).json({ ok: false, error: `unknown ticker: ${ticker}` });
       return;
     }
-    const cfg = ALLOWED_RANGES[rangeKey];
+    const cfg = Object.hasOwn(ALLOWED_RANGES, rangeKey) ? ALLOWED_RANGES[rangeKey] : null;
     if (!cfg) {
       res.status(400).json({ ok: false, error: `unknown range: ${rangeKey}`, allowed: Object.keys(ALLOWED_RANGES) });
       return;
@@ -65,12 +66,14 @@ export default async function handler(req, res) {
       return;
     }
 
-    const ts = result.timestamp || [];
-    const closes = result.indicators?.quote?.[0]?.close || [];
+    const ts = Array.isArray(result.timestamp) ? result.timestamp : [];
+    const rawCloses = result.indicators?.quote?.[0]?.close;
+    const closes = Array.isArray(rawCloses) ? rawCloses : [];
     const points = [];
     for (let i = 0; i < ts.length; i++) {
-      if (closes[i] != null) {
+      if (Number.isFinite(ts[i]) && Number.isFinite(closes[i])) {
         const d = new Date(ts[i] * 1000);
+        if (!Number.isFinite(d.getTime())) continue;
         const v = closes[i];
         points.push({
           date: fmtDate(d, rangeKey),

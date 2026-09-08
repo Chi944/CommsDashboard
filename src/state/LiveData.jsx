@@ -6,6 +6,10 @@ import {
 import { CURRENCY_META, CURRENCY_NO_DECIMAL } from '../../lib/symbols.js';
 import { useLocalStorage } from '../utils/useLocalStorage.js';
 import {
+  normalizeAlerts, normalizePositions, normalizeTriggeredAlerts,
+  normalizeWatchlists, validWatchlistName,
+} from '../lib/localPreferences.js';
+import {
   combineDataModes,
   dataModeFromState,
   mergeYahooPriceRows,
@@ -80,9 +84,13 @@ export function LiveDataProvider({ children }) {
   const [newsLoading, setNewsLoading] = useState(true);
 
   const [dashboardCurrency, _setDashboardCurrency] = useState(() => {
-    try { return localStorage.getItem(CCY_KEY) || 'USD'; } catch { return 'USD'; }
+    try {
+      const saved = localStorage.getItem(CCY_KEY);
+      return Object.hasOwn(CURRENCY_META, saved) ? saved : 'USD';
+    } catch { return 'USD'; }
   });
   const setDashboardCurrency = useCallback((c) => {
+    if (!Object.hasOwn(CURRENCY_META, c)) return;
     _setDashboardCurrency(c);
     try { localStorage.setItem(CCY_KEY, c); } catch {}
   }, []);
@@ -92,7 +100,7 @@ export function LiveDataProvider({ children }) {
   const [watchState, setWatchState] = useLocalStorage('comms.watchlists.v1', {
     active: 'Default',
     lists: { Default: [] },
-  });
+  }, normalizeWatchlists);
 
   const watchlistNames = Object.keys(watchState.lists);
   const activeList = watchState.lists[watchState.active] || [];
@@ -104,7 +112,7 @@ export function LiveDataProvider({ children }) {
 
   const createList = useCallback((name) => {
     const trimmed = (name || '').trim();
-    if (!trimmed) return;
+    if (!validWatchlistName(trimmed)) return;
     setWatchState((p) => ({
       active: trimmed,
       lists: { ...p.lists, [trimmed]: p.lists[trimmed] || [] },
@@ -113,7 +121,7 @@ export function LiveDataProvider({ children }) {
 
   const renameList = useCallback((oldName, newName) => {
     const trimmed = (newName || '').trim();
-    if (!trimmed || trimmed === oldName) return;
+    if (!validWatchlistName(trimmed) || trimmed === oldName) return;
     setWatchState((p) => {
       if (!p.lists[oldName]) return p;
       const duplicate = Object.keys(p.lists).some(
@@ -147,8 +155,10 @@ export function LiveDataProvider({ children }) {
 
   // ---------- Price alerts ----------
   // [{ id, ticker, op: '>'|'<', price, name, enabled, lastTriggeredAt }]
-  const [alerts, setAlerts] = useLocalStorage('comms.alerts.v1', []);
-  const [triggeredAlerts, setTriggeredAlerts] = useLocalStorage('comms.alerts.triggered.v1', []);
+  const [alerts, setAlerts] = useLocalStorage('comms.alerts.v1', [], normalizeAlerts);
+  const [triggeredAlerts, setTriggeredAlerts] = useLocalStorage('comms.alerts.triggered.v1', [], normalizeTriggeredAlerts);
+  const alertsRef = useRef(alerts);
+  alertsRef.current = alerts;
   const lastPriceRef = useRef({});
   const marketRefreshInFlightRef = useRef(null);
   const pageRefreshInFlightRef = useRef(null);
@@ -197,43 +207,42 @@ export function LiveDataProvider({ children }) {
     const newlyTriggered = [];
     for (const c of merged) next[c.ticker] = c.price;
 
-    setAlerts((curAlerts) => {
-      const updated = [];
-      for (const a of curAlerts) {
-        const cur = next[a.ticker];
-        const was = prev[a.ticker];
-        if (!a.enabled || cur == null) { updated.push(a); continue; }
-        const crossed =
-          (a.op === '>' && was != null && was < a.price && cur >= a.price) ||
-          (a.op === '<' && was != null && was > a.price && cur <= a.price);
-        if (crossed) {
-          const ts = Date.now();
-          newlyTriggered.push({
-            id: `t-${a.id}-${ts}`,
-            ticker: a.ticker,
-            name: a.name,
-            op: a.op,
-            threshold: a.price,
-            price: cur,
-            ts,
-          });
-          if ('Notification' in window && Notification.permission === 'granted') {
-            try {
-              new Notification(`${a.ticker} ${a.op} ${a.price}`, {
-                body: `${a.name}: now ${cur}`,
-                tag: `alert-${a.id}`,
-              });
-            } catch {}
-          }
-          updated.push({ ...a, lastTriggeredAt: ts });
-        } else {
-          updated.push(a);
+    // Compute crossings before scheduling React updates. State updaters may be
+    // deferred or replayed; notifications and journal writes must run once.
+    const triggeredAt = new Map();
+    for (const a of alertsRef.current) {
+      const cur = next[a.ticker];
+      const was = prev[a.ticker];
+      if (!a.enabled || cur == null) continue;
+      const crossed =
+        (a.op === '>' && was != null && was < a.price && cur >= a.price) ||
+        (a.op === '<' && was != null && was > a.price && cur <= a.price);
+      if (crossed) {
+        const ts = Date.now();
+        newlyTriggered.push({
+          id: `t-${a.id}-${ts}`,
+          ticker: a.ticker,
+          name: a.name,
+          op: a.op,
+          threshold: a.price,
+          price: cur,
+          ts,
+        });
+        if ('Notification' in window && Notification.permission === 'granted') {
+          try {
+            new Notification(`${a.ticker} ${a.op} ${a.price}`, {
+              body: `${a.name}: now ${cur}`,
+              tag: `alert-${a.id}`,
+            });
+          } catch {}
         }
+        triggeredAt.set(a.id, ts);
       }
-      return updated;
-    });
+    }
 
     if (newlyTriggered.length) {
+      setAlerts((current) => current.map((a) => triggeredAt.has(a.id)
+        ? { ...a, lastTriggeredAt: triggeredAt.get(a.id) } : a));
       setTriggeredAlerts((p) => [...newlyTriggered, ...p].slice(0, 50));
     }
     lastPriceRef.current = next;
@@ -426,7 +435,7 @@ export function LiveDataProvider({ children }) {
 
   // ---------- Portfolio (positions) ----------
   // [{ ticker, qty, avgCost }]
-  const [positions, setPositions] = useLocalStorage('comms.positions.v1', []);
+  const [positions, setPositions] = useLocalStorage('comms.positions.v1', [], normalizePositions);
 
   const upsertPosition = useCallback(({ ticker, qty, avgCost }) => {
     if (!ticker) return;

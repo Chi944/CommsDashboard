@@ -10,6 +10,7 @@ import AnalysisPanel from './AnalysisPanel.jsx';
 import AlertButton from './AlertButton.jsx';
 import { downloadCSV } from '../utils/csv.js';
 import { dataModeLabel, isTrustedMarketRow } from '../lib/marketDisplay.js';
+import { stockResearchTickerUrl } from '../lib/stockResearch.js';
 
 // Quick filter pills (always visible).
 const PRIMARY_CATS = ['ALL', 'TRENDING', 'WATCHLIST'];
@@ -805,6 +806,11 @@ export default function Prices({ initialTicker = null, onTickerChange } = {}) {
                   <>
                     <div className="text-xs uppercase tracking-widest text-gray-500">{sel.ticker} • {sel.unit} • {sel.category}</div>
                     <div className="text-lg sm:text-xl font-semibold text-gray-100">{sel.name}</div>
+                    {CATEGORY_GROUPS[0].cats.includes(sel.category) && (
+                      <a href={stockResearchTickerUrl(sel.ticker)} className="mt-1 inline-block text-xs text-cyan-300 hover:underline">
+                        Research {sel.ticker} in Stock Research
+                      </a>
+                    )}
                   </>
                 ) : null}
               </div>
