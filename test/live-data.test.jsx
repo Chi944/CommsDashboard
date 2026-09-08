@@ -139,6 +139,17 @@ function WatchlistState() {
   );
 }
 
+function SavedState() {
+  const data = useLiveData();
+  return <>
+    <output aria-label="saved holdings">{JSON.stringify(data.positions)}</output>
+    <output aria-label="saved alerts">{JSON.stringify(data.alerts)}</output>
+    <output aria-label="triggered count">{data.triggeredAlerts.length}</output>
+    <output aria-label="saved currency">{data.dashboardCurrency}</output>
+    <button onClick={data.refreshMarketSnapshot}>Refresh prices</button>
+  </>;
+}
+
 beforeAll(async () => {
   vi.stubEnv('VITE_USE_LIVE_DATA', 'true');
   ({ LiveDataProvider, useLiveData } = await import('../src/state/LiveData.jsx'));
@@ -277,6 +288,52 @@ describe('LiveData market fetch isolation', () => {
 });
 
 describe('LiveData watchlist lifecycle', () => {
+  it('recovers malformed stored state and keeps valid holdings across remounts', async () => {
+    localStorage.setItem('comms.watchlists.v1', 'null');
+    localStorage.setItem('comms.positions.v1', JSON.stringify([
+      null, { ticker: 'NVDA', qty: 3, avgCost: 100 }, { ticker: 'AMD', qty: -2, avgCost: 80 },
+    ]));
+    localStorage.setItem('comms.alerts.v1', '{}');
+    localStorage.setItem('comms.alerts.triggered.v1', '[null]');
+    localStorage.setItem('comms.displayCurrency', '__proto__');
+    globalThis.fetch = vi.fn(async () => response({ ok: false }));
+
+    const first = render(<LiveDataProvider><SavedState /><WatchlistState /></LiveDataProvider>);
+    await act(async () => {});
+    expect(screen.getByLabelText('watchlist names')).toHaveTextContent('Default');
+    expect(screen.getByLabelText('saved holdings')).toHaveTextContent('[{"ticker":"NVDA","qty":3,"avgCost":100}]');
+    expect(screen.getByLabelText('saved alerts')).toHaveTextContent('[]');
+    expect(screen.getByLabelText('triggered count')).toHaveTextContent('0');
+    expect(screen.getByLabelText('saved currency')).toHaveTextContent('USD');
+    first.unmount();
+
+    render(<LiveDataProvider><SavedState /></LiveDataProvider>);
+    await act(async () => {});
+    expect(screen.getByLabelText('saved holdings')).toHaveTextContent('[{"ticker":"NVDA","qty":3,"avgCost":100}]');
+  });
+
+  it('records one threshold crossing in StrictMode and retains it after restart', async () => {
+    localStorage.setItem('comms.alerts.v1', JSON.stringify([
+      { id: 'crude-high', ticker: 'CL', op: '>', price: 83, name: 'Crude', enabled: true },
+    ]));
+    let price = 82;
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url === '/api/prices') return response(yahooPayload(price));
+      if (url === '/api/market/snapshot') return response(v2Payload());
+      return response({ ok: false });
+    });
+    const first = render(<React.StrictMode><LiveDataProvider><SavedState /><MarketState /></LiveDataProvider></React.StrictMode>);
+    await waitFor(() => expect(screen.getByLabelText('market mode')).toHaveTextContent('LIVE'));
+    price = 84;
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Refresh prices' })));
+    await waitFor(() => expect(screen.getByLabelText('triggered count')).toHaveTextContent('1'));
+    first.unmount();
+
+    render(<LiveDataProvider><SavedState /></LiveDataProvider>);
+    await act(async () => {});
+    expect(screen.getByLabelText('triggered count')).toHaveTextContent('1');
+  });
+
   it('rejects a duplicate rename and never deletes the last remaining watchlist', async () => {
     const user = userEvent.setup();
     localStorage.setItem('comms.watchlists.v1', JSON.stringify({

@@ -5,6 +5,7 @@ import Sparkline from './Sparkline.jsx';
 import SectorHeatmap from './SectorHeatmap.jsx';
 import Briefing from './Briefing.jsx';
 import SmartMoneyPulse from './smart-money/SmartMoneyPulse.jsx';
+import StockResearchSummary from './StockResearchSummary.jsx';
 import FearGreed from './FearGreed.jsx';
 import { dataModeLabel } from '../lib/marketDisplay.js';
 const fmtPctChange = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
@@ -280,6 +281,7 @@ export default function Overview({ onSelectAsset, onOpenSmartMoney }) {
       <Briefing />
 
       <SmartMoneyPulse onOpen={onOpenSmartMoney} />
+      <StockResearchSummary />
 
       {/* Stat cards with sparkline range toggle */}
       <div>

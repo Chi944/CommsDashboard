@@ -11,6 +11,20 @@ free St. Louis Fed FRED calendar remains a transparently attributed final fallba
 
 **Live:** https://comms-dashboard-navy.vercel.app/
 
+The **Workspace** navigation connects this dashboard to
+[Stock Research](https://stock-research-ecru.vercel.app/), its optional
+[Research Lab](https://stock-research-ecru.vercel.app/#research-lab), and the
+[Trading System running on this computer](http://127.0.0.1:8642/). Links use the
+current tab. Research Lab holds quarantined MiroFish simulations inside Stock
+Research; it is independent of weekly screening. These are navigation links:
+Comms Dashboard does not poll the local trading service or share browser holdings
+with its trading ledger. Open Trading System on the computer running its API.
+Overview independently loads the public `Stock Research /run.json` weekly summary,
+with an eight-second deadline, a bounded response, schema validation, and freshness
+calculated from its data as-of date rather than page-build time. An unavailable
+summary leaves all market views usable. Equity charts link to the matching
+Stock Research ticker search. No MiroFish payload is consumed by this dashboard.
+
 ## Run locally
 
 ```bash
@@ -89,6 +103,7 @@ The combined market and Smart Money refresh runs at 06:00 and 18:00 UTC (`vercel
 - AI calls use distributed semantic caching, cross-instance generation locks, atomic per-client quotas, safe client errors, structured server logs, and a scheduled forced-generation production smoke test. Vercel fails closed if its Redis guard is unavailable.
 - Smart Money uses only reviewed free public sources. SEC filing dates, effective dates, observation dates, and retrieval dates remain distinct; unverified performance is never presented as success. No rights-cleared free crypto-whale leaderboard is currently enabled.
 - Trading and simulated-trading capabilities are deliberately absent. The dashboard has no order, broker, exchange, wallet, signing, or credential capability and cannot prepare or execute trades; Portfolio is a local-only tracker.
+- Saved watchlists, holdings, alerts, and currency preferences are validated on load; malformed entries recover without crashing or discarding valid sibling records. Price crossings are recorded outside React state updaters, preventing missing alert history or duplicate browser notifications during replayed renders.
 
 ## Verify
 
