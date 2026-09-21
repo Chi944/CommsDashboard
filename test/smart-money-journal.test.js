@@ -24,6 +24,236 @@ const PARTITION = 'smart-money/v1/journal/2026-08-26.json';
 const PUBLICATIONS = 'smart-money/v1/journal/publications.json';
 const GENERATION = '2026-08-27T00:00:00.000Z';
 
+// Exercise the production adapter, mocking only the external Blob SDK. The
+// subprocess isolates module mocks and synthetic credentials from other tests.
+function runBlobReadProbe(records, probe) {
+  const child = spawnSync(process.execPath, [
+    '--experimental-test-module-mocks', '--input-type=module', '--eval', String.raw`
+      import assert from 'node:assert/strict';
+      import { mock } from 'node:test';
+      import { readFileSync } from 'node:fs';
+      globalThis.fetch = async () => { throw new Error('Unexpected network request'); };
+      const input = JSON.parse(readFileSync(0, 'utf8'));
+      const records = new Map(Object.entries(input));
+      const calls = [];
+      let getOverride;
+      let revision = 0;
+      class BlobNotFoundError extends Error {}
+      class BlobPreconditionFailedError extends Error {}
+      await mock.module('@vercel/blob', { namedExports: {
+        BlobNotFoundError, BlobPreconditionFailedError,
+        async head(pathname, options) {
+          calls.push({ op: 'head', pathname, options });
+          if (!records.has(pathname)) throw new BlobNotFoundError();
+          return { etag: '"revision-' + revision + '"' };
+        },
+        async get(pathname, options) {
+          calls.push({ op: 'get', pathname, options });
+          if (getOverride) return getOverride(pathname, options);
+          if (!records.has(pathname)) return null;
+          return {
+            statusCode: 200,
+            stream: new Response(JSON.stringify(records.get(pathname))).body,
+            blob: { etag: 'W/"revision-' + revision + '"' },
+          };
+        },
+        async put(pathname, body, options) {
+          calls.push({ op: 'put', pathname, options });
+          if (records.has(pathname)) {
+            assert.equal(options.ifMatch, '"revision-' + revision + '"');
+          } else {
+            assert.equal(options.allowOverwrite, false);
+          }
+          records.set(pathname, JSON.parse(body));
+          revision += 1;
+        },
+        async list() { throw new Error('Unexpected list'); },
+        async del() { throw new Error('Unexpected delete'); },
+      } });
+      const journal = await import('./lib/smart-money/journal.js');
+      const now = new Date('2026-08-27T02:00:00.000Z');
+      const publications = 'smart-money/v1/journal/publications.json';
+      const manifest = 'smart-money/v1/journal/manifest.json';
+      const partition = 'smart-money/v1/journal/2026-08-26.json';
+      const query = { since: '2026-08-26T00:00:00.000Z', limit: 1 };
+      ${probe}
+    `,
+  ], {
+    cwd: new URL('../', import.meta.url),
+    input: JSON.stringify(records),
+    encoding: 'utf8',
+    timeout: 20_000,
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      BLOB_READ_WRITE_TOKEN: 'synthetic-blob-test-token',
+      COMMS_DASHBOARD_READ_WRITE_TOKEN: '',
+      BLOB_STORE_ID: '',
+    },
+  });
+  assert.equal(child.status, 0, child.stderr);
+}
+
+test('accepted Blob snapshot reads use one fresh private GET without HEAD', () => {
+  const snapshot = acceptedPrivateSnapshot();
+  runBlobReadProbe({ [PUBLICATIONS]: acceptedPublicationRecord(snapshot) }, String.raw`
+    const actual = await journal.readAcceptedSmartMoneySnapshot({ now });
+    assert.deepEqual(actual, records.get(publications).current.snapshot);
+    assert.deepEqual(calls, [{
+      op: 'get', pathname: publications,
+      options: { access: 'private', useCache: false },
+    }]);
+    // Publish through the real writer, then prove the next GET sees that exact
+    // committed generation without a process-cache delay.
+    const { buildSmartMoneyPrivateSnapshot } = await import('./lib/smart-money/private-snapshot.js');
+    const generation = '2026-08-27T01:00:00.000Z';
+    const next = buildSmartMoneyPrivateSnapshot({
+      refreshStartedAt: generation,
+      publicSnapshot: { ...actual.publicSnapshot, fetchedAt: generation },
+      adapterState: actual.adapterState,
+    }, { now });
+    const staged = await journal.stageJournal({
+      refreshStartedAt: generation, signals: [], dailyMarks: [],
+    }, { now });
+    assert.equal(staged.durableWriteSucceeded, true);
+    const published = await journal.publishJournalGeneration({
+      refreshStartedAt: generation, snapshot: next,
+    }, { now });
+    assert.equal(published.durableWriteSucceeded, true);
+    calls.length = 0;
+    const updated = await journal.readAcceptedSmartMoneySnapshot({ now });
+    assert.equal(updated.refreshStartedAt, '2026-08-27T01:00:00.000Z');
+    assert.deepEqual(updated, next);
+    assert.deepEqual(calls.map(({ op }) => op), ['get']);
+  `);
+});
+
+test('Blob history uses GET-only reads and preserves published-only pagination', async () => {
+  const adapter = memoryJournalAdapter();
+  const later = signalAt('hyperliquid-account-details:later', '2026-08-26T01:05:00.000Z');
+  await publishRows(adapter, { signals: [SIGNAL, later] });
+  const hidden = signalAt('hyperliquid-account-details:hidden', '2026-08-26T02:05:00.000Z');
+  await stageJournal({
+    refreshStartedAt: '2026-08-27T01:00:00.000Z', signals: [hidden], dailyMarks: [],
+  }, { adapter, now: new Date('2026-08-27T01:00:00.000Z') });
+  const records = Object.fromEntries(adapter.paths().map((path) => [path, adapter.inspect(path)]));
+  runBlobReadProbe(records, String.raw`
+    const first = await journal.readJournal(query, { now });
+    assert.deepEqual(first.signals.map(({ id }) => id), ['hyperliquid-account-details:position-1']);
+    assert.ok(first.nextCursor);
+    assert.deepEqual(calls.map(({ op, pathname }) => [op, pathname]), [
+      ['get', publications], ['get', manifest], ['get', partition],
+    ]);
+    const second = await journal.readJournal({ ...query, cursor: first.nextCursor }, { now });
+    assert.deepEqual(second.signals.map(({ id }) => id), ['hyperliquid-account-details:later']);
+    assert.equal(second.nextCursor, null);
+    assert.deepEqual(second.dailyMarks, []);
+    assert.equal(JSON.stringify(second).includes('adapterState'), false);
+    assert.equal(JSON.stringify(second).includes('hyperliquid-account-details:hidden'), false);
+    assert.equal(calls.length, 6);
+    for (const call of calls) {
+      assert.equal(call.op, 'get');
+      assert.deepEqual(call.options, { access: 'private', useCache: false });
+    }
+    records.delete(partition);
+    await assert.rejects(journal.readJournal(query, { now }));
+  `);
+});
+
+test('Blob read-only missing files preserve empty results without HEAD', () => {
+  runBlobReadProbe({}, String.raw`
+    for (const missing of [() => null, () => { throw new BlobNotFoundError(); }]) {
+      calls.length = 0;
+      getOverride = missing;
+      assert.equal(await journal.readAcceptedSmartMoneySnapshot({ now }), null);
+      const history = await journal.readJournal(query, { now });
+      assert.deepEqual(history.signals, []);
+      assert.deepEqual(history.dailyMarks, []);
+      assert.equal(history.nextCursor, null);
+      assert.deepEqual(calls.map(({ op, pathname }) => [op, pathname]), [
+        ['get', publications], ['get', publications], ['get', manifest],
+      ]);
+    }
+  `);
+});
+
+test('Blob read-only failures never become absent files or expose provider details', () => {
+  runBlobReadProbe({}, String.raw`
+    const failures = [
+      () => { throw Object.assign(new Error('synthetic-private-detail'), { status: 401 }); },
+      () => { throw Object.assign(new Error('synthetic-private-detail'), { status: 503 }); },
+      () => ({ statusCode: 304, stream: null }),
+      () => undefined,
+      () => ({ statusCode: 200, stream: new Response('{bad-json').body }),
+      () => ({ statusCode: 200, stream: new Response('null').body }),
+      () => ({ statusCode: 200, stream: new Response('42').body }),
+    ];
+    for (getOverride of failures) {
+      calls.length = 0;
+      for (const read of [
+        () => journal.readAcceptedSmartMoneySnapshot({ now }),
+        () => journal.readJournal(query, { now }),
+      ]) {
+        await assert.rejects(read(), (error) => (
+          error.code === 'journal_read_failed' && error.message === 'journal_read_failed'
+        ));
+      }
+      assert.deepEqual(calls.map(({ op }) => op), ['get', 'get']);
+    }
+  `);
+});
+
+test('Blob GET-only reads retain publication validation and isolate store credentials', () => {
+  const snapshot = acceptedPrivateSnapshot();
+  runBlobReadProbe({ [PUBLICATIONS]: acceptedPublicationRecord(snapshot) }, String.raw`
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    process.env.COMMS_DASHBOARD_READ_WRITE_TOKEN = 'synthetic-store-a';
+    assert.ok(await journal.readAcceptedSmartMoneySnapshot({ now }));
+    process.env.COMMS_DASHBOARD_READ_WRITE_TOKEN = 'synthetic-store-b';
+    getOverride = (path, options) => {
+      assert.equal(options.token, 'synthetic-store-b');
+      return null;
+    };
+    assert.equal(await journal.readAcceptedSmartMoneySnapshot({ now }), null);
+    assert.deepEqual(calls.map(({ op, options }) => [op, options]), [
+      ['get', { access: 'private', useCache: false, token: 'synthetic-store-a' }],
+      ['get', { access: 'private', useCache: false, token: 'synthetic-store-b' }],
+    ]);
+    getOverride = undefined;
+    const tampered = records.get(publications);
+    tampered.current.snapshot.stateDigest = '0'.repeat(64);
+    await assert.rejects(journal.readAcceptedSmartMoneySnapshot({ now }));
+    await assert.rejects(journal.readJournal(query, { now }));
+    records.set(publications, { schemaVersion: 999 });
+    await assert.rejects(journal.readAcceptedSmartMoneySnapshot({ now }));
+    delete process.env.COMMS_DASHBOARD_READ_WRITE_TOKEN;
+    process.env.BLOB_STORE_ID = 'synthetic-oidc-store';
+    records.delete(publications);
+    assert.equal(await journal.readAcceptedSmartMoneySnapshot({ now }), null);
+    assert.deepEqual(calls.at(-1).options, { access: 'private', useCache: false });
+  `);
+});
+
+test('production journal mutations still obtain strong HEAD ETags before conditional PUT', () => {
+  runBlobReadProbe({}, String.raw`
+    const result = await journal.stageJournal({
+      refreshStartedAt: '2026-08-27T00:00:00.000Z', signals: [], dailyMarks: [],
+    }, { now });
+    assert.equal(result.durableWriteSucceeded, true);
+    assert.ok(calls.some(({ op }) => op === 'put'));
+    assert.ok(calls.some(({ op, options }) => op === 'put' && options.ifMatch));
+    for (let i = 0; i < calls.length; i += 1) {
+      if (calls[i].op === 'get') {
+        assert.equal(calls[i - 1]?.op, 'head');
+        assert.equal(calls[i - 1].pathname, calls[i].pathname);
+      }
+      if (calls[i].op === 'put' && calls[i].options.ifMatch) {
+        assert.match(calls[i].options.ifMatch, /^"revision-\d+"$/);
+      }
+    }
+  `);
+});
+
 function acceptedPrivateSnapshot(generation = GENERATION, signals = []) {
   const { previous } = createRefreshDeps({ signals: [] });
   const activities = signals.map((signal) => ({
