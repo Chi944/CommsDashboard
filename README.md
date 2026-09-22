@@ -118,6 +118,21 @@ npm run test:e2e:production
 
 CI repeats the build and test suite on Node 22 and Node 24, plus a production-dependency security audit, on every push and pull request. The daily exact-commit production release smoke verifies all public data routes, forced AI generation, provider freshness, every dashboard view, and mobile/tablet/desktop overflow and runtime health.
 
+### Dependency updates
+
+Dependabot groups only minor/patch development-tooling updates. Major tooling
+updates must be reviewed separately, with the full build and test matrix green
+before merging. Tailwind major updates are specifically excluded from automatic
+updates while this app uses the v3 PostCSS integration; compatible v3 updates
+remain enabled. A v4 migration must update PostCSS, CSS directives, theme loading,
+and affected utilities together, including browser verification. Remove the
+Tailwind exclusion only as part of that reviewed migration. Review any security
+advisory requiring a major upgrade manually rather than bypassing failing checks.
+
+`test/styles-build.test.js` compiles the real stylesheet using the configured
+PostCSS plugins and checks generated layout, font, animation, and responsive
+styles. A failed Dependabot preview does not replace the current production site.
+
 ## Tabs
 
 - **Overview** — hero stats, evidence-backed daily market briefing, Smart Money pulse, top movers, headlines
