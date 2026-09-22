@@ -53,7 +53,7 @@ Add in **Vercel → Project → Settings → Environment Variables** (or `.env.l
 | `AI_GENERATION_QUOTA` / `AI_GENERATION_WINDOW_SECONDS` | Per-client AI generation limit | Optional; defaults to 10 uncached generations per 60 seconds |
 | `AI_BRIEFING_TTL_SECONDS` / `AI_ANALYSIS_TTL_SECONDS` | Market AI result cache | Optional; defaults to 15 / 30 minutes |
 | `AI_SMART_MONEY_BRIEFING_TTL_SECONDS` | Smart Money AI result cache | Optional; defaults to 36 hours and is also partitioned by UTC market date and accepted-evidence digest |
-| `AI_SMOKE_SECRET` | Forced-generation production smoke | Required for the scheduled smoke; configure the same value as a GitHub Actions secret |
+| `AI_SMOKE_SECRET` | Forced-generation production smoke | Required for the manually dispatched smoke; configure the same value as a GitHub Actions secret |
 | `EIA_API_KEY` | Henry Hub spot (v2) | [EIA Open Data](https://www.eia.gov/opendata/register.php) — daily observations published weekly |
 | `COINGECKO_API_KEY` | Crypto (v2) | Optional; [CoinGecko API](https://www.coingecko.com/en/api/pricing) |
 | `CRON_SECRET` | Scheduled market and Smart Money refresh | Random string; secures `/api/market/refresh` and `/api/smart-money/refresh` |
@@ -85,7 +85,7 @@ See [docs/commodities-v2-api-spec.md](docs/commodities-v2-api-spec.md) for archi
 
 The four Smart Money sub-routes share one dynamic Vercel Function; their public URLs and request contracts remain independent. The dispatcher requires Vercel's normalized `route` value to match the URL pathname, rejects duplicate or mismatched values, and strips that routing metadata before endpoint query validation. An explicit same-value `route` query is indistinguishable from Vercel's injected metadata and is therefore handled as metadata.
 
-The combined market and Smart Money refresh runs at 06:00 and 18:00 UTC (`vercel.json`). The production AI smoke runs daily at 12:17 UTC, forces both generated briefings, validates current evidence, and requires all seven enabled Smart Money providers to be fresh.
+The combined market and Smart Money refresh runs at 06:00 and 18:00 UTC (`vercel.json`) so cached research is ready when the dashboard opens. The production smoke runs only when manually dispatched in GitHub Actions; it forces both generated briefings, validates current evidence, and requires all seven enabled Smart Money providers to be fresh. Smart Money browser reads pause while the tab is hidden and resume once when returning; manual refresh stays available.
 
 ## Data trust and resilience
 
@@ -100,7 +100,7 @@ The combined market and Smart Money refresh runs at 06:00 and 18:00 UTC (`vercel
 - The UI reports `LIVE`, `DEGRADED`, or `STALE` from the effective displayed coverage. A complete fresh Yahoo feed keeps the dashboard live when an optional provider overlay is stale; stale overlays are rejected rather than shown. Mock fallback rows remain visible but are excluded from movers, heatmaps, and alerts.
 - Provider requests time out and partial failures preserve usable or last-known-good data.
 - Briefings use a UTC market-date cache partition and preserve their true generation/input timestamps. Stale or future-dated sentiment is rejected, and every paragraph must cite validated mover and sentiment evidence before it can be cached. The Refresh button uses a stable, quota-protected no-store route to retrieve the newest shared briefing without serving an older edge-cached response.
-- AI calls use distributed semantic caching, cross-instance generation locks, atomic per-client quotas, safe client errors, structured server logs, and a scheduled forced-generation production smoke test. Vercel fails closed if its Redis guard is unavailable.
+- AI calls use distributed semantic caching, cross-instance generation locks, atomic per-client quotas, safe client errors, structured server logs, and a manually dispatched forced-generation production smoke test. Vercel fails closed if its Redis guard is unavailable.
 - Smart Money uses only reviewed free public sources. SEC filing dates, effective dates, observation dates, and retrieval dates remain distinct; unverified performance is never presented as success. No rights-cleared free crypto-whale leaderboard is currently enabled.
 - Trading and simulated-trading capabilities are deliberately absent. The dashboard has no order, broker, exchange, wallet, signing, or credential capability and cannot prepare or execute trades; Portfolio is a local-only tracker.
 - Saved watchlists, holdings, alerts, and currency preferences are validated on load; malformed entries recover without crashing or discarding valid sibling records. Price crossings are recorded outside React state updaters, preventing missing alert history or duplicate browser notifications during replayed renders.
@@ -116,7 +116,7 @@ npm run smoke:ai -- https://comms-dashboard-navy.vercel.app NVDA
 npm run test:e2e:production
 ```
 
-CI repeats the build and test suite on Node 22 and Node 24, plus a production-dependency security audit, on every push and pull request. The daily exact-commit production release smoke verifies all public data routes, forced AI generation, provider freshness, every dashboard view, and mobile/tablet/desktop overflow and runtime health.
+CI repeats the build and test suite on Node 22 and Node 24, plus a production-dependency security audit, on every push and pull request. The manually dispatched exact-commit production release smoke verifies all public data routes, forced AI generation, provider freshness, every dashboard view, and mobile/tablet/desktop overflow and runtime health.
 
 ### Dependency updates
 

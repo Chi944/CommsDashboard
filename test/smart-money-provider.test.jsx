@@ -3,7 +3,7 @@
 import React from 'react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { SmartMoneyProvider } from '../src/state/SmartMoney.jsx';
@@ -33,9 +33,91 @@ function routeFetch(overrides = {}) {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   localStorage.clear();
   globalThis.fetch = originalFetch;
+});
+
+it('makes no automatic requests when mounted hidden and loads once on return', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-08-27T05:59:00Z'));
+  let hidden = true;
+  vi.spyOn(document, 'hidden', 'get').mockImplementation(() => hidden);
+  globalThis.fetch = routeFetch();
+  render(<SmartMoneyProvider><SmartMoneyProbe /></SmartMoneyProvider>);
+
+  await act(async () => {
+    window.dispatchEvent(new Event('focus'));
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+  });
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+
+  await act(async () => {
+    hidden = false;
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+  });
+  expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  expect(screen.getByTestId('entity-count')).toHaveTextContent('1');
+});
+
+it('pauses scheduled reads while hidden and preserves accepted data through a failed return', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-08-27T05:59:00Z'));
+  let hidden = false;
+  let failed = false;
+  vi.spyOn(document, 'hidden', 'get').mockImplementation(() => hidden);
+  globalThis.fetch = routeFetch({
+    snapshot: () => {
+      if (failed) throw new Error('return refresh failed');
+      return jsonResponse(SMART_MONEY_RESPONSE);
+    },
+  });
+  await act(async () => {
+    render(<SmartMoneyProvider><SmartMoneyProbe /></SmartMoneyProvider>);
+  });
+  expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+
+  await act(async () => {
+    hidden = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+  });
+  expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  expect(screen.getByTestId('entity-count')).toHaveTextContent('1');
+
+  await act(async () => {
+    failed = true;
+    hidden = false;
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+  });
+  expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+  expect(screen.getByTestId('entity-count')).toHaveTextContent('1');
+  expect(screen.getByTestId('smart-error')).toHaveTextContent('return refresh failed');
+});
+
+it('retains scheduled visible refreshes and stops their timers after unmount', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-08-27T06:04:00Z'));
+  vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+  globalThis.fetch = routeFetch();
+  let view;
+  await act(async () => {
+    view = render(<SmartMoneyProvider><SmartMoneyProbe /></SmartMoneyProvider>);
+  });
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  expect(globalThis.fetch.mock.calls.map(([url]) => url)).toEqual([
+    '/api/smart-money', '/api/smart-money/briefing',
+    '/api/smart-money?refresh=1', '/api/smart-money/briefing?refresh=1',
+  ]);
+
+  view.unmount();
+  await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+  window.dispatchEvent(new Event('focus'));
+  document.dispatchEvent(new Event('visibilitychange'));
+  expect(globalThis.fetch).toHaveBeenCalledTimes(4);
 });
 
 it('loads snapshot and briefing independently using public GET requests', async () => {

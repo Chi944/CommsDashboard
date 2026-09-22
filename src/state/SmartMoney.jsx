@@ -154,37 +154,46 @@ export function SmartMoneyProvider({ children }) {
 
   useEffect(() => {
     mountedRef.current = true;
-    loadSnapshot(false);
-    loadBriefing(false);
-    const onFocus = () => {
-      loadSnapshot(false);
-      loadBriefing(false);
-    };
-    window.addEventListener('focus', onFocus);
-    return () => {
-      mountedRef.current = false;
-      snapshotAbortRef.current?.abort();
-      briefingAbortRef.current?.abort();
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [loadBriefing, loadSnapshot]);
-
-  useEffect(() => {
     let timer = null;
     let cancelled = false;
+    let lastAutomaticLoadAt = null;
+    const loadAutomatically = (refresh = false) => {
+      if (cancelled || document.hidden) return Promise.resolve();
+      const now = Date.now();
+      // Returning to a tab can emit both visibilitychange and focus.
+      if (lastAutomaticLoadAt !== null && now - lastAutomaticLoadAt < 1_000) {
+        return Promise.resolve();
+      }
+      lastAutomaticLoadAt = now;
+      return Promise.allSettled([loadSnapshot(refresh), loadBriefing(refresh)]);
+    };
     const scheduleNextRefresh = () => {
+      window.clearTimeout(timer);
+      if (cancelled || document.hidden) return;
       const current = new Date();
       const next = nextSmartMoneyRefreshAt(current).getTime();
       timer = window.setTimeout(async () => {
         if (cancelled || !mountedRef.current) return;
-        await Promise.allSettled([loadSnapshot(true), loadBriefing(true)]);
+        await loadAutomatically(true);
         if (!cancelled) scheduleNextRefresh();
       }, Math.max(1_000, next - current.getTime()));
     };
-    scheduleNextRefresh();
+    const onVisibilityChange = () => {
+      loadAutomatically(false);
+      scheduleNextRefresh();
+    };
+    const onFocus = () => { loadAutomatically(false); };
+    onVisibilityChange();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onFocus);
     return () => {
+      mountedRef.current = false;
       cancelled = true;
+      snapshotAbortRef.current?.abort();
+      briefingAbortRef.current?.abort();
       window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onFocus);
     };
   }, [loadBriefing, loadSnapshot]);
 
