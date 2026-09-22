@@ -8,8 +8,17 @@ updates:
     groups:
       development-tooling:
         dependency-type: development
+        update-types:
+          - minor
+          - patch
       production-dependencies:
         dependency-type: production
+    # Tailwind 4 requires a coordinated CSS/PostCSS/theme migration, not a
+    # package-only version bump. Keep compatible updates enabled on v3.
+    ignore:
+      - dependency-name: tailwindcss
+        update-types:
+          - version-update:semver-major
   - package-ecosystem: github-actions
     directory: /
     schedule:
