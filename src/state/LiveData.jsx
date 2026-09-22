@@ -24,6 +24,7 @@ const USE_MARKET_V2 = import.meta.env.VITE_USE_LIVE_DATA === 'true';
 const YAHOO_PRICES_URL = '/api/prices';
 const MARKET_V2_URL = '/api/market/snapshot';
 const PRICE_INTERVAL_MS = 60_000;
+const MARKET_SNAPSHOT_TIMEOUT_MS = 45_000;
 const NEWS_INTERVAL_MS = 5 * 60_000;
 const NEWS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const NEWS_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
@@ -160,6 +161,7 @@ export function LiveDataProvider({ children }) {
   const alertsRef = useRef(alerts);
   alertsRef.current = alerts;
   const lastPriceRef = useRef({});
+  const supplementalInFlightRef = useRef(null);
   const marketRefreshInFlightRef = useRef(null);
   const pageRefreshInFlightRef = useRef(null);
 
@@ -248,25 +250,52 @@ export function LiveDataProvider({ children }) {
     lastPriceRef.current = next;
   }, [setAlerts, setTriggeredAlerts]);
 
-  const fetchV2Snapshot = useCallback(async () => {
-    const r = await fetch(MARKET_V2_URL, { cache: 'no-store' });
-    if (!r.ok) throw new Error(`snapshot ${r.status}`);
-    const j = await r.json();
-    if (!j?.ok) throw new Error('snapshot not ok');
-    const rows = (j.commodities || []).filter((c) => c.source);
-    setV2ByTicker(Object.fromEntries(rows.map((c) => [c.ticker, c])));
-    setV2FetchedAt(j.fetchedAt);
-    setV2StaleProviders(j.staleProviders || []);
-    setV2Partial(Boolean(j.partial) || Boolean(j.staleProviders?.length));
-    setV2FetchFailed(false);
-    setV2Counts({
-      received: rows.length,
-      stale: rows.filter((row) => row.stale).length,
-    });
-    if (j.marketVolumes && typeof j.marketVolumes === 'object') {
-      setMarketVolumes(j.marketVolumes);
-    }
-    return j;
+  const fetchV2Snapshot = useCallback(() => {
+    if (supplementalInFlightRef.current) return supplementalInFlightRef.current;
+    const operation = (async () => {
+      const controller = new AbortController();
+      let timeout;
+      let j;
+      try {
+        const readSnapshot = async () => {
+          const r = await fetch(MARKET_V2_URL, { cache: 'no-store', signal: controller.signal });
+          if (!r.ok) throw new Error(`snapshot ${r.status}`);
+          return r.json();
+        };
+        j = await Promise.race([
+          readSnapshot(),
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => {
+              controller.abort();
+              reject(new Error('snapshot timeout'));
+            }, MARKET_SNAPSHOT_TIMEOUT_MS);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!j?.ok) throw new Error('snapshot not ok');
+      const rows = (j.commodities || []).filter((c) => c.source);
+      setV2ByTicker(Object.fromEntries(rows.map((c) => [c.ticker, c])));
+      setV2FetchedAt(j.fetchedAt);
+      setV2StaleProviders(j.staleProviders || []);
+      setV2Partial(Boolean(j.partial) || Boolean(j.staleProviders?.length));
+      setV2FetchFailed(false);
+      setV2Counts({
+        received: rows.length,
+        stale: rows.filter((row) => row.stale).length,
+      });
+      if (j.marketVolumes && typeof j.marketVolumes === 'object') {
+        setMarketVolumes(j.marketVolumes);
+      }
+      return j;
+    })();
+    supplementalInFlightRef.current = operation;
+    const clear = () => {
+      if (supplementalInFlightRef.current === operation) supplementalInFlightRef.current = null;
+    };
+    operation.then(clear, clear);
+    return operation;
   }, []);
 
   const fetchYahooPrices = useCallback(async () => {
@@ -279,20 +308,21 @@ export function LiveDataProvider({ children }) {
     return j;
   }, [applyYahooPrices, runAlertEvaluation]);
 
-  const fetchLiveMarketFeeds = useCallback(async () => {
+  const fetchLiveMarketFeeds = useCallback(async ({ includeSupplemental = true } = {}) => {
     const [yahooResult, v2Result] = await Promise.allSettled([
       fetchYahooPrices(),
-      fetchV2Snapshot(),
+      ...(includeSupplemental ? [fetchV2Snapshot()] : []),
     ]);
     if (yahooResult.status === 'rejected') setPricesFetchFailed(true);
-    if (v2Result.status === 'rejected') setV2FetchFailed(true);
+    if (v2Result?.status === 'rejected') setV2FetchFailed(true);
   }, [fetchYahooPrices, fetchV2Snapshot]);
 
-  const fetchPrices = useCallback(async () => {
+  const fetchPrices = useCallback(async ({ automatic = false } = {}) => {
     try {
       setPricesLoading(true);
       if (USE_MARKET_V2) {
-        await fetchLiveMarketFeeds();
+        // Yahoo continues in background tabs so price-crossing alerts still run.
+        await fetchLiveMarketFeeds({ includeSupplemental: !automatic || !document.hidden });
       } else {
         await fetchYahooPrices();
       }
@@ -362,13 +392,23 @@ export function LiveDataProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    fetchPrices();
+    const pollPrices = () => fetchPrices({ automatic: true });
+    const onVisibilityChange = () => {
+      if (USE_MARKET_V2 && !document.hidden) {
+        fetchV2Snapshot().catch(() => setV2FetchFailed(true));
+      }
+    };
+    pollPrices();
     fetchNews();
-    const a = setInterval(fetchPrices, PRICE_INTERVAL_MS);
+    const a = setInterval(pollPrices, PRICE_INTERVAL_MS);
     const b = setInterval(fetchNews, NEWS_INTERVAL_MS);
     const c = setInterval(() => setClockTick((n) => n + 1), 1000);
-    return () => { clearInterval(a); clearInterval(b); clearInterval(c); };
-  }, [fetchPrices, fetchNews]);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      clearInterval(a); clearInterval(b); clearInterval(c);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [fetchPrices, fetchNews, fetchV2Snapshot]);
 
   const refresh = useCallback(() => {
     if (pageRefreshInFlightRef.current) return pageRefreshInFlightRef.current;
@@ -404,6 +444,15 @@ export function LiveDataProvider({ children }) {
     [clockTick, v2Counts, v2FetchFailed, v2FetchedAt, v2Partial],
   );
   const supplementalFallbackCovered = yahooDataMode === 'LIVE' && v2DataMode !== 'LIVE';
+  // Hidden tabs retain their last snapshot. Expired or failed refreshes must
+  // yield to current Yahoo rows, or remain visibly stale if no baseline exists.
+  const displayV2ByTicker = useMemo(() => (
+    v2FetchFailed || v2DataMode === 'STALE'
+      ? Object.fromEntries(Object.entries(v2ByTicker).map(([ticker, row]) => [
+        ticker, { ...row, stale: true },
+      ]))
+      : v2ByTicker
+  ), [v2ByTicker, v2DataMode, v2FetchFailed]);
   const dataMode = USE_MARKET_V2
     ? combineDataModes(yahooDataMode, v2DataMode, {
       supplementalFallbackCovered,
@@ -421,16 +470,16 @@ export function LiveDataProvider({ children }) {
   }, [v2FetchedAt, pricesUpdatedAt, clockTick, supplementalFallbackCovered]);
 
   const resolveTickerAssetFn = useCallback(
-    (asset) => resolveTickerAsset(asset, v2ByTicker, USE_MARKET_V2),
-    [v2ByTicker],
+    (asset) => resolveTickerAsset(asset, displayV2ByTicker, USE_MARKET_V2),
+    [displayV2ByTicker],
   );
   const resolveHeatmapAssetFn = useCallback(
-    (asset) => resolveHeatmapAsset(asset, v2ByTicker, USE_MARKET_V2),
-    [v2ByTicker],
+    (asset) => resolveHeatmapAsset(asset, displayV2ByTicker, USE_MARKET_V2),
+    [displayV2ByTicker],
   );
   const resolveTablePriceFn = useCallback(
-    (asset) => resolveTablePrice(asset, v2ByTicker, USE_MARKET_V2),
-    [v2ByTicker],
+    (asset) => resolveTablePrice(asset, displayV2ByTicker, USE_MARKET_V2),
+    [displayV2ByTicker],
   );
 
   // ---------- Portfolio (positions) ----------
