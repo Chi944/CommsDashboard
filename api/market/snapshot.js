@@ -44,7 +44,7 @@ export function createSnapshotHandler(dependencies = {}) {
       const errors = [];
       const currentDate = now();
       const nowMs = currentDate.getTime();
-      const readResult = await readCache({ withDiagnostics: true });
+      const readResult = await readCache({ withDiagnostics: true, preferRedis: true, nowMs });
       const hasReadState = Boolean(
         readResult
         && typeof readResult === 'object'
@@ -146,6 +146,7 @@ export function createSnapshotHandler(dependencies = {}) {
           blob: storage.blob,
           blobAuth: storage.blobAuth,
           blobHit: storage.blobHit,
+          blobReadSkipped: Boolean(storage.blobReadSkipped),
           blobError: storage.blobError || undefined,
           redis: storage.redis,
           redisHit: storage.redisHit,
