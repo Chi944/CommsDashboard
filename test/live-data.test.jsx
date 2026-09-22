@@ -110,6 +110,8 @@ function MarketState() {
       <output aria-label="market mode">{data.dataMode}</output>
       <output aria-label="crude price">{resolvedCrude?.price}</output>
       <output aria-label="natural gas price">{resolvedNaturalGas?.price}</output>
+      <output aria-label="natural gas source">{resolvedNaturalGas?.source}</output>
+      <output aria-label="natural gas stale">{String(resolvedNaturalGas?.stale)}</output>
       <output aria-label="market updated">{data.marketUpdatedLabel}</output>
       <button type="button" onClick={data.refreshMarketSnapshot}>Refresh market</button>
     </>
@@ -168,6 +170,204 @@ afterAll(() => {
 });
 
 describe('LiveData market fetch isolation', () => {
+  it('pauses hidden supplemental polling while Yahoo alerts continue, then resumes on visibility', async () => {
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const intervals = new Map();
+    vi.spyOn(window, 'setInterval').mockImplementation((callback, delay) => {
+      intervals.set(delay, callback);
+      return delay;
+    });
+    localStorage.setItem('comms.alerts.v1', JSON.stringify([
+      { id: 'crude-high', ticker: 'CL', op: '>', price: 83, name: 'Crude', enabled: true },
+    ]));
+    let price = 82;
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url === '/api/prices') return response(yahooPayload(price));
+      if (url === '/api/market/snapshot') return response(v2Payload());
+      return response(newsPayload());
+    });
+    const callsTo = (path) => globalThis.fetch.mock.calls.filter(([url]) => url === path).length;
+    const { unmount } = render(<LiveDataProvider><MarketState /><SavedState /></LiveDataProvider>);
+    await waitFor(() => expect(screen.getByLabelText('market mode')).toHaveTextContent('LIVE'));
+
+    hidden.mockReturnValue(true);
+    price = 84;
+    await act(async () => intervals.get(60_000)());
+    expect(callsTo('/api/prices')).toBe(2);
+    expect(callsTo('/api/market/snapshot')).toBe(1);
+    expect(screen.getByLabelText('triggered count')).toHaveTextContent('1');
+
+    hidden.mockReturnValue(false);
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    expect(callsTo('/api/market/snapshot')).toBe(2);
+    await act(async () => intervals.get(60_000)());
+    expect(callsTo('/api/market/snapshot')).toBe(3);
+    expect(callsTo('/api/prices')).toBe(3);
+
+    unmount();
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(callsTo('/api/market/snapshot')).toBe(3);
+  });
+
+  it('allows a manual supplemental refresh when the page starts hidden', async () => {
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url === '/api/prices') return response(yahooPayload());
+      if (url === '/api/market/snapshot') return response(v2Payload());
+      return response(newsPayload());
+    });
+    render(<LiveDataProvider><MarketState /></LiveDataProvider>);
+    await waitFor(() => expect(screen.getByLabelText('market mode')).toHaveTextContent('LIVE'));
+    expect(globalThis.fetch.mock.calls.filter(([url]) => url === '/api/market/snapshot')).toHaveLength(0);
+
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: /refresh market/i })));
+    expect(globalThis.fetch.mock.calls.filter(([url]) => url === '/api/market/snapshot')).toHaveLength(1);
+    expect(screen.getByLabelText('natural gas price')).toHaveTextContent('77');
+  });
+
+  it('uses fresh Yahoo after a hidden snapshot expires and its visibility refresh fails', async () => {
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+    const intervals = new Map();
+    vi.spyOn(window, 'setInterval').mockImplementation((callback, delay) => {
+      intervals.set(delay, callback);
+      return delay;
+    });
+    let failSnapshot = false;
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url === '/api/prices') {
+        const payload = yahooPayload();
+        payload.fetchedAt = new Date(Date.now()).toISOString();
+        payload.commodities = payload.commodities.map((row) => ({
+          ...row, asOf: payload.fetchedAt, ...(row.ticker === 'NG' ? { price: 99 } : {}),
+        }));
+        return response(payload);
+      }
+      if (url === '/api/market/snapshot') {
+        if (failSnapshot) throw new Error('snapshot unavailable');
+        return response(v2Payload());
+      }
+      return response(newsPayload());
+    });
+    render(<LiveDataProvider><MarketState /></LiveDataProvider>);
+    await waitFor(() => expect(screen.getByLabelText('natural gas price')).toHaveTextContent('77'));
+
+    hidden.mockReturnValue(true);
+    clock.mockReturnValue(Date.now() + 31 * 60_000);
+    act(() => intervals.get(1000)());
+    await act(async () => intervals.get(60_000)());
+    expect(globalThis.fetch.mock.calls.filter(([url]) => url === '/api/market/snapshot')).toHaveLength(1);
+    expect(screen.getByLabelText('natural gas price')).toHaveTextContent('99');
+    expect(screen.getByLabelText('natural gas source')).toHaveTextContent('yahoo');
+    expect(screen.getByLabelText('natural gas stale')).toHaveTextContent('false');
+    expect(screen.getByLabelText('market mode')).toHaveTextContent('LIVE');
+
+    failSnapshot = true;
+    hidden.mockReturnValue(false);
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    expect(globalThis.fetch.mock.calls.filter(([url]) => url === '/api/market/snapshot')).toHaveLength(2);
+    expect(screen.getByLabelText('natural gas price')).toHaveTextContent('99');
+    expect(screen.getByLabelText('natural gas source')).toHaveTextContent('yahoo');
+    expect(screen.getByLabelText('natural gas stale')).toHaveTextContent('false');
+    expect(screen.getByLabelText('market mode')).toHaveTextContent('LIVE');
+  });
+
+  it('times out a stalled supplemental body and allows a later poll to recover', async () => {
+    const deadlines = [];
+    const intervals = new Map();
+    const originalSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+      if (delay === 45_000) {
+        deadlines.push(callback);
+        return 45_000 + deadlines.length;
+      }
+      return originalSetTimeout(callback, delay, ...args);
+    });
+    vi.spyOn(window, 'setInterval').mockImplementation((callback, delay) => {
+      intervals.set(delay, callback);
+      return delay;
+    });
+    let snapshotCalls = 0;
+    let firstSignal;
+    let finishOldBody;
+    globalThis.fetch = vi.fn(async (url, options) => {
+      if (url === '/api/prices') return response(yahooPayload());
+      if (url === '/api/market/snapshot') {
+        snapshotCalls += 1;
+        if (snapshotCalls === 1) {
+          firstSignal = options.signal;
+          return { ok: true, json: () => new Promise((resolve) => { finishOldBody = resolve; }) };
+        }
+        return response(v2Payload(88));
+      }
+      return response(newsPayload());
+    });
+    render(<LiveDataProvider><MarketState /></LiveDataProvider>);
+    await act(async () => {});
+    expect(snapshotCalls).toBe(1);
+    await act(async () => deadlines[0]());
+    expect(firstSignal.aborted).toBe(true);
+    await act(async () => intervals.get(60_000)());
+    expect(snapshotCalls).toBe(2);
+    expect(screen.getByLabelText('natural gas price')).toHaveTextContent('88');
+
+    await act(async () => finishOldBody(v2Payload(77)));
+    expect(screen.getByLabelText('natural gas price')).toHaveTextContent('88');
+  });
+
+  it('retains failed supplemental last-good data as stale when Yahoo has no matching row', async () => {
+    let failSnapshot = false;
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url === '/api/prices') {
+        const payload = yahooPayload();
+        payload.commodities = payload.commodities.filter((row) => row.ticker !== 'NG');
+        payload.counts.received = payload.commodities.length;
+        payload.partial = true;
+        return response(payload);
+      }
+      if (url === '/api/market/snapshot') {
+        if (failSnapshot) throw new Error('snapshot unavailable');
+        return response(v2Payload());
+      }
+      return response(newsPayload());
+    });
+    render(<LiveDataProvider><MarketState /></LiveDataProvider>);
+    await waitFor(() => expect(screen.getByLabelText('natural gas price')).toHaveTextContent('77'));
+    failSnapshot = true;
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: /refresh market/i })));
+    expect(screen.getByLabelText('natural gas price')).toHaveTextContent('77');
+    expect(screen.getByLabelText('natural gas source')).toHaveTextContent('eia');
+    expect(screen.getByLabelText('natural gas stale')).toHaveTextContent('true');
+    expect(screen.getByLabelText('market mode')).toHaveTextContent('DEGRADED');
+  });
+
+  it('shares an in-flight supplemental read between visibility, polling and manual refresh', async () => {
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const intervals = new Map();
+    vi.spyOn(window, 'setInterval').mockImplementation((callback, delay) => {
+      intervals.set(delay, callback);
+      return delay;
+    });
+    let release;
+    globalThis.fetch = vi.fn(async (url) => {
+      if (url === '/api/prices') return response(yahooPayload());
+      if (url === '/api/market/snapshot') return new Promise((resolve) => {
+        release = () => resolve(response(v2Payload()));
+      });
+      return response(newsPayload());
+    });
+    render(<LiveDataProvider><MarketState /></LiveDataProvider>);
+    await act(async () => {});
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      intervals.get(60_000)();
+      fireEvent.click(screen.getByRole('button', { name: /refresh market/i }));
+    });
+    expect(globalThis.fetch.mock.calls.filter(([url]) => url === '/api/market/snapshot')).toHaveLength(1);
+    await act(async () => release());
+    expect(screen.getByLabelText('natural gas price')).toHaveTextContent('77');
+  });
+
   it('reports LIVE when a complete fresh Yahoo feed covers a degraded supplemental quote', async () => {
     globalThis.fetch = vi.fn(async (url) => {
       if (url === '/api/prices') return response(yahooPayload(82));
@@ -251,6 +451,8 @@ describe('LiveData market fetch isolation', () => {
     await waitFor(() => expect(calls.filter((url) => url === '/api/prices')).toHaveLength(2));
     await waitFor(() => expect(screen.getByRole('status', { name: /market mode/i })).toHaveTextContent('LIVE'));
     expect(calls.filter((url) => url === '/api/market/snapshot')).toHaveLength(2);
+    expect(screen.getByLabelText('natural gas source')).toHaveTextContent('yahoo');
+    expect(screen.getByLabelText('natural gas stale')).toHaveTextContent('false');
   });
 
   it('coalesces rapid market refresh activations into one in-flight request set', async () => {
