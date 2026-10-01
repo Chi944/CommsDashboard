@@ -107,6 +107,7 @@ const AddRow = ({ commodities, onAdd }) => {
                   key={m.ticker}
                   id={`${suggestionsId}-${index}`}
                   role="option"
+                  aria-label={`${m.ticker} ${m.name} ${m.category}`}
                   aria-selected={index === activeMatch}
                   onMouseEnter={() => setActiveMatch(index)}
                   onMouseDown={(event) => event.preventDefault()}
