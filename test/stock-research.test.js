@@ -16,11 +16,12 @@ test('weekly summary derives coverage and data age without trusting build time o
   });
   assert.equal(stockResearchSummary(run(), now + 4 * 86400000).stale, true);
   assert.equal(stockResearchSummary({ ...run(), run_id: 'run_2026-08-01', stale_after_days: 999 }, now).stale, true);
+  assert.equal(stockResearchSummary({ ...run(), schema_version: '2.1.0' }, now).passed, 1);
 });
 
 test('weekly summary rejects incompatible, future, impossible, duplicated and inconsistent evidence', () => {
   for (const change of [
-    { schema_version: '3.0.0' }, { run_id: 'run_2026-09-09' }, { run_id: 'run_2026-02-30' },
+    { schema_version: '3.0.0' }, { schema_version: '2.1' }, { run_id: 'run_2026-09-09' }, { run_id: 'run_2026-02-30' },
     { passed: 2 }, { candidates: [null] }, { stale_after_days: 0 },
     { candidates: [{ ticker: 'NVDA', excluded: false }, { ticker: 'NVDA', excluded: true }] },
   ]) assert.throws(() => stockResearchSummary({ ...run(), ...change }, now));

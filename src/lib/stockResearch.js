@@ -8,7 +8,8 @@ export function stockResearchTickerUrl(ticker) {
 }
 
 export function stockResearchSummary(run, nowMs = Date.now()) {
-  if (run?.schema_version !== '2.0.0' || !/^run_\d{4}-\d{2}-\d{2}$/.test(run?.run_id || '')) {
+  // Contract major 2: a minor bump only adds fields (stock-research contract.json).
+  if (!/^2\.\d+\.\d+$/.test(run?.schema_version || '') || !/^run_\d{4}-\d{2}-\d{2}$/.test(run?.run_id || '')) {
     throw new Error('unsupported research snapshot');
   }
   const asOf = run.run_id.slice(4);
